@@ -1,0 +1,32 @@
+{
+  "name": "ai-puzzle-factory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Auditable offline-first proof-of-concept pipeline for generated multiple-choice puzzles",
+  "engines": {
+    "node": "24.22.2"
+  },
+  "scripts": {
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.build.json",
+    "experiment": "tsx src/cli/experiment.ts"
+  },
+  "dependencies": {
+    "commander": "15.0.0",
+    "dotenv": "18.0.9",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "eslint": "10.14.0",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
+  }
+}

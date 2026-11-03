@@ -6,4 +6,16 @@
 /agent-memory
 /models.md
 /decision-reviewer.md
+
+# Toolchain and generated data
 /node_modules
+/dist
+/coverage
+/data
+*.log
+.DS_Store
+
+# Secrets
+.env
+.env.*
+!.env.example
