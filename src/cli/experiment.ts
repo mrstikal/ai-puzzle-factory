@@ -1,26 +1,73 @@
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
+import type { RunKind } from "../domain/experiment.js";
+import { buildPlanManifest, serializePlanManifest } from "../experiment/planner.js";
 
 export const PROGRAM_NAME = "experiment";
 
 const SCOPE_NOTE = [
-  "Availability (P01 toolchain bootstrap):",
-  "  --help                 show this help and exit",
-  "  no other mode exists   offline manifests, generation, persistence and",
-  "                         paid execution arrive in later phases",
+  "Availability (P02):",
+  "  --dry-run              print the deterministic PlanManifest and exit",
+  "  --full | --smoke       select the 200-slot or 20-slot plan (default: full)",
+  "  --mock | --live        evidence mode; only offline mock dry-run is implemented",
+  "  --seed <seed>          restate the fixed root seed for the selected run kind",
+  "  no generation, database write, model call, or image rendering is performed",
 ].join("\n");
 
+interface ExperimentOptions {
+  readonly dryRun?: boolean;
+  readonly full?: boolean;
+  readonly smoke?: boolean;
+  readonly mock?: boolean;
+  readonly live?: boolean;
+  readonly seed?: string;
+}
+
+function handleOptions(program: Command, options: ExperimentOptions): void {
+  if (options.full === true && options.smoke === true) {
+    program.error("--full and --smoke are mutually exclusive", { exitCode: 1 });
+  }
+  if (options.mock === true && options.live === true) {
+    program.error("--mock and --live are mutually exclusive", { exitCode: 1 });
+  }
+  if (options.live === true) {
+    program.error(
+      "live execution is not implemented; P02 supports offline --dry-run only",
+      { exitCode: 1 },
+    );
+  }
+  if (options.dryRun !== true) {
+    program.error(
+      "no experiment execution mode is implemented yet; use --dry-run",
+      { exitCode: 1 },
+    );
+  }
+
+  const runKind: RunKind = options.smoke === true ? "smoke" : "full";
+  const plan = buildPlanManifest({
+    runKind,
+    ...(options.seed === undefined ? {} : { rootSeed: options.seed }),
+  });
+  process.stdout.write(serializePlanManifest(plan));
+}
+
 export function createProgram(): Command {
-  return new Command()
+  const program = new Command();
+  program
     .name(PROGRAM_NAME)
     .description("AI Puzzle Factory experiment CLI.")
     .showHelpAfterError()
     .addHelpText("after", `\n${SCOPE_NOTE}`)
-    .action(() => {
-      throw new Error(
-        "no experiment execution mode is implemented yet; only --help is available in P01",
-      );
+    .option("--dry-run", "print the deterministic plan manifest and exit")
+    .option("--full", "plan the full 200-slot cohort (default)")
+    .option("--smoke", "plan the 20-slot smoke cohort")
+    .option("--mock", "use synthetic mock evidence (default)")
+    .option("--live", "use live provider evidence (not implemented)")
+    .option("--seed <seed>", "restate the fixed root seed for the selected run kind")
+    .action((options: ExperimentOptions) => {
+      handleOptions(program, options);
     });
+  return program;
 }
 
 export async function main(argv: readonly string[] = process.argv): Promise<number> {

@@ -189,9 +189,10 @@ describe("experiment CLI bootstrap", () => {
     expect(existsSync(dataDirectory)).toBe(false);
   });
 
-  it("describes only the implemented P01 capability in help", () => {
+  it("describes only the implemented capabilities in help", () => {
     const help = createProgram().helpInformation();
     expect(help).toContain("--help");
+    expect(help).toContain("--dry-run");
     expect(help).toContain("AI Puzzle Factory experiment CLI.");
   });
 
@@ -201,7 +202,7 @@ describe("experiment CLI bootstrap", () => {
     stdout.mockRestore();
     const result = spawnSync(TSX_BIN, ["src/cli/experiment.ts", "--help"], { encoding: "utf8" });
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("P01 toolchain bootstrap");
+    expect(result.stdout).toContain("Availability (P02)");
   });
 
   it("fails explicitly for an unknown execution flag", () => {
