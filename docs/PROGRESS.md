@@ -755,3 +755,57 @@ Expected: 6 focused renderer tests pass; both preview commands exit 0 and print 
 **Acceptance:** accepted by the user on 2026-11-04 after the focused suite, both preview PNGs, and `npm run check` evidence.
 
 **Out of scope, unchanged:** animation, free-form SVG transformations, gallery, provider calls, and any live evidence.
+
+## P15. Path Graph and Route Engine — 2026-11-04
+
+**State:** implemented, offline-verified, accepted by the user on 2026-11-04. This phase adds the paths formal engine only; no path renderer, shortest-path variant, arbitrarily large maze, gallery, provider call, or live evidence exists.
+
+**Files**
+
+- DSL, tree/route validation, BFS, full-grid path enumeration, answer checking: `src/families/paths/schema.ts`
+- Bounded construction, options, rules/facts, mutations: `src/families/paths/engine.ts`
+- D4/translation-normalized canonical structure: `src/families/paths/canonical.ts`
+- Tests: `tests/families/paths.test.ts`
+- Registry: `src/families/registry.ts` registers `pathsEngine` (no paths renderer)
+- Documentation: `docs/families.md`, `README.md`, this file
+
+**Observable behavior**
+
+- The DSL is a 4x4 grid with 6-12 sorted active cells, sorted undirected open orthogonal edges, and distinct marked start/goal cells. Edges have sorted endpoints, the edge count is exactly `activeCells-1`, and the graph must be one connected tree. Diagonal edges, duplicate edges, disconnected/cyclic graphs, start=goal, unsorted cells/edges, and routes outside 3-11 edges are rejected.
+- `enumerateSolutions` independently runs BFS over the parsed tree and returns one complete route with a derived `s001` fact, `enumeratedStates = activeCells`, and checker version `paths-v1`. `verifyAnswer` rechecks endpoints, active cells, every open corridor, no revisits, and equality with the independently recovered tree route.
+- `constructPathsSpec` grows a connected active set by seeded neighbor growth, builds a seeded randomized-DFS spanning tree, and chooses ordered endpoints with route lengths 3-5/5-7/7-11 for levels 1/2/3. Active-size targets are 6-8/7-10/9-12. It retries within 64 deterministic draws and requires at least three false full-grid routes.
+- `enumerateFullGridSimpleRoutes` enumerates simple S-to-G routes over the full 4x4 grid with a `SearchCounter` cap of 200,000 visited states. False options each use at least one closed/nonexistent corridor or inactive cell; a route cannot jump over a cell because every consecutive pair must be orthogonally adjacent.
+- `makeOptions` uses the unique tree route plus three distinct false routes, shuffles them into A-D, and verifies exactly one choice satisfies the independent checker.
+- Rules state orthogonal movement, open corridors, no revisits, tree uniqueness, and distinct S/G markers. Facts `p001` onward list active cells in row-major order, open corridors in sorted edge order, then the start and goal markers.
+- `canonicalData` minimizes active cells, open edges, and marked S/G over all eight D4 frames and a translation-normalized bounding box. Tokens are `grid=4x4`, `start:r:c`, `goal:r:c`, `open:r1:c1:r2:c2`, and `active:r:c`, so geometry and topology are retained.
+- The 100 fixed construction seeds produced 34/33/33 successes for levels 1/2/3 with zero failures; every success was independently solved, verified, and option-built.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/families/paths.test.ts` | exit 0; 16 tests passed. |
+| 100 fixed construction seeds | 34/33/33 successes, zero failures; route lengths 3-5/5-7/7-10; false-route pool 85-177 routes. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 15 files / 241 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run the exact commands below.
+2. Confirm the focused paths suite passes and includes the disconnected/cyclic/diagonal/duplicate/start=goal/revisit/jump/enumeration-cap/D4-translation cases.
+3. Run the exact script below. Confirm `extraEdgeRejected: true`, `shortcutValid: false`, the correct route is `(0,0)->(1,0)->(1,1)->(1,2)`, and the error message says `a path tree requires exactly activeCells-1 open edges`.
+4. Run `npm run check` and confirm 15 files / 241 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/families/paths.test.ts --reporter=verbose
+npm exec tsx -- -e 'import { PathsSpecSchema, sortPathEdges } from "./src/families/paths/schema.ts"; import { pathsEngine } from "./src/families/paths/engine.ts"; const active=[{row:0,column:0},{row:0,column:1},{row:0,column:2},{row:1,column:0},{row:1,column:1},{row:1,column:2}]; const edges=[{from:{row:0,column:0},to:{row:0,column:1}},{from:{row:0,column:0},to:{row:1,column:0}},{from:{row:0,column:1},to:{row:0,column:2}},{from:{row:1,column:0},to:{row:1,column:1}},{from:{row:1,column:1},to:{row:1,column:2}}]; const spec=PathsSpecSchema.parse({active,edges:sortPathEdges(edges),start:{row:0,column:0},goal:{row:1,column:2}}); const extraEdge={...spec,edges:sortPathEdges([...edges,{from:{row:0,column:1},to:{row:1,column:1}}])}; let extraEdgeRejected=false; let extraEdgeMessage=""; try { PathsSpecSchema.parse(extraEdge); } catch(e){ extraEdgeRejected=true; extraEdgeMessage=e instanceof Error?e.message:String(e); } const shortcut=[{row:0,column:0},{row:0,column:1},{row:1,column:1},{row:1,column:2}]; const shortcutValid=pathsEngine.verifyAnswer(spec,shortcut); const correct=pathsEngine.enumerateSolutions(spec).correctAnswer; if(!extraEdgeRejected||shortcutValid||correct===null) process.exit(1); console.log(JSON.stringify({correct,shortcut,shortcutValid,extraEdgeRejected,extraEdgeMessage},null,2));'
+npm run check
+```
+
+Expected: 16 focused tests pass; the JSON shows the correct route, the shortcut route, `shortcutValid: false`, `extraEdgeRejected: true`, and the `a path tree requires exactly activeCells-1 open edges` message; `npm run check` exits 0 with 15 files / 241 tests.
+
+**Acceptance:** accepted by the user on 2026-11-04 after the focused suite, exact non-UI script, and `npm run check` evidence.
+
+**Out of scope, unchanged:** path SVG/PNG renderer, shortest-path variants, arbitrarily large mazes, gallery, provider calls, and any live evidence.

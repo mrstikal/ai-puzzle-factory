@@ -1,6 +1,6 @@
 # Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, P11 adds the matrix formal engine, P12 adds its renderer, P13 adds the transforms formal engine, and P14 adds its renderer.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, P11 adds the matrix formal engine, P12 adds its renderer, P13 adds the transforms formal engine, P14 adds its renderer, and P15 adds the paths formal engine.
 
 ## Scope
 
@@ -11,7 +11,7 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, P11 registers the matrix engine, P12 registers the matrix renderer, P13 registers the transforms engine, and P14 registers the transforms renderer; later phases add the remaining three visual engines and three renderers.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, P11 registers the matrix engine, P12 registers the matrix renderer, P13 registers the transforms engine, P14 registers the transforms renderer, and P15 registers the paths engine; later phases add the remaining two visual engines and three renderers.
 
 ## Implemented Family Engines
 
@@ -27,7 +27,7 @@ Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
 - **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
 
-The production registry now contains all five text engines plus the matrix engine, matrix renderer, transforms engine, and transforms renderer: ranking, matching, scheduling, truth, arithmetic, matrix, and transforms. The remaining three visual engines and three renderers are registered only by their owning phases.
+The production registry now contains all five text engines plus the matrix engine, matrix renderer, transforms engine, transforms renderer, and paths engine: ranking, matching, scheduling, truth, arithmetic, matrix, transforms, and paths. The remaining two visual engines and three renderers are registered only by their owning phases.
 
 ### Attribute Matching (P06)
 
@@ -126,6 +126,19 @@ Files: `src/families/transforms/render.ts`, `tests/render/transforms.test.ts`.
 - **Preview:** `transformsRenderer` is registered in the canonical renderer registry. `npm run preview -- --family transforms --seed preview-v1` renders the default level-1 preview; `npm run preview -- --family transforms --seed preview-v3 --difficulty 3` renders a two-operation scene that demonstrates both clockwise direction and a mirror axis. Outputs are SVG/1024/512 under ignored `data/previews`.
 - **Evidence:** focused tests render deterministic 1024/512 PNGs, rasterize 100 seeded scenes with bounds and pairwise-distinct option-grid crops, exercise missing-axis/reversed-arrow/decorative-rotation/off-center-pivot/wrong-axis/reversed-order/wrong-geometry/missing-operation fixtures, and run fixed plus ten seeded critical-pixel checks (at least eight changed non-background pixels). Adversarial fixtures cover a reversed arc, a counter-clockwise sweep with the same endpoints, a backwards arrowhead, a chord-like arc, an over-rotated multi-turn arc, reversed pivot paint order, invisible orientation/pivot markers, decorative rotations, and off-center pivots. Operation critical evidence removes arrows/axes while keeping card panels.
 - **Verification:** `npm exec vitest run tests/render/transforms.test.ts`; `npm run preview -- --family transforms --seed preview-v1`; `npm run preview -- --family transforms --seed preview-v3 --difficulty 3`; `npm run check`. Open the printed 512-pixel PNGs and confirm the source, First/Then order, clockwise arrow, mirror axis, viewer-relative axes, same-scale A-D grids, center pivots, and top orientation markers.
+
+### Paths and Reachability (P15)
+
+Files: `src/families/paths/schema.ts`, `src/families/paths/engine.ts`, `src/families/paths/canonical.ts`, `tests/families/paths.test.ts`.
+
+- **DSL:** a 4x4 cell grid with 6-12 active cells, explicit undirected open orthogonal edges, and distinct marked start/goal cells. Active cells and edges must be sorted; edge endpoints are sorted and orthogonally adjacent. The edge count is exactly `activeCells-1`, the graph is connected and a tree, and the unique S-to-G route has 3-11 edges. Diagonal edges, duplicate edges, disconnected/cyclic graphs, start=goal, and out-of-range routes are rejected.
+- **Meaning:** move between orthogonally adjacent cell centers only through drawn open corridors, without revisiting a cell. `enumerateSolutions` independently runs BFS over the parsed tree, returns the unique complete route with a derived `s001` fact, `enumeratedStates = activeCells`, and checker version `paths-v1`; it never reuses the construction spanning-tree witness.
+- **Construction:** `constructPathsSpec(seed, difficulty)` grows a connected active set by seeded neighbor growth, builds a seeded randomized-DFS spanning tree, and chooses ordered endpoints with route lengths 3-5/5-7/7-11 for levels 1/2/3. Active-size targets are 6-8/7-10/9-12; a failed draw retries within 64 deterministic draws and never changes the target difficulty. Construction also requires at least three false full-grid routes. The 100 fixed fixtures produced 34/33/33 successes with zero failures.
+- **Options/checker:** the correct route is the unique tree route. False routes come from `enumerateFullGridSimpleRoutes`, capped by `SearchCounter` at 200,000 visited states; each false route uses at least one closed/nonexistent corridor or inactive cell. Four choices are distinct, exactly one satisfies the independent checker, and a route cannot jump over a cell because every consecutive pair must be orthogonally adjacent.
+- **Rules/facts:** code-owned rules state orthogonal movement, open corridors, no revisits, tree uniqueness, and distinct S/G markers. Observation facts `p001` onward list active cells in row-major order, open corridors in sorted edge order, and the start/goal markers.
+- **Fingerprint:** `canonicalData` minimizes active cells, open edges, and marked S/G over all eight D4 frames and a translation-normalized bounding box. Tokens are `grid=4x4`; `start:r:c`/`goal:r:c`; `open:r1:c1:r2:c2`; and `active:r:c`. Geometry and topology are retained, not just route length.
+- **Verification:** `npm exec vitest run tests/families/paths.test.ts`; `npm run check`. Focused tests cover disconnected/cyclic/diagonal/duplicate/unordered graphs, start=goal, route length bounds, revisit/jump routes, the 200,000-state enumeration cap, closed-edge shortcuts, four distinct options, D4/translation equivalence, different topology, deterministic mutations, registry registration without a renderer, and 100 fixed constructions with independently verified options.
+- **Manual acceptance:** adding an extra open edge to the fixed 6-cell tree makes the edge count 6 for 5 tree edges, so `PathsSpecSchema` rejects it as a non-tree; the visually tempting shortcut `(0,0)->(0,1)->(1,1)->(1,2)` is rejected because the `(0,1)-(1,1)` corridor is closed. No path renderer exists in P15.
 
 ## Family Engine Contract
 
@@ -248,4 +261,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry contains the five text engines, matrix, the matrix renderer, transforms, and the transforms renderer, and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains the five text engines, matrix, the matrix renderer, transforms, the transforms renderer, and paths, and is filled by the owning phases.
