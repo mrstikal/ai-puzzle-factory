@@ -860,3 +860,57 @@ Expected: 7 focused renderer tests pass; the preview command exits 0 and prints 
 **Acceptance:** accepted by the user on 2026-11-04 after the focused suite, the 512-pixel preview, and `npm run check` evidence.
 
 **Out of scope, unchanged:** maze interaction, path-drawing UI, gallery, provider calls, and any live evidence.
+
+## P17. Symmetry Specification and Reflection Proof — 2026-11-04
+
+**State:** implemented, offline-verified, accepted by the user on 2026-11-04. This phase adds the symmetry formal engine only; no symmetry renderer, continuous shapes, diagonal axes, generic visual symmetry detection, gallery, provider call, or live evidence exists.
+
+**Files**
+
+- DSL, explicit known/unknown/empty states, reflection maps, direct completion, checker: `src/families/symmetry/schema.ts`
+- Bounded construction, options, rules/facts, mutations: `src/families/symmetry/engine.ts`
+- Axis-normalized canonical structure: `src/families/symmetry/canonical.ts`
+- Tests: `tests/families/symmetry.test.ts`
+- Registry: `src/families/registry.ts` registers `symmetryEngine` (no symmetry renderer)
+- Documentation: `docs/families.md`, `README.md`, this file
+
+**Observable behavior**
+
+- The DSL is an 8x8 grid of `occupied`, `empty`, and `unknown` states. Vertical means left half known and right half unknown between columns 3/4; horizontal means top half known and bottom half unknown between rows 3/4. The known half has 4-10 occupied cells and explicit empty cells; the missing half is entirely unknown. Unknown is distinct from empty.
+- `completeSymmetry` reflects each known occupied cell exactly once and leaves known empty cells and all other missing cells empty. It does not enumerate 2^32 images. `enumerateSolutions` returns one completion, `enumeratedStates = 64`, checker version `symmetry-v1`, and 32 derived facts `s001`-`s032` that record the forced occupied/empty source for every missing cell.
+- `verifyAnswer` independently checks every known-half cell against the spec and every missing cell against its reflected pair. Altered known cells, omitted reflected cells, extra reflected cells, wrong dimensions, and malformed answers are rejected.
+- `constructSymmetrySpec` uses seeded known-half subsets: level 1 vertical with 4-5 occupied, level 2 horizontal with 6-7, level 3 either axis with 8-10 and at least two connected components. It stays within 64 deterministic draws and rejects all-empty/all-filled known halves.
+- `makeOptions` builds four full completions with the same known half: the correct completion, a removed required reflected cell, an added forbidden missing cell, and a required reflected cell shifted to an adjacent missing cell whose mirror is empty. The three wrong completions are distinct and fail the independent checker; exactly one choice passes.
+- Rules state the fixed vertical/left and horizontal/top convention, the central axis, one reflection per known cell, the unknown-versus-empty distinction, and the unchanged known half. Facts `p001` onward list occupied known cells in row-major order, then the axis and unknown-half observation.
+- `canonicalData` normalizes horizontal to vertical, minimizes over reversal along the axis, and emits `grid=8x8`, `axis=vertical`, `knownSide=left`, `reflect_half`, and sorted occupied `cell:r:c` geometry. Under the fixed known-side convention, exchanging the displayed half normalizes back to the same known-left shape and adds no candidate.
+- The 100 fixed construction seeds produced 34/33/33 successes for levels 1/2/3 with zero failures; level 3 always had at least two connected components. Every success was independently completed, verified, and option-built.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/families/symmetry.test.ts` | exit 0; 13 tests passed. |
+| 100 fixed construction seeds | 34/33/33 successes, zero failures; level 3 components 2-9; axes level 3: 18 vertical / 15 horizontal. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 17 files / 261 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run the exact commands below.
+2. Confirm the focused symmetry suite passes and includes vertical/horizontal maps, bad-size/off-axis metadata, altered known half, omitted/extra reflected cells, duplicate false options, normalized-axis equivalence, and 100 constructions.
+3. Run the exact script below. Confirm `answerCount: 1`, `enumeratedStates: 64`, `proofFacts: 32`, `missingCells: 32`, `allMissingCovered: true`, and `occupiedCells: 8`.
+4. Run `npm run check` and confirm 17 files / 261 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/families/symmetry.test.ts --reporter=verbose
+npm exec tsx -- -e 'import { SymmetrySpecSchema, missingSymmetryCells, mirrorSymmetryCell } from "./src/families/symmetry/schema.ts"; import { symmetryEngine } from "./src/families/symmetry/engine.ts"; const occupied=new Set(["0:0","1:0","1:1","2:2"]); const cells=Array.from({length:8},()=>Array.from({length:8},()=>"unknown")); for(let r=0;r<8;r++){for(let c=0;c<4;c++){cells[r][c]=occupied.has(`${r}:${c}`)?"occupied":"empty";}} const spec=SymmetrySpecSchema.parse({axis:"vertical",cells}); const result=symmetryEngine.enumerateSolutions(spec); const facts=result.proof?.facts??[]; const missing=missingSymmetryCells(spec.axis); const covered=missing.every((cell,index)=>{const fact=facts[index]; const mirror=mirrorSymmetryCell(spec.axis,cell); return fact!==undefined&&fact.text.includes(`row ${cell.row+1}, column ${cell.column+1}`)&&fact.text.includes(`row ${mirror.row+1}, column ${mirror.column+1}`);}); const answer=result.correctAnswer; if(answer===null||facts.length!==32||missing.length!==32||!covered||result.enumeratedStates!==64) process.exit(1); console.log(JSON.stringify({answerCount:result.answerCount,enumeratedStates:result.enumeratedStates,proofFacts:facts.length,missingCells:missing.length,allMissingCovered:covered,occupiedCells:answer.flat().filter((value)=>value===1).length},null,2));'
+npm run check
+```
+
+Expected: 13 focused tests pass; the JSON shows `answerCount: 1`, `enumeratedStates: 64`, `proofFacts: 32`, `missingCells: 32`, `allMissingCovered: true`, and `occupiedCells: 8`; `npm run check` exits 0 with 17 files / 261 tests.
+
+**Acceptance:** accepted by the user on 2026-11-04 after the focused suite, exact non-UI script, and `npm run check` evidence.
+
+**Out of scope, unchanged:** symmetry SVG/PNG renderer, continuous shapes, diagonal axes, generic visual symmetry detection, gallery, provider calls, and any live evidence.

@@ -1,6 +1,6 @@
 # Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, P11 adds the matrix formal engine, P12 adds its renderer, P13 adds the transforms formal engine, P14 adds its renderer, P15 adds the paths formal engine, and P16 adds its renderer.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, P11 adds the matrix formal engine, P12 adds its renderer, P13 adds the transforms formal engine, P14 adds its renderer, P15 adds the paths formal engine, P16 adds its renderer, and P17 adds the symmetry formal engine.
 
 ## Scope
 
@@ -11,7 +11,7 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, P11 registers the matrix engine, P12 registers the matrix renderer, P13 registers the transforms engine, P14 registers the transforms renderer, P15 registers the paths engine, and P16 registers the paths renderer; later phases add the remaining two visual engines and two renderers.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, P11 registers the matrix engine, P12 registers the matrix renderer, P13 registers the transforms engine, P14 registers the transforms renderer, P15 registers the paths engine, P16 registers the paths renderer, and P17 registers the symmetry engine; later phases add the remaining visual engine and two renderers.
 
 ## Implemented Family Engines
 
@@ -27,7 +27,7 @@ Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
 - **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
 
-The production registry now contains all five text engines plus the matrix engine, matrix renderer, transforms engine, transforms renderer, paths engine, and paths renderer: ranking, matching, scheduling, truth, arithmetic, matrix, transforms, and paths. The remaining two visual engines and two renderers are registered only by their owning phases.
+The production registry now contains all five text engines plus the matrix engine, matrix renderer, transforms engine, transforms renderer, paths engine, paths renderer, and symmetry engine: ranking, matching, scheduling, truth, arithmetic, matrix, transforms, paths, and symmetry. The remaining counting engine and symmetry/counting renderers are registered only by their owning phases.
 
 ### Attribute Matching (P06)
 
@@ -153,6 +153,19 @@ Files: `src/families/paths/render.ts`, `tests/render/paths.test.ts`.
 - **Manual acceptance:** open the 512-pixel PNG and confirm that S/G, corridor openings, walls, and each highlighted route are unambiguous without source JSON; false routes visibly cross hatched cells or closed walls, and the correct route only crosses gaps.
 - **Verification:** `npm exec vitest run tests/render/paths.test.ts`; `npm run preview -- --family paths --seed preview-v1`; `npm run check`.
 
+### Symmetry and Missing Part (P17)
+
+Files: `src/families/symmetry/schema.ts`, `src/families/symmetry/engine.ts`, `src/families/symmetry/canonical.ts`, `tests/families/symmetry.test.ts`.
+
+- **DSL:** an 8x8 grid of explicit `occupied`, `empty`, and `unknown` states. The axis is vertical between columns 3 and 4 (left half known, right half unknown) or horizontal between rows 3 and 4 (top half known, bottom half unknown). The known half contains 4-10 occupied cells; its other cells are explicitly empty. Every missing-half cell must be `unknown`. Unknown is never conflated with empty. Diagonal axes, wrong grid sizes, unknown known cells, known missing cells, and out-of-range counts are rejected.
+- **Meaning:** each known occupied cell is reflected across the marked axis exactly once; known empty cells reflect to empty and all other missing cells are empty. The completion is constructed directly from the known half, never by enumerating 2^32 images. The independent checker verifies all 64 cells through reflected pairs and confirms the known half is unchanged. `enumerateSolutions` returns one completion, 32 derived facts (`s001`-`s032`), one for every missing cell with its forced occupied/empty source, `enumeratedStates = 64`, and checker version `symmetry-v1`.
+- **Construction:** level 1 is vertical with 4-5 occupied cells, level 2 horizontal with 6-7, and level 3 either axis with 8-10 occupied cells and at least two connected components. A seeded subset of the known half is drawn within 64 deterministic draws; all-empty/all-filled known halves are rejected. The 100 fixed fixtures produced 34/33/33 successes with zero failures; level 3 always had at least two components.
+- **Options/checker:** four full completions share the same known half. The correct completion is accompanied by a removed required reflected cell, an added forbidden missing cell, and a required reflected cell shifted to an adjacent missing cell whose mirror is empty. All are distinct, the known half is untouched, and exactly one passes the independent reflection checker.
+- **Rules/facts:** code-owned rules state the fixed vertical/left and horizontal/top convention, the axis between central lines, reflection of every known cell exactly once, the difference between unknown and empty, and the unchanged known half. Observation facts `p001` onward list occupied known cells in row-major order, then the axis and the unknown half.
+- **Fingerprint:** `canonicalData` normalizes the horizontal case to vertical coordinates, minimizes over reversal along the axis (row reversal after normalization), and emits `grid=8x8`, `axis=vertical`, `knownSide=left`, `reflect_half`, and sorted `cell:r:c` geometry for occupied known cells. Under the fixed known-side convention, exchanging the displayed half normalizes back to the same known-left shape, so it contributes no additional canonical candidate; the feasible axis-preserving group is the reversal pair.
+- **Verification:** `npm exec vitest run tests/families/symmetry.test.ts`; `npm run check`. Focused tests cover vertical/horizontal maps, off-axis/bad-size metadata, altered known cells, omitted/extra reflected cells, duplicate false options, normalized-axis equivalence, deterministic mutations, registry registration without a renderer, and 100 fixed constructions. The proof test asserts 32 forced facts and `enumeratedStates = 64`, not 2^32.
+- **Manual acceptance:** every missing-half cell has a recorded forced occupied or empty counterpart in the 32 derived facts, so no unstated completion freedom remains. No symmetry renderer exists in P17.
+
 ## Family Engine Contract
 
 Each family implements `FamilyEngine<S, A>`:
@@ -274,4 +287,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry contains the five text engines, matrix, the matrix renderer, transforms, the transforms renderer, paths, and the paths renderer, and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains the five text engines, matrix, the matrix renderer, transforms, the transforms renderer, paths, the paths renderer, and symmetry, and is filled by the owning phases.
