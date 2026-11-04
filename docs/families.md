@@ -1,6 +1,6 @@
 # Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine and P06 adds the real attribute-matching engine.
 
 ## Scope
 
@@ -11,7 +11,7 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers the first real formal engine (ranking); later phases add the remaining engines and renderers.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking and P06 registers matching; later phases add the remaining engines and renderers.
 
 ## Implemented Family Engines
 
@@ -27,7 +27,21 @@ Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
 - **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
 
-The production registry now contains the ranking engine. The remaining nine engines and five renderers are registered only by their owning phases.
+The production registry now contains the ranking and matching engines. The remaining eight engines and five renderers are registered only by their owning phases.
+
+### Attribute Matching (P06)
+
+Files: `src/families/matching/schema.ts`, `src/families/matching/engine.ts`, `src/families/matching/canonical.ts`, `tests/families/matching.test.ts`.
+
+- **DSL:** three typed categories A, B, and C with four items each (`A1-A4`, `B1-B4`, `C1-C4`). A spec contains 4-12 `same`/`different` clues between different categories. Item IDs are integers `0..3`; categories remain typed. Exact duplicates and same-pair contradictions are rejected with explicit schema messages. Local facts are `f001` onward in stored clue order.
+- **Meaning:** each A item is paired with exactly one B item and one C item, with bijections in B and C. A complete answer is four rows ordered by A item, each using every category item once. The solver enumerates all 4! x 4! = 576 assignments and evaluates A-B, A-C, and B-C clues.
+- **Construction:** `constructMatchingSpec(seed, difficulty)` chooses two witness permutations and six anchors (A0-A2 to B and C). It adds two seeded true B-C clues (one same, one different) plus 2-4 other true clues, for 10-12 initial clues, then removes redundant clues in seeded order to floors 8/6/4 for levels 1/2/3. Construction uses at most 64 draws and returns a trace with anchor, cross-category, additional, pruning, and draw counts. The spec contains only `clues`.
+- **Solver:** unique/unsat/ambiguous results distinguish one complete table from a unique queried pair. Unique results carry one derived `s001` proof fact; multiple/zero solutions carry no correct answer or proof.
+- **Options:** `makeOptions` requires the unique table, enumerates the 576-table domain, prefers false tables reachable by one or two bijection swaps, fills from higher-swap tables if needed, and validates that all four choices are complete tables with exactly one satisfying choice.
+- **Rules/facts:** code-owned English rules explicitly state that every A, B, and C item is used once and rows are ordered A1-A4. Facts use the code-owned `same`/`different` templates.
+- **Fingerprint:** `canonicalData` applies `reduceClueCore`, then minimizes the retained signed, category-typed relation graph over 24^3 = 13,824 independent relabelings of the four item IDs in each category. Signs and category roles are preserved; textual labels and row order are removed. Tokens are `same`/`different` with category-index.item endpoints.
+- **Verification:** `npm exec vitest run tests/families/matching.test.ts`; `npm run check`. Focused tests cover schema diagnostics, complete/unsat/ambiguous tables, cross-category negatives, repeated category values, wrong keys, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed constructions with at least 95 independently verified successes.
+
 
 ## Family Engine Contract
 
@@ -150,4 +164,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry contains the ranking engine and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains ranking and matching and is filled by the owning phases.
