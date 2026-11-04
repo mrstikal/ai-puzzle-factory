@@ -223,3 +223,54 @@ npm run check
 Expected: 34 focused tests pass, `P04 choice and canonical-schema checks passed`, and `npm run check` exits 0 with 85 tests.
 
 **Out of scope, unchanged:** real family engines, renderers, scene/PNG output, persistence changes, model calls, duplicate barrier, reports, gallery, and any live evidence.
+
+## P05. Ranking Engine — 2026-11-04
+
+**State:** implemented, offline-verified. Ranking is the only real family engine registered in the production registry. No model call, renderer, matching, scheduling, AI wording, or gallery exists in this phase.
+
+**Files**
+
+- Schema/DSL: `src/families/ranking/schema.ts`
+- Construction/solver/options/rules/facts/mutations: `src/families/ranking/engine.ts`
+- Reduced structural canonicalization: `src/families/ranking/canonical.ts`
+- Tests: `tests/families/ranking.test.ts`
+- Registry: `src/families/registry.ts` now registers only `rankingEngine`
+- Documentation: `docs/families.md`, this file
+
+**Observable behavior**
+
+- The DSL accepts `size` 4 or 5 and 3-12 clues from `before`, `immediatelyBefore`, `at`, and `notAt`. Item IDs stay inside `0..size-1`, positions inside `1..size`, and self-relations are rejected. Visible labels are A-E; local facts are `f001` onward in stored clue order and cannot be supplied by the spec.
+- `constructRankingSpec` chooses a hidden witness, samples 3-7 true non-anchor clues, adds at most five true `at` anchors until unique, and at levels 2-3 removes half/all greedy redundant clues in seeded order while retaining at least three clues. It uses at most 64 deterministic draws and returns a trace with requested/added anchors and pruning counts. The returned spec contains only `size` and `clues`.
+- `enumerateSolutions` independently checks all 24 size-4 or 120 size-5 permutations and requires one full order. Unique results map to labels A-E and carry one derived `s001` proof fact; impossible cycles and missing-essential-clue ambiguity carry no correct answer or proof.
+- `makeOptions` requires a unique satisfying answer, enumerates all other full orders, prefers distractors violating one or two clues, fills from higher-violation orders if needed, shuffles four code-owned A-D choices, and independently verifies that exactly one choice satisfies the spec. Option values are complete label sequences A-E.
+- `visibleRules` supplies code-owned English domain, closed-world, target, four operations, and position/option conventions. `facts` supplies one local fact per clue with the code-owned clue template.
+- `canonicalData` applies the reduced-core proxy, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits sorted typed tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It does not hash only the final permutation.
+- The deterministic fixture seed `aeb49822e3461e54471ff52b50a0e08d2e338d08a47428f1b5f8a21c6a4ac8cd` at level 1 produces size 4, six clues, trace `{nonAnchorRequested:4, nonAnchorAdded:4, anchorsAdded:2, prunedClues:0, drawsUsed:11}`, unique order `B C A D`, and options with correct label C.
+- The 100 fixed construction seeds produced 34/33/33 successes for levels 1/2/3, zero failures, and every success was independently solved and verified.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/families/ranking.test.ts` | exit 0; 15 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 5 files / 100 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run `npm exec vitest run tests/families/ranking.test.ts --reporter=verbose` and inspect `solves an explicit unique order with one full answer and a derived proof`, `returns an unsatisfiable result for an impossible cycle`, `reports ambiguity when an essential clue is missing`, `treats immediatelyBefore as the next position and positions as 1-based`, `builds four full-order choices...`, `canonicalizes item relabelings...`, and `constructs at least 95 of 100 fixed seeds...`.
+2. Run the exact script below. Inspect the printed deterministic fixture: the English rules, six local facts, unique order `B C A D`, four complete orders, and correct label `C`.
+3. Confirm the impossible cycle yields zero solutions, the ambiguity fixture yields more than one, and adjacency/position fixtures yield one full order.
+4. Run `npm run check` and confirm 100 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/families/ranking.test.ts --reporter=verbose
+npm exec tsx -- -e 'import { constructRankingSpec, rankingEngine } from "./src/families/ranking/engine.ts"; const seed="aeb49822e3461e54471ff52b50a0e08d2e338d08a47428f1b5f8a21c6a4ac8cd"; const {spec,trace}=constructRankingSpec(seed,1); const result=rankingEngine.enumerateSolutions(spec); const options=rankingEngine.makeOptions(spec,result.correctAnswer,"0".repeat(64)); if(result.solutionCount!==1||JSON.stringify(result.correctAnswer)!==JSON.stringify(["B","C","A","D"])||options.correctLabel!=="C") process.exit(1); console.log(JSON.stringify({spec,trace,rules:rankingEngine.visibleRules(spec),facts:rankingEngine.facts(spec),solution:result.correctAnswer,options},null,2));'
+npm run check
+```
+
+Expected: 15 focused tests pass, the fixture prints the rules/facts/solution/options described above, and `npm run check` exits 0 with 100 tests.
+
+**Out of scope, unchanged:** matching, scheduling, truth, arithmetic, visual families, AI wording, renderers, gallery, duplicate barrier, reports, and any live evidence.

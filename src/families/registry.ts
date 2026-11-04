@@ -6,6 +6,7 @@ import {
   type SvgFamily,
 } from "../domain/experiment.js";
 import type { FamilyEngine } from "./contracts.js";
+import { rankingEngine } from "./ranking/engine.js";
 
 export interface RendererContract<Spec = unknown, Scene = unknown> {
   readonly family: SvgFamily;
@@ -169,3 +170,5 @@ export function createFamilyRegistry(): FamilyRegistry {
 }
 
 export const productionRegistry = new FamilyRegistry();
+
+productionRegistry.registerEngine(rankingEngine);

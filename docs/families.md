@@ -1,6 +1,6 @@
-# Family Contracts and Canonicalization Primitives
+# Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04. It is not a claim that any real family engine or renderer exists. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine.
 
 ## Scope
 
@@ -11,7 +11,23 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. The production registry may be empty until the owning family phases register their engines.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers the first real formal engine (ranking); later phases add the remaining engines and renderers.
+
+## Implemented Family Engines
+
+### Ranking (P05)
+
+Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/families/ranking/canonical.ts`, `tests/families/ranking.test.ts`.
+
+- **DSL:** `size` is 4 or 5. The spec contains 3-12 clues from `before(a,b)`, `immediatelyBefore(a,b)`, `at(a,position)`, and `notAt(a,position)`. Item IDs are integers `0..size-1`; positions are 1-based `1..size`; `before`/`immediatelyBefore` cannot point an item at itself. Visible labels are fixed `A..E`. Local fact IDs are `f001`, `f002`, and so on in stored clue order; the spec cannot supply arbitrary fact IDs.
+- **Construction:** `constructRankingSpec(seed, difficulty)` chooses a hidden witness order, builds the finite pool of true non-anchor clues and true `at` anchors, samples 3-7 non-anchor clues, adds at most five `at` anchors until the order is unique, and at levels 2-3 removes half/all greedy redundant clues in seeded order while retaining at least three clues. The returned spec contains only `size` and `clues`; the trace records requested/added anchors and pruning counts, and construction uses at most 64 deterministic draws. Difficulty 1 uses size 4; levels 2-3 use size 5.
+- **Solver:** `enumerateSolutions` independently enumerates 24 permutations for size 4 or 120 for size 5, re-evaluates every clue, and requires one full order. A unique result maps the order to labels `A..E` and adds one derived `s001` proof fact. Unsatisfiable and ambiguous specs carry no correct answer or proof.
+- **Options:** `makeOptions` requires the unique satisfying answer, enumerates all other full orders, prefers distractors violating one or two clues, fills from higher-violation orders if needed, shuffles four code-owned choices A-D, and independently verifies that exactly one choice satisfies the spec. Option values are complete label sequences `A..E`, not the A-D choice labels.
+- **Rules:** `visibleRules` supplies code-owned English domain, closed-world, target, four operation descriptions, and position/option conventions. `facts` supplies one local fact per clue with the code-owned clue template.
+- **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
+- **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
+
+The production registry now contains the ranking engine. The remaining nine engines and five renderers are registered only by their owning phases.
 
 ## Family Engine Contract
 
@@ -134,4 +150,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry starts empty and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains the ranking engine and is filled by the owning phases.
