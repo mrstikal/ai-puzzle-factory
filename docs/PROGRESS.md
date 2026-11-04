@@ -481,3 +481,63 @@ npm run check
 Expected: 15 focused tests pass, the fixture prints the rules/facts/unique tuple/options described above, and `npm run check` exits 0 with 165 tests.
 
 **Out of scope, unchanged:** visual families, renderers, AI wording, algebra outside the closed linear DSL, gallery, reports, and any live evidence.
+
+## P10. Safe SVG Scene, Pinned Font, and PNG Preview Infrastructure — 2026-11-04
+
+**State:** implemented, offline-verified. This phase adds shared rendering infrastructure only: a safe typed scene, strict SVG serializer/parser, pinned-font PNG rasterization, and a local `scene-demo` preview. No real puzzle family renderer, AI SVG, browser gallery, or report exists.
+
+**Files**
+
+- Scene model, validation, contrast/bounds helpers, demo, preview registry: `src/render/scene.ts`
+- Safe SVG serializer and strict parser: `src/render/svg.ts`
+- Pinned-font PNG rendering and preview exports: `src/render/png.ts`
+- Preview CLI: `src/cli/preview.ts`
+- Tests: `tests/render/safety.test.ts`
+- Vendored font and license: `assets/fonts/DejaVuSans.ttf`, `assets/fonts/LICENSE.txt`
+- Build/scripts: `scripts/copy-assets.mjs` copies fonts to `dist/assets`; `package.json` adds `preview` and pins `saxes@6.0.0`, `@resvg/resvg-js@2.6.2`, `pngjs@7.0.0`, and `@types/pngjs@6.0.5`
+
+**Pinned font provenance**
+
+- Version: DejaVu Sans 2.37.
+- Official source: `https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.zip`.
+- Downloaded archive SHA-256: `7576310b219e04159d35ff61dd4a4ec4cdba4f35c00e002a136f00e96a908b0a`.
+- Vendored `DejaVuSans.ttf` SHA-256: `7da195a74c55bef988d0d48f9508bd5d849425c1770dba5d7bfc6ce9ed848954`.
+- Vendored `LICENSE.txt` SHA-256: `7a083b136e64d064794c3419751e5c7dd10d2f64c108fe5ba161eae5e5958a93`.
+- `getResvgOptions` sets `loadSystemFonts: false`, `fontFiles: [FONT_PATH]`, and `defaultFontFamily: "DejaVu Sans"`; rendering verifies the font hash first.
+
+**Observable behavior**
+
+- The typed scene is a 1024x1024 viewBox with stem, legend, and four labeled option regions. Validation rejects blank scenes, out-of-bounds/clipped nodes, overlapping stem/legend/options, missing or mislabeled options, narrow strokes (<4), tiny essential marks (<12), small text (<32), and text below 4.5:1 contrast against its effective panel/backdrop. Essential graphics require 3:1 against the same backdrop.
+- The serializer emits only `svg`, `g`, `rect`, `circle`, `line`, `polyline`, `polygon`, `path`, `text`, `title`, and `desc` with an explicit attribute allowlist. Text is escaped and numbers are emitted in exponent-free decimal form. The parser rejects scripts, `foreignObject`, images/links, event handlers, `style`, namespaced attributes, URLs, DOCTYPE/entities, processing instructions, comments, CDATA, unsafe path commands, duplicate IDs, wrong namespaces, wrong viewBox, and invalid layouts.
+- The scene-demo has a readable stem, legend, four labeled option boxes A-D, and fixed layout. The 512-pixel preview was inspected directly; the legend mark is separated from the legend text.
+- `renderScenePng` produces real PNGs at 1024 and 512 pixels with the pinned font. Repeated renders are byte-identical in this environment. Resvg bounding-box checks reject clipped content; `assertPngDimensions`, `assertRasterNonBlank`, and PNG signature checks reject blank or malformed images. Shared raster helpers compare changed pixels and enforce at least eight changed non-background pixels for critical-group removals.
+- `npm run preview -- --family scene-demo --seed preview-v1` writes `data/previews/scene-demo-preview-v1.svg`, `-1024.png`, and `-512.png` (ignored by Git through `/data`) and prints source/full/preview paths plus SHA-256 hashes. Observed hashes after the final layout: full `726fab7b677dcf93e4b0dea18e1a095a946fb6e5bb5b1dbcd6c8146fa4c584e2`, preview `710b7d8151cd7b94b3c65a1531ad8ecfe025abd57be688016bfa281ffbec773a`.
+- The preview registry contains only `scene-demo`; no unfinished family renderer is imported or registered. The preview CLI also resolves canonical `productionRegistry` renderers for declared SVG families, so a future family renderer is registered once and remains previewable.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/render/safety.test.ts` | exit 0; 12 tests passed. |
+| `npm run preview -- --family scene-demo --seed preview-v1` | exit 0; printed SVG, full PNG, preview PNG, and both SHA-256 hashes. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 10 files / 177 tests passed, build succeeded and copied `dist/assets/fonts`. |
+
+**Manual acceptance steps**
+
+1. Run `npm exec vitest run tests/render/safety.test.ts --reporter=verbose` and inspect the scene, parser, PNG, and CLI cases.
+2. Run `npm run preview -- --family scene-demo --seed preview-v1` and open the printed SVG and 512-pixel PNG paths directly. Confirm the stem, legend, four labels A-D, and four answer boxes are readable.
+3. Confirm the printed full/preview hashes match the observed values above and that the default output is under ignored `data/previews`.
+4. Run `npm run check` and confirm 177 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/render/safety.test.ts --reporter=verbose
+npm run preview -- --family scene-demo --seed preview-v1
+npm run check
+```
+
+Expected: 12 focused tests pass, the preview command prints existing SVG/full/preview paths with the observed hashes, and `npm run check` exits 0 with 177 tests. Open the printed paths directly; no gallery is involved.
+
+**Out of scope, unchanged:** all ten real puzzle renderers, AI SVG, browser report/gallery, visual-family layouts, and any live evidence.

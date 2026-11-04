@@ -8,3 +8,8 @@ const destination = join(projectRoot, "dist", "storage", "migrations");
 
 mkdirSync(destination, { recursive: true });
 cpSync(source, destination, { recursive: true });
+
+const assetsSource = join(projectRoot, "assets");
+const assetsDestination = join(projectRoot, "dist", "assets");
+mkdirSync(assetsDestination, { recursive: true });
+cpSync(assetsSource, assetsDestination, { recursive: true });
