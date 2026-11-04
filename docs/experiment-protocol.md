@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P02 planning layer implemented and offline-verified; no puzzle generation, persistence, provider call, rendering, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P02 planning and P03 transactional storage implemented and offline-verified; no puzzle generation, provider call, rendering, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -145,3 +145,15 @@ Failure records carry a code, stage, severity (`low`, `medium`, `high`, `critica
 Implemented in P02: strict shared plan/candidate/run schemas, deterministic full and smoke planning, SHA-256 stream derivation and hash-counter PRNG, `--dry-run`, and this protocol summary.
 
 Not implemented in P02: calibration and preflight manifests (reserved for P40/P25), prompt/schema hashing, RunManifest construction or storage, persistence, provider calls, live execution, rendering, reports, and any paid behavior. `--live` is rejected explicitly.
+
+## 11. Storage contract (P03)
+
+- Database: `data/experiment.sqlite`, opened with WAL, `foreign_keys = ON`, `busy_timeout = 5000`, and `synchronous = NORMAL`. Migrations live in `src/storage/migrations/` and are applied once through `schema_migrations`; applying them twice is a no-op.
+- Core tables: `runs`, `slots`, `stage_results`, `artifacts`, `stage_artifacts` (the stage-to-artifact link), and `events`. Request/budget tables (`logical_calls`, `request_attempts`, `budget_events`) arrive in P23; `human_labels` in P42; `protocol_freezes` in P43.
+- Unique keys: `(run_id, slot_id)`, `(run_id, slot_ordinal)`, `(run_id, slot_id, stage, version=1)`, and `(content_hash, kind)` for artifacts. Stage results are immutable: update and delete triggers abort.
+- A run is created atomically with its full slot plan and a `run_created` event. The stored manifest is canonical JSON; its hash must equal the plan hash and the stored protocol/run-kind/root-seed columns.
+- A stage commit inserts the stage result, its artifacts, the stage-artifact links, the advanced slot checkpoint, and a `stage_committed` event in one transaction. `started_at`, `finished_at`, and `elapsed_ms` are persisted; incomplete durations are null. A terminal stage requires a verdict; a non-terminal stage cannot carry one.
+- Artifacts are content-addressed by SHA-256 and bounded: JSON/raw response/request body/presentation 2 MiB, SVG 256 KiB, PNG 1 MiB. Reads verify the stored hash and byte length.
+- One writer at a time: `proper-lockfile` on the database file with a 30-second stale timeout and 10-second update. A competing writer receives `WRITER_LOCKED`.
+- Export paths are resolved only beneath `data/runs/<run-id>/`; absolute paths, traversal, drive letters, backslashes, empty segments, and symbolic links (including dangling links and symlinked parent components) are rejected. Exports themselves remain a later phase.
+- P03 does not add request/budget tables, paid calls, runner resume, JSON-as-database, or report UI.

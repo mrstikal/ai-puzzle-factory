@@ -1,6 +1,6 @@
 # AI Puzzle Factory
 
-Auditable, offline-first proof-of-concept for generating short English multiple-choice puzzles. The normative specification is [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); this repository currently implements **P01, the reproducible offline toolchain**, and **P02, deterministic domain schemas and slot planning**, and nothing else.
+Auditable, offline-first proof-of-concept for generating short English multiple-choice puzzles. The normative specification is [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); this repository currently implements **P01, the reproducible offline toolchain**, **P02, deterministic domain schemas and slot planning**, and **P03, transactional SQLite storage**, and nothing else.
 
 ## Requirements
 
@@ -54,6 +54,10 @@ The dry-run prints a strict `PlanManifest`: protocol version, run kind, root see
 
 The protocol summary, fixed thresholds, no-replacement rule, stream derivation, and PRNG algorithm are documented in [docs/experiment-protocol.md](docs/experiment-protocol.md).
 
-## Scope of P01 and P02
+## Transactional storage (P03)
 
-P01 provides toolchain bootstrap: pinned runtime and dependencies, strict TypeScript, linting, tests with the network guard, build output, side-effect-free CLI help, and acceptance documentation in [docs/PROGRESS.md](docs/PROGRESS.md). P02 adds strict shared plan/candidate/run schemas, deterministic full and smoke slot planning, SHA-256-derived independent streams, a hash-counter PRNG with golden vectors, and offline `--dry-run` output. Puzzles, persistence, provider calls, rendering, reports, and the gallery remain out of scope until their own phases.
+P03 adds a local SQLite source of truth at `data/experiment.sqlite` (ignored by Git): WAL, foreign keys, migrations, a single-writer lock, atomic run/slot creation, immutable stage results, content-addressed bounded artifacts, events, and safe export-path resolution. The storage layer is a library; no CLI command writes a database yet. The contract is documented in [docs/experiment-protocol.md](docs/experiment-protocol.md#11-storage-contract-p03).
+
+## Scope of P01, P02, and P03
+
+P01 provides toolchain bootstrap: pinned runtime and dependencies, strict TypeScript, linting, tests with the network guard, build output, side-effect-free CLI help, and acceptance documentation in [docs/PROGRESS.md](docs/PROGRESS.md). P02 adds strict shared plan/candidate/run schemas, deterministic full and smoke slot planning, SHA-256-derived independent streams, a hash-counter PRNG with golden vectors, and offline `--dry-run` output. P03 adds transactional SQLite storage for runs, slots, stage results, artifacts, and events, with migrations, writer exclusion, content addressing, and rollback-safe checkpoints. Puzzles, provider calls, rendering, reports, and the gallery remain out of scope until their own phases.

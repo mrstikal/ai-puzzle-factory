@@ -116,3 +116,59 @@ npm run check
 Expected: `P02 plan checks passed`, `no data directory`, and `npm run check` exit 0 with 33 tests.
 
 **Out of scope, unchanged:** family implementations, puzzle generation, persistence, API/provider calls, rendering, reports, gallery, calibration/preflight manifests.
+
+## P03. Transactional Run, Slot, Stage, and Artifact Storage — 2026-11-04
+
+**State:** implemented, offline-verified, accepted by the user on 2026-11-04. No paid calls, runner resume, request/budget tables, or report UI exist in this phase.
+
+**Files**
+
+- Database: `src/storage/database.ts` (open/configure, migrations, transaction helper, writer lock, typed storage errors)
+- Repository: `src/storage/repository.ts` (runs, slots, stage results, events, checkpoints, schema validation on read/write)
+- Artifacts: `src/storage/artifacts.ts` (content-addressed bounded blobs, integrity checks, safe export paths)
+- Migration: `src/storage/migrations/0001_runs.sql`
+- Build asset copy: `scripts/copy-assets.mjs`; `package.json` build now copies migrations into `dist/`
+- Tests: `tests/storage/checkpoints.test.ts`
+- Documentation: `docs/experiment-protocol.md` section 11, `README.md`, this file
+- Pinned dependencies: `better-sqlite3` 13.0.3, `@types/better-sqlite3` 9.6.0, `proper-lockfile` 4.1.2, `@types/proper-lockfile` 4.1.4
+
+**Observable behavior**
+
+- `openDatabase` enables WAL, foreign keys, a 5-second busy timeout, and `synchronous = NORMAL`; `migrate` applies `0001_runs.sql` once and is harmless on repeat.
+- `createRun` stores the canonical plan manifest, its hash, the run row, all 20/200 slot rows, and a `run_created` event in one transaction. Reopening the database returns the same manifest and slots.
+- `insertStageResult` commits the stage result, artifacts, stage-artifact links, the advanced slot checkpoint, and a `stage_committed` event atomically. An injected event failure leaves no stage result, no artifact, no link, and no advanced checkpoint.
+- Stage results are immutable: update and delete triggers abort. Duplicate stages, backward stage transitions, invalid terminal verdict placement, and mismatched duration fields are rejected.
+- Artifacts are content-addressed by SHA-256, deduplicated by `(content_hash, kind)`, bounded (JSON/raw/request/presentation 2 MiB, SVG 256 KiB, PNG 1 MiB), and verified on read. Stage payloads are also re-hashed on read.
+- `proper-lockfile` excludes a competing writer with a 30-second stale timeout and 10-second update; the second writer receives `WRITER_LOCKED`.
+- Export paths are accepted only beneath `data/runs/<run-id>/`; traversal, absolute paths, drive letters, backslashes, empty segments, dangling symlinks, symlinked parent components, and symbolic links are rejected.
+- The built `dist/storage/database.js` can open a database and apply migrations because the build copies the SQL asset.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/storage/checkpoints.test.ts` | exit 0; 18 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 3 files / 51 tests passed, build succeeded. |
+| `node --input-type=module -e "import { openDatabase, migrate } from './dist/storage/database.js'; ..."` | exit 0; built runtime opened a temporary SQLite database, applied migrations, and returned `{ c: 1 }`. |
+| `ls dist/storage/migrations` | `0001_runs.sql` present after build. |
+
+**Manual acceptance steps**
+
+1. Run `npm exec vitest run tests/storage/checkpoints.test.ts --reporter=verbose` and inspect the named tests: `creates a run atomically and reopens it with unchanged manifest and slots`, `rolls back the stage, artifact, and checkpoint on an injected failure`, `detects a competing writer and allows a new lock after release`, and `is idempotent across repeated migrations`.
+2. Confirm the rollback test reports zero stage results, zero artifacts, zero stage-artifact links, and a slot still at `planned` with checkpoint 0 after the injected failure.
+3. Run `npm run check` and confirm 51 tests pass and the build copies `dist/storage/migrations/0001_runs.sql`.
+4. Confirm no `data/` directory or database file is created by the test suite; tests use temporary directories.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/storage/checkpoints.test.ts --reporter=verbose
+npm run check
+test -f dist/storage/migrations/0001_runs.sql && echo "migration asset copied"
+test ! -d data && echo "no data directory"
+```
+
+Expected: 18 storage tests pass, `npm run check` exits 0 with 51 tests, the migration asset is present, and no `data/` directory exists.
+
+**Out of scope, unchanged:** request/budget tables, paid calls, runner resume, JSON-as-database, report UI, exports, and any live evidence.
