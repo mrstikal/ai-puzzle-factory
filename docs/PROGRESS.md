@@ -804,7 +804,7 @@ npm exec tsx -- -e 'import { PathsSpecSchema, sortPathEdges } from "./src/famili
 npm run check
 ```
 
-Expected: 16 focused tests pass; the JSON shows the correct route, the shortcut route, `shortcutValid: false`, `extraEdgeRejected: true`, and the `a path tree requires exactly activeCells-1 open edges` message; `npm run check` exits 0 with 15 files / 241 tests.
+Expected: 18 focused tests pass; the JSON shows the correct route, the shortcut route, `shortcutValid: false`, `extraEdgeRejected: true`, and the `a path tree requires exactly activeCells-1 open edges` message; `npm run check` exits 0 with 15 files / 241 tests.
 
 **Acceptance:** accepted by the user on 2026-11-04 after the focused suite, exact non-UI script, and `npm run check` evidence.
 
@@ -966,3 +966,57 @@ Expected: 6 focused renderer tests pass; the preview command exits 0 and prints 
 **Acceptance:** accepted by the user on 2026-11-04 after the focused suite, the 512-pixel preview, and `npm run check` evidence.
 
 **Out of scope, unchanged:** infer-the-axis questions, continuous shapes, diagonal axes, gallery, provider calls, and any live evidence.
+
+## P19. Counting/Membership Engine — 2026-11-04
+
+**State:** implemented, offline-verified, accepted by the user on 2026-11-04. This phase adds the counting formal engine only; no counting renderer, arbitrary polygon/triangle/square detection, gallery, provider call, or live evidence exists.
+
+**Files**
+
+- DSL, connected shapes, membership masks, set/inclusion-exclusion counts, checker: `src/families/counting/schema.ts`
+- Bounded construction, options, rules/facts, mutations: `src/families/counting/engine.ts`
+- D4 plus shape-ID canonical structure: `src/families/counting/canonical.ts`
+- Tests: `tests/families/counting.test.ts`
+- Registry: `src/families/registry.ts` registers `countingEngine` (no counting renderer)
+- Documentation: `docs/families.md`, `README.md`, this file
+
+**Observable behavior**
+
+- The DSL is a fixed 5x5 universe with two or three named shapes A/B/C. Each shape has 3-8 unique sorted orthogonally connected cells; shapes are distinct and include at least one overlapping and one exclusive cell. Queries are `unionCount`, `intersectionAll`, `exactlyOneShape`, or `exactlyKShapes(k)` with k=2/3 within the shape count. k=3 with two shapes is rejected.
+- `enumerateSolutions` enumerates membership masks over all 25 cells, cross-checks with independent set and inclusion-exclusion calculations, and returns one integer answer 0..25 with `enumeratedStates = 25`, checker version `counting-v1`, and derived `s001`/`s002` facts for the query and all summary counts.
+- `verifyAnswer` recomputes both membership-mask and set-based counts and rejects wrong, out-of-domain, and boundary answers.
+- `constructCountingSpec` grows connected shapes from a shared anchor so overlap is guaranteed, then enforces distinct shapes and at least one exclusive cell. Level 1 uses two shapes of 3-5 cells and union; level 2 two shapes of 6-8 and intersection/exactly-one; level 3 three shapes of 4-8 and intersection/exactly-k. It stays within 64 deterministic draws, skips invalid attempts within the budget, and never reduces the shape count.
+- `makeOptions` uses the correct integer plus three distinct false integers from the query's other summary counts, correct ±1, and the 0..25 domain. Exactly one choice satisfies the independent checker.
+- Rules define all four operations, whole-cell counting, A/B/C labels, overlap behavior, and the 0..25 answer domain. Facts `p001` onward list each shape's cells in row-major order.
+- `canonicalData` emits `grid=5x5`, `shapes=2|3`, query tokens, 25 `cell:r:c:mask` geometry tokens, and `region:mask:count` relation tokens for every non-empty mask. It minimizes over all eight D4 frames and every shape-ID permutation; counts alone cannot collapse different layouts.
+- The 100 fixed construction seeds produced 34/33/33 successes for levels 1/2/3 with zero failures. Every success was independently solved, verified, and option-built.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/families/counting.test.ts` | exit 0; 18 tests passed. |
+| 100 fixed construction seeds | 34/33/33 successes, zero failures; level 3 queries 20 intersection / 7 exactlyK2 / 6 exactlyK3. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 19 files / 285 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run the exact commands below.
+2. Confirm the focused counting suite passes and includes pair/triple overlap, exclusive cells, invalid/disconnected/duplicate shapes, boundary exclusion, query differences, geometry-vs-count fingerprints, wrong keys, and 100 constructions.
+3. Run the exact script below. Confirm the two-shape summary is union=7, intersectionAll=1, exactlyOne=6, exactlyK2=1; the three-shape summary is union=8, intersectionAll=1, exactlyOne=5, exactlyK2=2, exactlyK3=1; and every query's membership and set counts agree with the inclusion-exclusion union.
+4. Run `npm run check` and confirm 19 files / 285 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/families/counting.test.ts --reporter=verbose
+npm exec tsx -- -e 'import { CountingSpecSchema } from "./src/families/counting/schema.ts"; import { countQueryByMembership, countQueryBySets, inclusionExclusionUnion, summaryCounts } from "./src/families/counting/engine.ts"; const makeCells=(values)=>values.map(([row,column])=>({row,column})).sort((a,b)=>a.row-b.row||a.column-b.column); const two=[{cells:makeCells([[0,0],[0,1],[1,0],[1,1]])},{cells:makeCells([[1,1],[1,2],[2,1],[2,2]])}]; const three=[{cells:makeCells([[0,0],[0,1],[1,0],[1,1]])},{cells:makeCells([[1,1],[1,2],[2,1],[2,2]])},{cells:makeCells([[1,1],[2,1],[2,2],[3,2]])}]; const queries=[{operation:"unionCount"},{operation:"intersectionAll"},{operation:"exactlyOneShape"},{operation:"exactlyKShapes",k:2},{operation:"exactlyKShapes",k:3}]; const run=(shapes,allowK3)=>{const rows=[]; for(const query of queries){if(query.k===3&&!allowK3) continue; const spec=CountingSpecSchema.parse({shapes,query}); const membership=countQueryByMembership(spec); const sets=countQueryBySets(spec); if(membership!==sets) process.exit(1); rows.push({query:query.operation+(query.k?`:${query.k}`:""),membership,sets});} const base=CountingSpecSchema.parse({shapes,query:{operation:"unionCount"}}); return {summary:summaryCounts(base),ieUnion:inclusionExclusionUnion(base),queries:rows};}; const result={two:run(two,false),three:run(three,true)}; console.log(JSON.stringify(result,null,2));'
+npm run check
+```
+
+Expected: 18 focused tests pass; the JSON shows the two- and three-shape summaries above, every query's `membership` equals `sets`, and `ieUnion` equals the summary union (7 and 8); `npm run check` exits 0 with 19 files / 285 tests.
+
+**Acceptance:** accepted by the user on 2026-11-04 after the focused suite, exact non-UI script, and `npm run check` evidence.
+
+**Out of scope, unchanged:** counting SVG/PNG renderer, arbitrary polygon/triangle/square detection, gallery, provider calls, and any live evidence.
