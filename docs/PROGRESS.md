@@ -643,3 +643,60 @@ npm run check
 Expected: 7 focused tests pass, the preview command prints existing SVG/full/preview paths with the observed hashes, and `npm run check` exits 0 with 197 tests. Open the printed 512-pixel PNG directly; no gallery is involved.
 
 **Out of scope, unchanged:** other visual families, HTML gallery, AI SVG, reports, provider calls, and any live evidence.
+
+## P13. Transform Specification and Coordinate Engine — 2026-11-04
+
+**State:** implemented, offline-verified, accepted by the user on 2026-11-04. Transforms is a formal SVG-family engine only; no raster renderer, gallery, provider call, or live evidence exists in this phase.
+
+**Files**
+
+- DSL, exact D4 maps, composition/inverse/conjugation, source/answer validation: `src/families/transforms/schema.ts`
+- Bounded construction, orbit options, independent solving, rules/facts, mutations: `src/families/transforms/engine.ts`
+- Frame-conjugated canonical structure: `src/families/transforms/canonical.ts`
+- Tests: `tests/families/transforms.test.ts`
+- Registry: `src/families/registry.ts` registers the transforms engine (no transforms renderer)
+- Documentation: `docs/families.md`, `README.md`, this file
+
+**Observable behavior**
+
+- The DSL is a strict 5x5 binary source grid with 4-8 orthogonally connected occupied cells and one or two ordered operations from the eight declared D4 transforms. Coordinates are zero-based with the origin at the top-left. Nonbinary or non-5x5 grids, disconnected sources, occupancy outside 4-8, unknown operations, and sequences outside one or two steps are rejected.
+- The exact maps are `identity`, R90 `(r,c)->(c,4-r)`, R180 `(r,c)->(4-r,4-c)`, R270 `(r,c)->(4-c,r)`, left-right `(r,4-c)`, top-bottom `(4-r,c)`, main-diagonal `(c,r)`, and anti-diagonal `(4-c,4-r)`. Composition, inverses, associativity, and conjugation are tested over the complete D4 group; R180 is central while R90/R270 with any reflection is noncommuting.
+- `enumerateSolutions` independently applies the listed operations to the parsed source cells and returns one complete sorted output with a derived `s001` fact, `enumeratedStates = 25`, and checker version `transforms-v1`. `verifyAnswer` recomputes the coordinate result rather than comparing against a construction witness.
+- `constructTransformsSpec` grows a connected source by seeded orthogonal neighbor growth, keeps only sources with at least four distinct D4 orbit masks, rejects sources fixed by the chosen net transform, and confirms three distinct false orbit outputs exist. Level 1 uses one nonidentity rotation, level 2 one reflection, and level 3 one R90/R270 rotation plus one reflection in either order with a noncommuting check. It records attempts, source size, orbit size, operations, net transform, and draws used within 64 draws.
+- `makeOptions` uses the unique output plus three distinct false masks from the source's D4 orbit, so identical outputs cannot appear as separate choices. Exactly one shuffled A-D choice satisfies the checker; an insufficient orbit is an explicit `INSUFFICIENT_DISTRACTORS` failure.
+- The deterministic fixture source `[(0,0),(0,1),(1,1),(2,1)]` produces the hand-checked R90 output `[(0,4),(1,2),(1,3),(1,4)]` and left-right output `[(0,3),(0,4),(1,3),(2,3)]`. Applying `reflectLeftRight` then R90 instead of R90 then `reflectLeftRight` changes the answer to `[(3,2),(3,3),(3,4),(4,4)]`, so the reversed order is detectably wrong.
+- Observation facts are `p001` onward for occupied source cells in row-major order. Code-owned rules state the viewer-relative top-left origin, clockwise direction, all eight coordinate maps, listed-order semantics, the `(2,2)` tile center, and that choices are complete resulting patterns.
+- `canonicalData` minimizes the source and ordered sequence over all eight D4 frame changes, conjugating every operation by the same frame. Query tokens retain `steps=N`, ordered `op0`/`op1`, and the derived `net`; a one-step reflection and a two-step composition with the same net effect produce different fingerprints.
+- Deterministic mutations reverse a two-step sequence with distinct operations, replace the second operation of a repeated two-step sequence, replace a one-step operation with a different D4 operation, and express the same net with a different step count. The replacement branches choose an operation whose resulting answer differs when an admissible alternative exists.
+- The 100 fixed construction seeds produced 34/33/33 successes for levels 1/2/3 with zero failures; every success was independently solved, verified, and option-built.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/families/transforms.test.ts` | exit 0; 22 tests passed. |
+| `npm run lint` | exit 0; ESLint clean. |
+| `npm run typecheck` | exit 0; `tsc --noEmit` clean. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 13 files / 219 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run `npm exec vitest run tests/families/transforms.test.ts --reporter=verbose` and inspect the D4 algebra, schema, solver, option, canonicalization, construction, mutation, and registry cases.
+2. Run the exact script below. It exits non-zero unless the fixed asymmetric source produces the hand-checked R90 and left-right outputs and the reversed step order is rejected; it prints both outputs, both two-step outputs, the rejection flag, and a level-3 construction trace.
+3. Confirm the printed R90 output is `[(0,4),(1,2),(1,3),(1,4)]`, the left-right output is `[(0,3),(0,4),(1,3),(2,3)]`, and `reversedOrderRejected` is `true`.
+4. Run `npm run check` and confirm 219 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/families/transforms.test.ts --reporter=verbose
+npm exec tsx -- -e 'import { gridFromCells, TransformsSpecSchema } from "./src/families/transforms/schema.ts"; import { constructTransformsSpec, transformsEngine } from "./src/families/transforms/engine.ts"; const source=[{row:0,column:0},{row:0,column:1},{row:1,column:1},{row:2,column:1}]; const make=(operations)=>TransformsSpecSchema.parse({source:gridFromCells(source),operations}); const r90=make(["rotate90"]); const lr=make(["reflectLeftRight"]); const forward=make(["rotate90","reflectLeftRight"]); const reversed=make(["reflectLeftRight","rotate90"]); const r90Answer=transformsEngine.enumerateSolutions(r90).correctAnswer; const lrAnswer=transformsEngine.enumerateSolutions(lr).correctAnswer; const forwardAnswer=transformsEngine.enumerateSolutions(forward).correctAnswer; const reversedAnswer=transformsEngine.enumerateSolutions(reversed).correctAnswer; const reversedOrderRejected=forwardAnswer!==null&&!transformsEngine.verifyAnswer(reversed,forwardAnswer); const expectedR90=[{row:0,column:4},{row:1,column:2},{row:1,column:3},{row:1,column:4}]; const expectedLR=[{row:0,column:3},{row:0,column:4},{row:1,column:3},{row:2,column:3}]; if(JSON.stringify(r90Answer)!==JSON.stringify(expectedR90)||JSON.stringify(lrAnswer)!==JSON.stringify(expectedLR)||!reversedOrderRejected) process.exit(1); const {trace}=constructTransformsSpec("a".repeat(64),3); console.log(JSON.stringify({r90:r90Answer,leftRight:lrAnswer,forward:forwardAnswer,reversed:reversedAnswer,reversedOrderRejected,trace},null,2));'
+npm run check
+```
+
+Expected: 22 focused tests pass, the JSON shows the two hand-checked outputs, a different reversed two-step output, `reversedOrderRejected: true`, and a level-3 trace with two noncommuting operations; `npm run check` exits 0 with 219 tests.
+
+**Acceptance:** accepted by the user on 2026-11-04 after the focused suite, exact non-UI script, and `npm run check` evidence.
+
+**Out of scope, unchanged:** transform SVG layout/renderer, orientation markers, visual evidence, remaining visual families, AI wording, gallery, reports, provider calls, and any live evidence.

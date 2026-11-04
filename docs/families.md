@@ -1,6 +1,6 @@
 # Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, P11 adds the matrix formal engine, and P12 adds its renderer.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, P11 adds the matrix formal engine, P12 adds its renderer, and P13 adds the transforms formal engine.
 
 ## Scope
 
@@ -11,7 +11,7 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, P11 registers the matrix engine, and P12 registers the matrix renderer; later phases add the remaining four visual engines and four renderers.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, P11 registers the matrix engine, P12 registers the matrix renderer, and P13 registers the transforms engine; later phases add the remaining three visual engines and four renderers.
 
 ## Implemented Family Engines
 
@@ -27,7 +27,7 @@ Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
 - **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
 
-The production registry now contains all five text engines plus the matrix engine and renderer: ranking, matching, scheduling, truth, arithmetic, and matrix. The remaining four visual engines and four renderers are registered only by their owning phases.
+The production registry now contains all five text engines plus the matrix engine, matrix renderer, and transforms engine: ranking, matching, scheduling, truth, arithmetic, matrix, and transforms. The remaining three visual engines and four renderers are registered only by their owning phases.
 
 ### Attribute Matching (P06)
 
@@ -101,6 +101,19 @@ Files: `src/families/matrix/render.ts`, `tests/render/matrix.test.ts`.
 - **Preview:** `matrixRenderer` is registered in the canonical renderer registry. `npm run preview -- --family matrix --seed preview-v1` derives a 64-hex preview spec seed from the human seed, builds the checked masks, renders SVG/1024/512 files under ignored `data/previews`, and prints paths plus hashes.
 - **Evidence:** focused tests render 100 seeded scenes at 512 pixels for bounds and distinct option masks, run fixed adversarial plus ten seeded removed-critical-group pixel checks (at least eight changed non-background pixels), and reject swapped glyph positions with the explicit `SWAPPED_GLYPH` code, clipped glyphs, and injected glyphs in the empty mask. Critical-group evidence also removes marks while keeping panels; empty-mask option grids are skipped for that marks-only comparison.
 - **Verification:** `npm exec vitest run tests/render/matrix.test.ts`; `npm run preview -- --family matrix --seed preview-v1`; `npm run check`. Open the printed 512-pixel PNG and confirm the missing cell, both rule directions, every glyph, and A-D are distinguishable without a key cue.
+
+### Rotation and Reflection (P13)
+
+Files: `src/families/transforms/schema.ts`, `src/families/transforms/engine.ts`, `src/families/transforms/canonical.ts`, `tests/families/transforms.test.ts`.
+
+- **DSL:** a 5x5 binary source grid with 4-8 orthogonally connected occupied cells and a one- or two-step sequence from the eight declared D4 operations (`identity`, `rotate90`, `rotate180`, `rotate270`, `reflectLeftRight`, `reflectTopBottom`, `reflectMainDiagonal`, `reflectAntiDiagonal`). Coordinates are zero-based row/column with the origin at the top-left. Occupancy outside 4-8, disconnected sources, nonbinary or non-5x5 grids, unknown operations, and sequences outside one or two steps are rejected.
+- **Meaning:** operations apply in the displayed order about the tile center. R90 maps `(r,c)` to `(c,4-r)`, R180 to `(4-r,4-c)`, R270 to `(4-c,r)`, left-right reflection to `(r,4-c)`, top-bottom to `(4-r,c)`, main diagonal to `(c,r)`, and anti-diagonal to `(4-c,4-r)`. `enumerateSolutions` recomputes the unique complete output from those coordinate equations and returns one answer with a derived `s001` fact; it never reuses a construction witness.
+- **Construction:** `constructTransformsSpec(seed, difficulty)` grows a connected source by seeded orthogonal neighbor growth, keeps only sources whose D4 orbit has at least four distinct masks, rejects a source fixed by the chosen net transform, and verifies that three distinct false orbit outputs exist. Level 1 uses one nonidentity rotation, level 2 one reflection, and level 3 one R90/R270 rotation plus one reflection in either order with a noncommuting order check. It uses at most 64 deterministic draws and records attempts, source size, orbit size, operations, net transform, and draws used.
+- **Options/checker:** `makeOptions` requires the unique output and selects three distinct false masks from the source's D4 orbit, so identical outputs are never presented as separate choices. Exactly one of the four shuffled A-D choices satisfies the independent checker. A source orbit with fewer than three false outputs is an explicit `INSUFFICIENT_DISTRACTORS` failure.
+- **Rules/facts:** code-owned rules state the viewer-relative top-left origin, clockwise direction, all eight coordinate maps, the listed-order semantics, the tile center at `(2,2)`, and that choices are complete resulting patterns. Observation facts `p001` onward list occupied source cells in row-major order; the operation sequence is public rule/query data, not a hidden coordinate transcription.
+- **Fingerprint:** `canonicalData` minimizes the source and ordered sequence over all eight D4 frame changes, conjugating every operation by the same frame. Geometry tokens are occupied `cell:r:c` entries; query tokens are `steps=N`, ordered `op0=...`/`op1=...`, and the derived `net=...`. A one-step instruction and a two-step instruction with the same net effect remain distinct fingerprints.
+- **Mutations:** a two-step spec with distinct operations receives a reversed-order mutation; a repeated two-step sequence replaces its second operation, and a one-step spec receives a different D4 operation, in both cases chosen so the resulting answer differs when an admissible alternative exists. Both cases also receive a same-net/different-step-count mutation.
+- **Verification:** `npm exec vitest run tests/families/transforms.test.ts`; `npm run check`. Focused tests cover the complete D4 map/composition/inverse/conjugation table, noncommuting R90/R270 plus reflection, disconnected and out-of-range sources, hand-checked R90 and left-right outputs, reversed-order detection, orbit options, frame-equivalent fingerprints, step-count preservation, deterministic mutations, registry registration without a renderer, and 100 fixed constructions with independently verified outputs.
 
 ## Family Engine Contract
 
@@ -223,4 +236,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry contains the five text engines, matrix, and the matrix renderer, and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains the five text engines, matrix, the matrix renderer, and transforms, and is filled by the owning phases.
