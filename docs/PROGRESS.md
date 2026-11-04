@@ -172,3 +172,54 @@ test ! -d data && echo "no data directory"
 Expected: 18 storage tests pass, `npm run check` exits 0 with 51 tests, the migration asset is present, and no `data/` directory exists.
 
 **Out of scope, unchanged:** request/budget tables, paid calls, runner resume, JSON-as-database, report UI, exports, and any live evidence.
+
+## P04. Shared Family Contract, Options, and Canonicalization Primitives — 2026-11-04
+
+**State:** implemented, offline-verified. No real family engine, renderer, model call, persistence change, or paid behavior exists in this phase. The production registry is intentionally empty.
+
+**Files**
+
+- Contracts: `src/families/contracts.ts` (`FamilyEngine`, `VisibleRules`, fact namespaces and fixed rule IDs, `SolveResult`, strict `CanonicalStructure` schema, D4 operation vocabulary)
+- Canonicalization: `src/families/canonicalize.ts` (stable serialization and selection, feature extraction, multiset Jaccard/edit arithmetic, bounded permutation/cartesian enumeration, search counters, bitsets, reduced clue core)
+- Registry: `src/families/registry.ts` (separate formal-engine and renderer maps, duplicate/invalid registration rejection, completeness gate)
+- Options: `src/domain/answers.ts` (deep equality, exactly four choices, seeded A-D shuffle, value-derived correct label, strict choice-set schema)
+- Tests: `tests/families/contracts.test.ts`
+- Documentation: `docs/families.md`, this file
+
+**Observable behavior**
+
+- `CanonicalStructure` is a strict object with sorted `domainTokens`, `queryTokens`, `relationTokens`, and `geometryTokens`; family/query-kind mismatches, prose tokens, unsorted arrays, extra fields, malformed family tokens, arbitrary transform operations, and wrong matrix/counting geometry counts are rejected. Integer-valued token fields use one canonical decimal spelling, so padded values such as `at:00:01`, `k=02`, and `op00` are rejected. Counting region counts must agree with the membership geometry, and all 25 grid cells must appear exactly once.
+- Feature extraction emits only `q:`, `r:`, and `g:` tokens; family/domain metadata is omitted. Multiset arithmetic reports exact removed/added counts, edit distance, intersection, union, Jaccard, and common-feature count. The mandatory counting pair (exactly two versus exactly three memberships) yields edit distance 1 and Jaccard 33/35.
+- `SearchCounter` throws `SOLVER_LIMIT` at the exact cap; permutation and cartesian enumerators report `complete: false` when a collection cap stops them. `Bitset` supports finite-domain set operations.
+- `reduceClueCore` canonicalizes the input, verifies a unique baseline, removes clues in reverse lexicographic order only when the independent solver still returns the same single answer, canonicalizes the retained core again, and reports removed indices/keys and evaluation count.
+- `makeChoiceSet` returns exactly four A-D choices with deeply distinct values, a deterministic seeded order, and a correct label recomputed by deep value equality. Fewer/more than three distractors and duplicate values are rejected.
+- Fact IDs are namespaced: local `fNNN`, SVG observation `pNNN`, derived proof `sNNN`, and fixed rule IDs `r-domain`, `r-closed`, `r-target`, `r-operations`, `r-conventions`. Merging rejects duplicate IDs and namespace mismatches; reference and local-clue coverage checks reject unknown or missing facts.
+- The test-only engine demonstrates that a generated spec carries no hidden witness, a tampered spec is re-solved rather than trusted, relabeled witnesses share one canonical structure, duplicate/redundant clues do not create novelty, and a genuinely different structure does.
+- Formal engines and renderers are registered separately; duplicate registrations, wrong family/modality pairs, schemas without a `parse` function, missing engine methods, text renderers, and unknown families are rejected. Registering an engine and a renderer for the same SVG family is allowed.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/families/contracts.test.ts` | exit 0; 34 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 4 files / 85 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run `npm exec vitest run tests/families/contracts.test.ts --reporter=verbose` and inspect the named tests `keeps the hidden witness out of the spec and re-solves tampered specs`, `canonicalizes relabelings, ignores redundant clues, and separates different structures`, `reproduces the mandatory counting one-edit pair as 33/35`, `rejects non-canonical integer spellings and inconsistent counting region counts`, and `rejects duplicate, missing, and three-choice option sets`.
+2. Confirm the tampered-spec test reports a non-unique solution with no correct answer, proving the engine did not reuse a hidden witness.
+3. Confirm the counting-pair test reports edit distance 1 and Jaccard 33/35, and that duplicate/redundant clues leave the canonical structure unchanged.
+4. Run `npm run check` and confirm 85 tests pass with no API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/families/contracts.test.ts --reporter=verbose
+npm exec tsx -- -e 'import { makeChoiceSet } from "./src/domain/answers.ts"; import { CanonicalStructureSchema } from "./src/families/contracts.ts"; const set=makeChoiceSet({correct:"x",distractors:["a","b","c"],seed:"0".repeat(64)}); if(set.choices.length!==4||set.choices.map((choice)=>choice.label).join("")!=="ABCD") process.exit(1); const structure={version:1,family:"ranking",domainTokens:["size=4"],queryKind:"full_order",queryTokens:[],relationTokens:["at:0:1","before:0:1","immediatelyBefore:1:2"],geometryTokens:[]}; if(!CanonicalStructureSchema.safeParse(structure).success) process.exit(2); console.log("P04 choice and canonical-schema checks passed")'
+npm run check
+```
+
+Expected: 34 focused tests pass, `P04 choice and canonical-schema checks passed`, and `npm run check` exits 0 with 85 tests.
+
+**Out of scope, unchanged:** real family engines, renderers, scene/PNG output, persistence changes, model calls, duplicate barrier, reports, gallery, and any live evidence.

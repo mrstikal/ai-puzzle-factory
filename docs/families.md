@@ -1,0 +1,137 @@
+# Family Contracts and Canonicalization Primitives
+
+This document records the shared contract implemented in P04. It is not a claim that any real family engine or renderer exists. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use.
+
+## Scope
+
+P04 owns:
+
+- `src/families/contracts.ts`: `FamilyEngine`, `VisibleRules`, fact IDs, `SolveResult`, and the strict `CanonicalStructure` schema.
+- `src/families/canonicalize.ts`: stable serialization, feature extraction, multiset Jaccard/edit arithmetic, bounded permutation/cartesian enumeration, search counters, bitsets, and the reduced-clue-core helper.
+- `src/families/registry.ts`: separate formal-engine and renderer registries.
+- `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
+
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. The production registry may be empty until the owning family phases register their engines.
+
+## Family Engine Contract
+
+Each family implements `FamilyEngine<S, A>`:
+
+| Member | Contract |
+| --- | --- |
+| `family`, `modality` | Must match the fixed family/modality table in `src/domain/experiment.ts`. |
+| `schema` | Strict Zod schema for the family DSL. Raw API input is parsed before use. |
+| `generateSpec(seed, difficulty)` | Bounded deterministic construction. The returned spec never carries the hidden witness. |
+| `enumerateSolutions(spec)` | Independent exhaustive or constructive check. It must not trust a generator witness. Reaching a state cap is a failure, not a uniqueness proof. |
+| `verifyAnswer(spec, answer)` | Independent predicate over the full answer, not a comparison with a hidden key. |
+| `makeOptions(spec, answer, seed)` | Exactly four distinct code-owned choices, labeled A-D after a seeded shuffle. |
+| `visibleRules(spec)` | Code-owned `domain`, `closedWorld`, `target`, `operations`, and optional `conventions`. |
+| `facts(spec)` | Local or observation facts in the `fNNN` or `pNNN` namespace. Rule facts are separate. |
+| `canonicalData(spec)` | Reduced canonical structure used for structural fingerprints. |
+| `testMutations(spec)` | Deterministic positive/negative fixtures for later calibration and tests. |
+
+`SolveResult` reports `solutionCount`, `answerCount`, `correctAnswer`, a proof containing derived facts and a witness, `enumeratedStates`, and `checkerVersion`. A unique result requires one answer and a proof. An unsatisfiable result carries no answer or proof. Proof facts use the derived `sNNN` namespace.
+
+Construction and checking are separate. A generator may choose a witness internally, but the returned spec contains only the DSL. `enumerateSolutions` and `verifyAnswer` re-evaluate the DSL. A tampered spec therefore cannot inherit a hidden witness.
+
+## Visible Rules and Fact IDs
+
+`VisibleRules` is code-owned and is always shown from the start. It is not model prose and is not a repair inserted after generation.
+
+| Rule field | Fixed fact ID |
+| --- | --- |
+| `domain` | `r-domain` |
+| `closedWorld` | `r-closed` |
+| `target` | `r-target` |
+| `operations` | `r-operations` |
+| `conventions` | `r-conventions` |
+
+Text clue facts use `f001`, `f002`, and so on in accepted stored clue order. SVG observation facts use `p001`, `p002`, and so on in deterministic row/column/operation order. Derived proof facts use the separate `s001` namespace. `mergeFactInventory` merges groups, rejects duplicate IDs and namespace mismatches, and returns a deterministic sorted inventory. `assertFactReferences` rejects unknown explainable references. `assertLocalClueFactCoverage` requires each local fact exactly once for text wording.
+
+## Canonical Structure
+
+`CanonicalStructure` is a strict object:
+
+```text
+{
+  version: 1,
+  family,
+  domainTokens: string[],
+  queryKind,
+  queryTokens: string[],
+  relationTokens: string[],
+  geometryTokens: string[]
+}
+```
+
+All token arrays are lexicographically sorted. Tokens are typed code-owned strings with exact integer values and relation names; they contain no prose, seeds, option labels, or model text. Every integer-valued token field uses one canonical decimal spelling: unsigned fields accept `0` or a nonzero digit followed by digits, signed fields accept `0` or an optional minus followed by a nonzero digit and digits, and padded values such as `00`, `01`, `-0`, or `op00` are rejected. Domain/query constants are separate tokens, not one unparsed configuration string.
+
+The schema enforces the table in plan section 7.11:
+
+| Family | Query kind | Query | Relations | Geometry |
+| --- | --- | --- | --- | --- |
+| ranking | `full_order` | empty | nonempty | empty |
+| matching | `full_table` | empty | nonempty | empty |
+| scheduling | `full_schedule` | empty | nonempty | empty |
+| truth | `full_truth_vector` | empty | nonempty | empty |
+| arithmetic | `full_tuple` | empty | nonempty | empty |
+| matrix | `xor_matrix` | nonempty | empty | exactly 8 cells |
+| transforms | `apply_D4` | nonempty | empty | nonempty |
+| paths | `S_to_G_route` | nonempty | nonempty | nonempty |
+| symmetry | `reflect_half` | empty | empty | nonempty |
+| counting | `membership_count` | nonempty | nonempty | exactly 25 cells |
+
+The schema also rejects malformed family tokens: ranking clues outside the declared size, matching endpoints without canonical integer category/item notation, scheduling events/slots/resources outside their bounds, truth speaker coverage errors, arithmetic rows outside the declared coefficient/constant bounds, matrix cells outside the 3x3 visible set, arbitrary D4 operations, path edges that are not sorted orthogonal edges of the active tree, symmetry cells outside the declared known half, and counting masks outside `0..2^shapes-1`. Counting region counts must equal the number of geometry cells carrying the same membership mask, and all 25 grid cells must appear exactly once.
+
+Serialization uses canonical JSON over the validated object. `selectCanonicalStructure` chooses the lexicographically smallest serialization after the family applies its allowed relabelings or geometric frame changes. `canonicalStructureHash` hashes that serialization. Structural fingerprints therefore never hash the raw spec, the answer alone, option order, seeds, lane, difficulty label, or clue prose.
+
+## Feature Arithmetic
+
+`extractStructureFeatures` emits:
+
+- `q:<query token>` for query tokens,
+- `r:<relation token>` for relation tokens,
+- `g:<geometry token>` for geometry tokens.
+
+Family and domain tokens are omitted so constant metadata does not inflate similarity. Duplicate tokens remain a multiset count.
+
+For feature multisets `A` and `B`:
+
+```text
+removed        = sum(max(countA - countB, 0))
+added          = sum(max(countB - countA, 0))
+editDistance   = max(removed, added)
+intersection   = sum(min(countA, countB))
+union          = sum(max(countA, countB))
+jaccard        = intersection / union
+```
+
+A substitution costs one edit because `removed = added = 1`. Empty/empty has `jaccard = 1` and `editDistance = 0`; one empty side has `jaccard = 0`. The plan treats empty features or unequal structural hashes with identical complete canonical data as implementation errors, so P21 must reject those cases before applying the one-edit policy. P04 supplies arithmetic only; P21 owns the near-duplicate flag.
+
+The mandatory counting example is covered in tests: three 5x5 shapes, otherwise identical level-3 specs querying exactly two versus exactly three memberships, produce 33 common features out of 35 (`jaccard = 33/35`, `editDistance = 1`).
+
+## Bounded Search
+
+`SearchCounter` enforces a finite state limit and throws `SolverLimitError` rather than returning a partial result as proof. `collectPermutations`, `minimizeOverPermutations`, `collectCartesianProduct`, and `minimizeOverCartesianProduct` report `complete: false` when a collection cap stops enumeration. `countPermutations` and `countCartesianProduct` are exact safe-integer counters.
+
+`Bitset` provides finite-domain set operations used by family solvers and cached clue bitsets. `reduceClueCore` implements the section 6 proxy:
+
+1. Canonicalize the complete typed clue list with the family-supplied `normalize`.
+2. Sort by `clueKey` and verify the independent solver returns exactly one solution.
+3. Visit clues in reverse lexicographic order.
+4. Remove a clue only when the independent solver still returns the same single complete answer.
+5. Canonicalize the retained core again and report removed indices/keys and evaluation count.
+
+`reduceClueCore` does not prove complete logical equivalence. It is an irredundant-core proxy. Families should cache per-clue bitsets inside their `solve` callback rather than rerunning an expensive domain scan for every clue.
+
+## Options
+
+`makeChoiceSet` accepts one correct value and exactly three distractors. It rejects fewer or more than three distractors, duplicate values under deep equality, and a missing correct value. It shuffles the four values with the hash-counter PRNG and assigns A-D in the stored order. `correctLabel` is recomputed from deep value equality after shuffling. `ChoiceSetSchema` and `verifyChoiceSet` re-check the four labels, distinct values, and unique correct label.
+
+Rendered distinctness is a presentation check owned by P22; P04 checks semantic distinctness only.
+
+## Registry
+
+`FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
+
+Registration does not import a future family or placeholder renderer. The production registry starts empty and is filled by the owning phases.
