@@ -541,3 +541,55 @@ npm run check
 Expected: 12 focused tests pass, the preview command prints existing SVG/full/preview paths with the observed hashes, and `npm run check` exits 0 with 177 tests. Open the printed paths directly; no gallery is involved.
 
 **Out of scope, unchanged:** all ten real puzzle renderers, AI SVG, browser report/gallery, visual-family layouts, and any live evidence.
+
+## P11. Matrix Specification and Formal Engine — 2026-11-04
+
+**State:** implemented, offline-verified. Matrix is a formal SVG-family engine only; no matrix renderer, SVG layout, or gallery exists in this phase.
+
+**Files**
+
+- Schema/DSL/mask/solver helpers: `src/families/matrix/schema.ts`
+- Construction/options/rules/facts/scene input/mutations: `src/families/matrix/engine.ts`
+- Glyph/transpose canonicalization: `src/families/matrix/canonical.ts`
+- Tests: `tests/families/matrix.test.ts`
+- Registry: `src/families/registry.ts` registers the matrix engine (no renderer)
+- Documentation: `docs/families.md`, this file
+- Test hygiene: the existing P01/P02 data-directory probes now snapshot before/after contents so P10 previews under `data/previews` do not make `npm run check` fail.
+
+**Observable behavior**
+
+- The DSL is a fixed 3x3 matrix of four-bit masks with only the bottom-right cell null and `rule: "xor"`. Unknown rules, masks outside 0..15, and nulls outside (2,2) are rejected. Eight visible cells produce observation facts `p001`-`p008` in row-major order; the missing cell is the query.
+- `enumerateSolutions` checks all 16 candidate masks against both row and column equations and requires exactly one completion. Inconsistent visible rows/columns produce zero solutions; the checker verifies all six XOR equations and the 0..15 mask domain. Glyph-placement assertions belong to P12.
+- `constructMatrixSpec` draws four upper-left seed masks with populations 1-2/1-3/2-3 for levels 1/2/3, derives the remaining visible cells by XOR, and retries within 64 draws until at least four distinct visible masks and distinct first/second inputs in every visible row/column pair are satisfied, including the two visible inputs of the incomplete third row and third column. It records attempts, seed populations, visible distinct count, and draws used.
+- `makeOptions` uses the unique correct mask plus three one-glyph toggles and verifies exactly one satisfying choice. Empty mask 0 has an explicit empty-cell convention.
+- `matrixSceneInput` exposes typed cells, missing-cell location, four fixed glyph positions, empty convention, and A-D choices without rendering SVG. The renderer registry remains empty.
+- `canonicalData` preserves all eight shown masks and the missing location, and minimizes over 24 glyph-identity permutations plus matrix transpose. The canonical structure uses `cell:r:c:mask` tokens and explicit row/column XOR query tokens.
+- The deterministic fixture seed `a08380fb256a4f393e5f5140432682475edf6360453e2ecd5fbc142fe87624da` at level 1 produces cells `[[10,12,6],[1,4,5],[11,8,null]]`, trace `{attempts:3, seedPopulations:[2,2,1,1], visibleDistinctMasks:8, drawsUsed:12}`, unique missing mask 3, and options A=2 / B=7 / C=3 / D=11 with correct label C.
+- The 100 fixed construction seeds produced 34/33/33 successes for levels 1/2/3, zero failures, and every success was independently solved and verified.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/families/matrix.test.ts` | exit 0; 13 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 11 files / 190 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run `npm exec vitest run tests/families/matrix.test.ts --reporter=verbose` and inspect the schema, solver, options, canonicalization/scene-input, construction, and registry cases.
+2. Run the exact script below. The JSON shows `rule: "xor"`, the eight visible masks, the missing (2,2) cell, exactly one `valid: true` candidate (mask 3), and four one-glyph options with correct label C.
+3. Confirm the intended rule is explicit in `spec.rule` and `visibleRules`; no pattern is guessed and no renderer is registered.
+4. Run `npm run check` and confirm 190 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/families/matrix.test.ts --reporter=verbose
+npm exec tsx -- -e 'import { constructMatrixSpec, matrixEngine } from "./src/families/matrix/engine.ts"; import { checkMatrixCompletion } from "./src/families/matrix/schema.ts"; const seed="a08380fb256a4f393e5f5140432682475edf6360453e2ecd5fbc142fe87624da"; const {spec,trace}=constructMatrixSpec(seed,1); const result=matrixEngine.enumerateSolutions(spec); const options=matrixEngine.makeOptions(spec,result.correctAnswer,"0".repeat(64)); const candidates=Array.from({length:16},(_value,mask)=>({mask,valid:checkMatrixCompletion(spec,mask)})); if(result.solutionCount!==1||result.correctAnswer!==3||options.correctLabel!=="C"||candidates.filter((candidate)=>candidate.valid).length!==1) process.exit(1); console.log(JSON.stringify({spec,trace,solution:result.correctAnswer,candidates,options},null,2));'
+npm run check
+```
+
+Expected: 13 focused tests pass, exactly one candidate mask (3) is valid, and `npm run check` exits 0 with 190 tests.
+
+**Out of scope, unchanged:** matrix SVG layout/renderer, visual evidence, remaining visual families, AI wording, gallery, reports, and any live evidence.

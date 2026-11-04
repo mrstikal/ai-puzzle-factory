@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -42,7 +42,7 @@ const FULL_PLAN_HASH =
   "e7dbe198a948731eb4fd5b030a5d30dcf96aa8b7dfa639cbb6a5f38c4226e273";
 
 const DRY_RUN_PROBE = `
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import http from "node:http";
 import https from "node:https";
@@ -75,16 +75,16 @@ net.connect = function (...args) {
 };
 
 (async () => {
-  const before = existsSync("data");
+  const before = existsSync("data") ? readdirSync("data").sort().join(",") : "";
   const { main } = await import(pathToFileURL(process.cwd() + "/src/cli/experiment.ts").href);
   const code = await main(["node", "experiment", "--dry-run", "--seed", "puzzle-poc-v1"]);
-  const after = existsSync("data");
+  const after = existsSync("data") ? readdirSync("data").sort().join(",") : "";
   if (calls !== 0) {
     console.error("network-calls:" + calls);
     process.exit(3);
   }
-  if (before || after) {
-    console.error("data-directory-created");
+  if (before !== after) {
+    console.error("data-directory-changed");
     process.exit(4);
   }
   if (code !== 0) {
@@ -530,9 +530,9 @@ describe("strict schemas", () => {
 });
 
 describe("CLI dry-run", () => {
-  it("prints a deterministic manifest without network, database, or data directory", () => {
+  it("prints a deterministic manifest without changing the data directory or using the network", () => {
     const dataDirectory = join(process.cwd(), "data");
-    expect(existsSync(dataDirectory)).toBe(false);
+    const before = existsSync(dataDirectory) ? readdirSync(dataDirectory).sort() : [];
     const result = spawnSync(TSX_BIN, ["--eval", DRY_RUN_PROBE], { encoding: "utf8" });
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
@@ -540,7 +540,7 @@ describe("CLI dry-run", () => {
     const plan = PlanManifestSchema.parse(JSON.parse(result.stdout));
     expect(plan).toEqual(buildPlanManifest({ runKind: "full" }));
     expect(computePlanHash(plan)).toBe(plan.planHash);
-    expect(existsSync(dataDirectory)).toBe(false);
+    expect(existsSync(dataDirectory) ? readdirSync(dataDirectory).sort() : []).toEqual(before);
   });
 
   it("rejects conflicting, unavailable, or missing execution modes explicitly", () => {

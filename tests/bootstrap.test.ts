@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { createServer, request as namedHttpRequest, type ServerResponse } from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -10,7 +10,7 @@ import { allowLocalFake, clearLocalFakes } from "./setup.js";
 const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
 
 const IMPORT_SIDE_EFFECT_PROBE = `
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import http from "node:http";
 import https from "node:https";
@@ -37,15 +37,15 @@ net.connect = function (...args) {
 };
 
 (async () => {
-  const before = existsSync("data");
+  const before = existsSync("data") ? readdirSync("data").sort().join(",") : "";
   await import(pathToFileURL(process.cwd() + "/src/cli/experiment.ts").href);
-  const after = existsSync("data");
+  const after = existsSync("data") ? readdirSync("data").sort().join(",") : "";
   if (calls !== 0) {
     console.error("network-calls:" + calls);
     process.exit(3);
   }
-  if (before || after) {
-    console.error("data-directory-created");
+  if (before !== after) {
+    console.error("data-directory-changed");
     process.exit(4);
   }
   console.log("side-effect-free");
@@ -179,14 +179,14 @@ describe("offline test network guard", () => {
 });
 
 describe("experiment CLI bootstrap", () => {
-  it("imports without filesystem or network side effects", () => {
+  it("imports without changing the data directory or using the network", () => {
     const dataDirectory = join(process.cwd(), "data");
-    expect(existsSync(dataDirectory)).toBe(false);
+    const before = existsSync(dataDirectory) ? readdirSync(dataDirectory).sort() : [];
     const result = spawnSync(TSX_BIN, ["--eval", IMPORT_SIDE_EFFECT_PROBE], { encoding: "utf8" });
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("side-effect-free");
     expect(result.status).toBe(0);
-    expect(existsSync(dataDirectory)).toBe(false);
+    expect(existsSync(dataDirectory) ? readdirSync(dataDirectory).sort() : []).toEqual(before);
   });
 
   it("describes only the implemented capabilities in help", () => {

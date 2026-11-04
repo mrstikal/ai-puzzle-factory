@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { deepEqual } from "../../src/domain/answers.js";
 import type { Difficulty } from "../../src/domain/experiment.js";
-import { SVG_FAMILIES } from "../../src/domain/experiment.js";
 import { canonicalStructuresEqual } from "../../src/families/canonicalize.js";
 import {
   CanonicalStructureSchema,
@@ -479,13 +478,10 @@ describe("arithmetic engine contract and registry", () => {
     expect(facts[0]?.text).toContain("(1)*x");
   });
 
-  it("registers all five text engines and no visual stub", () => {
+  it("registers all five text engines and no visual renderer stub", () => {
     const families = productionRegistry.listEngineFamilies();
     expect(families).toEqual(
       expect.arrayContaining(["ranking", "matching", "scheduling", "truth", "arithmetic"]),
-    );
-    expect(families.some((family) => (SVG_FAMILIES as readonly string[]).includes(family))).toBe(
-      false,
     );
     expect(productionRegistry.listRendererFamilies()).toEqual([]);
     expect(productionRegistry.getEngine("arithmetic").family).toBe("arithmetic");

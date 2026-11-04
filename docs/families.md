@@ -1,6 +1,6 @@
 # Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, and P09 adds small arithmetic constraints.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, and P11 adds the matrix formal engine.
 
 ## Scope
 
@@ -11,7 +11,7 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, and P09 registers arithmetic; later phases add the five visual engines and renderers.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, and P11 registers the matrix engine; later phases add the remaining four visual engines and renderers.
 
 ## Implemented Family Engines
 
@@ -27,7 +27,7 @@ Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
 - **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
 
-The production registry now contains all five text engines: ranking, matching, scheduling, truth, and arithmetic. The remaining five visual engines and five renderers are registered only by their owning phases.
+The production registry now contains all five text engines plus the matrix formal engine: ranking, matching, scheduling, truth, arithmetic, and matrix. The remaining four visual engines and five renderers are registered only by their owning phases.
 
 ### Attribute Matching (P06)
 
@@ -78,6 +78,18 @@ Files: `src/families/arithmetic/schema.ts`, `src/families/arithmetic/engine.ts`,
 - **Rules/facts:** code-owned rules state the domain, `allDifferent`, exact-integer comparison semantics, and the three operators. Facts display every constraint with explicit coefficients and parenthesized negatives.
 - **Fingerprint:** `canonicalData` applies `reduceClueCore` to normalized rows. Strict `< c` maps to `<= c-1`; `<=` rows divide coefficients by their positive gcd and use `floor(c/g)` without flipping direction; equality rows require divisibility, divide the full row, and make the first nonzero coefficient positive. The retained coefficient/comparison graph is canonicalized over the six variable relabelings. Domain and `allDifferent` stay in the domain tokens. `2*x<11`, `2*x<=11`, and `x<=5` normalize identically without changing the visible DSL.
 - **Verification:** `npm exec vitest run tests/families/arithmetic.test.ts`; `npm run check`. Focused tests cover no-integer, rank-deficient/multiple, strict-vs-nonstrict boundary, equivalent inequality fingerprints, negative bounds, `allDifferent`, forbidden nonlinear grammar, wrong keys, deterministic mutations, 100 fixed constructions, and the five-text-engine/no-visual-stub registry assertion.
+
+### Matrix Completion (P11)
+
+Files: `src/families/matrix/schema.ts`, `src/families/matrix/engine.ts`, `src/families/matrix/canonical.ts`, `tests/families/matrix.test.ts`.
+
+- **DSL:** a fixed 3x3 matrix of four-bit masks with only the bottom-right cell null; `rule` is the literal `xor`. Each mask uses four fixed glyph positions; set membership is binary. Unknown rules, masks outside 0..15, and nulls outside (2,2) are rejected. Observation facts are `p001`-`p008` for the eight visible cells in row-major order.
+- **Meaning:** every complete row has `third = first XOR second`; every complete column has `bottom = top XOR middle`; the missing cell must satisfy both remaining equations. `enumerateSolutions` checks all 16 candidate masks and requires exactly one completion. Empty mask 0 is explicitly drawn as an empty four-position mini-grid.
+- **Construction:** `constructMatrixSpec(seed, difficulty)` draws four upper-left seed masks with populations 1-2/1-3/2-3 for levels 1/2/3, derives the other visible cells by XOR, and retries within 64 draws until the eight visible masks contain at least four distinct values and every visible row/column input pair has distinct first/second values, including the two visible inputs of the incomplete third row and third column. It records attempts, seed populations, visible distinct count, and draws used.
+- **Options/checker:** `makeOptions` uses the unique correct mask plus three one-glyph toggles, and independently verifies that only one choice satisfies all six row/column equations. Every option uses the same four fixed glyph positions; color is never an identity cue.
+- **Scene input:** `matrixSceneInput` exposes the typed 3x3 cells, missing-cell location, fixed glyph positions, empty-mask convention, and A-D choices without rendering SVG. No matrix renderer is registered in P11.
+- **Fingerprint:** `canonicalData` preserves all eight shown masks and the missing-cell location, and minimizes the matrix over the 24 glyph-identity permutations and the matrix transpose. The canonical structure uses `cell:r:c:mask` geometry tokens with `row=xor` and `column=xor`.
+- **Verification:** `npm exec vitest run tests/families/matrix.test.ts`; `npm run check`. Focused tests cover inconsistent rows/columns, unknown rule, malformed missing cell, empty mask, one-bit distractors, transpose/glyph renaming, typed scene input, deterministic mutations, and 100 fixed constructions.
 
 ## Family Engine Contract
 
@@ -200,4 +212,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry contains all five text engines and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains the five text engines and matrix, and is filled by the owning phases.
