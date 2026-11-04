@@ -8,6 +8,7 @@ import {
 import type { FamilyEngine } from "./contracts.js";
 import { matchingEngine } from "./matching/engine.js";
 import { rankingEngine } from "./ranking/engine.js";
+import { schedulingEngine } from "./scheduling/engine.js";
 
 export interface RendererContract<Spec = unknown, Scene = unknown> {
   readonly family: SvgFamily;
@@ -174,3 +175,4 @@ export const productionRegistry = new FamilyRegistry();
 
 productionRegistry.registerEngine(rankingEngine);
 productionRegistry.registerEngine(matchingEngine);
+productionRegistry.registerEngine(schedulingEngine);

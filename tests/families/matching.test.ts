@@ -544,7 +544,8 @@ describe("matching engine contract and registry", () => {
   });
 
   it("registers ranking and matching as real text engines", () => {
-    expect(productionRegistry.listEngineFamilies()).toEqual(["ranking", "matching"]);
+    expect(productionRegistry.listEngineFamilies()).toContain("ranking");
+    expect(productionRegistry.listEngineFamilies()).toContain("matching");
     expect(productionRegistry.getEngine("matching").family).toBe("matching");
     expect(productionRegistry.getEngine("matching").modality).toBe("text");
   });

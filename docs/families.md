@@ -1,6 +1,6 @@
 # Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine and P06 adds the real attribute-matching engine.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, and P07 adds scheduling.
 
 ## Scope
 
@@ -11,7 +11,7 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking and P06 registers matching; later phases add the remaining engines and renderers.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, and P07 registers scheduling; later phases add the remaining engines and renderers.
 
 ## Implemented Family Engines
 
@@ -27,7 +27,20 @@ Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
 - **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
 
-The production registry now contains the ranking and matching engines. The remaining eight engines and five renderers are registered only by their owning phases.
+The production registry now contains ranking, matching, and scheduling. The remaining seven engines and five renderers are registered only by their owning phases.
+
+### Scheduling/Placement (P07)
+
+Files: `src/families/scheduling/schema.ts`, `src/families/scheduling/engine.ts`, `src/families/scheduling/canonical.ts`, `tests/families/scheduling.test.ts`.
+
+- **DSL:** four events `E1-E4`, four ordered consecutive slots `1-4`, and two capacity-2 resources `R1-R2`. A spec contains 4-12 typed clues from `at`, `notAt`, `before`, `immediatelyBefore`, `usesResource`, and `notResource`. Events/resources are fixed IDs; resource assignment belongs to an event. Self order-relations, exact duplicates, and same-pair time/resource contradictions are rejected. Local facts are `f001` onward in stored clue order.
+- **Meaning:** one event per slot, no overlap, exactly two events per resource. A complete answer is a four-row table ordered by event, with each slot used once and each resource used exactly twice. `enumerateSolutions` independently enumerates 4! event orders x C(4,2) resource choices = 144 schedules and evaluates both temporal and resource predicates.
+- **Construction:** `constructSchedulingSpec(seed, difficulty)` chooses a witness order and a two-of-four resource choice. A three-fact `before` chain plus three true resource facts forms the unique six-fact anchor. It adds one temporal, one resource, and 2-4 other true clues, for 10-12 initial clues, then removes redundant clues in seeded order to floors 8/6/4 for levels 1/2/3. It uses at most 64 draws and returns a trace with anchor, temporal/resource, additional, pruning, and draw counts.
+- **Options:** `makeOptions` requires the unique schedule and selects three false choices from the remaining 143 legal schedules. Every choice remains a legal full schedule with the same capacity-two resources; exactly one choice satisfies all clues.
+- **Rules/facts:** code-owned English rules include the fixed slots, the capacity-2 resources, all six operations, and the row-order convention. Facts use the code-owned event/slot/resource templates.
+- **Fingerprint:** `canonicalData` applies `reduceClueCore`, then minimizes the retained typed event/slot/resource constraint graph over 4! event x 2! resource = 48 relabelings. Ordered slot positions and the capacity vector are preserved; do not fingerprint the unpruned clue list.
+- **Verification:** `npm exec vitest run tests/families/scheduling.test.ts`; `npm run check`. Focused tests cover resource-only ambiguity, temporal contradiction, exact capacity, immediately-before meaning, wrong resource despite correct time order, canonical renaming, redundant/implied facts, deterministic mutations, registry registration, and 100 fixed constructions with at least 95 independently verified successes.
+
 
 ### Attribute Matching (P06)
 
@@ -164,4 +177,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry contains ranking and matching and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains ranking, matching, and scheduling and is filled by the owning phases.

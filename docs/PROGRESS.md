@@ -325,3 +325,55 @@ npm run check
 Expected: 15 focused tests pass, the fixture prints the rules/facts/unique table/options described above, and `npm run check` exits 0 with 115 tests.
 
 **Out of scope, unchanged:** scheduling, truth, arithmetic, visual families, AI wording, renderers, gallery, duplicate barrier, reports, and any live evidence.
+
+## P07. Scheduling/Placement Engine — 2026-11-04
+
+**State:** implemented, offline-verified. Scheduling is the third real text engine registered in the production registry. No model call, renderer, calendar, duration, or timezone behavior exists in this phase.
+
+**Files**
+
+- Schema/DSL/table/solver helpers: `src/families/scheduling/schema.ts`
+- Construction/options/rules/facts/mutations: `src/families/scheduling/engine.ts`
+- 4! x 2! canonicalization: `src/families/scheduling/canonical.ts`
+- Tests: `tests/families/scheduling.test.ts`
+- Registry: `src/families/registry.ts` now registers ranking, matching, and scheduling
+- Documentation: `docs/families.md`, this file
+
+**Observable behavior**
+
+- The DSL has four events, four ordered consecutive slots, and two capacity-2 resources. It accepts 4-12 typed clues from `at`, `notAt`, `before`, `immediatelyBefore`, `usesResource`, and `notResource`. Self order-relations, exact duplicates, and same-pair time/resource contradictions are rejected. Local facts are `f001` onward in stored clue order.
+- The answer is a complete four-row table ordered by event, using every slot once and each resource exactly twice. `enumerateSolutions` independently enumerates 144 schedules (24 orders x 6 resource choices) and evaluates both temporal and resource predicates. Unique results carry one derived `s001` proof fact.
+- `constructSchedulingSpec` chooses a witness order and resource choice. A three-fact `before` chain plus three true resource facts forms a unique six-fact anchor. It adds one temporal, one resource, and 2-4 other true clues, for 10-12 initial clues, then prunes redundant clues in seeded order to floors 8/6/4 for levels 1/2/3. It uses at most 64 draws and returns a trace with anchor, temporal/resource, additional, pruning, and draw counts.
+- `makeOptions` requires the unique schedule and selects three false choices from the remaining 143 legal schedules. Every choice remains a legal full schedule with capacity-two resources; exactly one choice satisfies all clues.
+- `visibleRules` includes fixed slots, capacity-2 resources, all six operations, and row-order conventions. `facts` uses code-owned event/slot/resource templates.
+- `canonicalData` applies `reduceClueCore`, then minimizes the retained typed event/slot/resource graph over 4! x 2! = 48 relabelings. Ordered slot positions and the capacity vector are preserved.
+- Removing a necessary resource fact from the unique fixture creates two complete schedules; it no longer passes even though the time order stays unique.
+- The deterministic fixture seed `a2e13ce5ef5cba0e26fc056304ba4a6d0c552d61636b90c006238feeb12426ce` at level 1 produces 8 clues, trace `{anchorCount:6, temporalAdded:1, resourceAdded:1, additionalRequested:6, additionalAdded:6, prunedClues:4, clueCountBeforePruning:12, clueCountAfterPruning:8, drawsUsed:23}`, unique schedule E1-slot3-R1 / E2-slot1-R2 / E3-slot2-R2 / E4-slot4-R1, and options with correct label C.
+- The 100 fixed construction seeds produced 34/33/33 successes for levels 1/2/3, zero failures, and every success was independently solved and verified.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/families/scheduling.test.ts` | exit 0; 17 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 7 files / 132 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run `npm exec vitest run tests/families/scheduling.test.ts --reporter=verbose` and inspect `enumerates the 144-schedule domain and requires one full schedule`, `detects resource-only ambiguity and temporal contradiction`, `detects a second complete schedule when a necessary resource fact is removed`, `builds four legal schedules, keeps capacity, and validates the key`, `canonicalizes independent event and resource relabelings`, and `constructs at least 95 of 100 fixed seeds with independent uniqueness`.
+2. Run the exact script below. Inspect the printed deterministic fixture: eight English facts, the unique full schedule, four legal complete choices, and correct label C.
+3. Confirm every option uses every slot once and each resource exactly twice, and that only the labeled correct table satisfies all eight clues.
+4. Run `npm run check` and confirm 132 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/families/scheduling.test.ts --reporter=verbose
+npm exec tsx -- -e 'import { constructSchedulingSpec, schedulingEngine } from "./src/families/scheduling/engine.ts"; const seed="a2e13ce5ef5cba0e26fc056304ba4a6d0c552d61636b90c006238feeb12426ce"; const {spec,trace}=constructSchedulingSpec(seed,1); const result=schedulingEngine.enumerateSolutions(spec); const options=schedulingEngine.makeOptions(spec,result.correctAnswer,"0".repeat(64)); const expected=[{event:0,slot:3,resource:0},{event:1,slot:1,resource:1},{event:2,slot:2,resource:1},{event:3,slot:4,resource:0}]; if(result.solutionCount!==1||JSON.stringify(result.correctAnswer)!==JSON.stringify(expected)||options.correctLabel!=="C") process.exit(1); console.log(JSON.stringify({spec,trace,rules:schedulingEngine.visibleRules(spec),facts:schedulingEngine.facts(spec),solution:result.correctAnswer,options},null,2));'
+npm run check
+```
+
+Expected: 17 focused tests pass, the fixture prints the rules/facts/unique schedule/options described above, and `npm run check` exits 0 with 132 tests.
+
+**Out of scope, unchanged:** truth, arithmetic, visual families, AI wording, renderers, general calendars, durations, timezone handling, gallery, reports, and any live evidence.
