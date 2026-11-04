@@ -1,6 +1,6 @@
 # Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, and P07 adds scheduling.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, and P08 adds truth values.
 
 ## Scope
 
@@ -11,7 +11,7 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, and P07 registers scheduling; later phases add the remaining engines and renderers.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, and P08 registers truth; later phases add the remaining engines and renderers.
 
 ## Implemented Family Engines
 
@@ -27,20 +27,7 @@ Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
 - **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
 
-The production registry now contains ranking, matching, and scheduling. The remaining seven engines and five renderers are registered only by their owning phases.
-
-### Scheduling/Placement (P07)
-
-Files: `src/families/scheduling/schema.ts`, `src/families/scheduling/engine.ts`, `src/families/scheduling/canonical.ts`, `tests/families/scheduling.test.ts`.
-
-- **DSL:** four events `E1-E4`, four ordered consecutive slots `1-4`, and two capacity-2 resources `R1-R2`. A spec contains 4-12 typed clues from `at`, `notAt`, `before`, `immediatelyBefore`, `usesResource`, and `notResource`. Events/resources are fixed IDs; resource assignment belongs to an event. Self order-relations, exact duplicates, and same-pair time/resource contradictions are rejected. Local facts are `f001` onward in stored clue order.
-- **Meaning:** one event per slot, no overlap, exactly two events per resource. A complete answer is a four-row table ordered by event, with each slot used once and each resource used exactly twice. `enumerateSolutions` independently enumerates 4! event orders x C(4,2) resource choices = 144 schedules and evaluates both temporal and resource predicates.
-- **Construction:** `constructSchedulingSpec(seed, difficulty)` chooses a witness order and a two-of-four resource choice. A three-fact `before` chain plus three true resource facts forms the unique six-fact anchor. It adds one temporal, one resource, and 2-4 other true clues, for 10-12 initial clues, then removes redundant clues in seeded order to floors 8/6/4 for levels 1/2/3. It uses at most 64 draws and returns a trace with anchor, temporal/resource, additional, pruning, and draw counts.
-- **Options:** `makeOptions` requires the unique schedule and selects three false choices from the remaining 143 legal schedules. Every choice remains a legal full schedule with the same capacity-two resources; exactly one choice satisfies all clues.
-- **Rules/facts:** code-owned English rules include the fixed slots, the capacity-2 resources, all six operations, and the row-order convention. Facts use the code-owned event/slot/resource templates.
-- **Fingerprint:** `canonicalData` applies `reduceClueCore`, then minimizes the retained typed event/slot/resource constraint graph over 4! event x 2! resource = 48 relabelings. Ordered slot positions and the capacity vector are preserved; do not fingerprint the unpruned clue list.
-- **Verification:** `npm exec vitest run tests/families/scheduling.test.ts`; `npm run check`. Focused tests cover resource-only ambiguity, temporal contradiction, exact capacity, immediately-before meaning, wrong resource despite correct time order, canonical renaming, redundant/implied facts, deterministic mutations, registry registration, and 100 fixed constructions with at least 95 independently verified successes.
-
+The production registry now contains ranking, matching, scheduling, and truth. The remaining six engines and five renderers are registered only by their owning phases.
 
 ### Attribute Matching (P06)
 
@@ -55,6 +42,30 @@ Files: `src/families/matching/schema.ts`, `src/families/matching/engine.ts`, `sr
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, then minimizes the retained signed, category-typed relation graph over 24^3 = 13,824 independent relabelings of the four item IDs in each category. Signs and category roles are preserved; textual labels and row order are removed. Tokens are `same`/`different` with category-index.item endpoints.
 - **Verification:** `npm exec vitest run tests/families/matching.test.ts`; `npm run check`. Focused tests cover schema diagnostics, complete/unsat/ambiguous tables, cross-category negatives, repeated category values, wrong keys, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed constructions with at least 95 independently verified successes.
 
+### Scheduling/Placement (P07)
+
+Files: `src/families/scheduling/schema.ts`, `src/families/scheduling/engine.ts`, `src/families/scheduling/canonical.ts`, `tests/families/scheduling.test.ts`.
+
+- **DSL:** four events `E1-E4`, four ordered consecutive slots `1-4`, and two capacity-2 resources `R1-R2`. A spec contains 4-12 typed clues from `at`, `notAt`, `before`, `immediatelyBefore`, `usesResource`, and `notResource`. Events/resources are fixed IDs; resource assignment belongs to an event. Self order-relations, exact duplicates, and same-pair time/resource contradictions are rejected. Local facts are `f001` onward in stored clue order.
+- **Meaning:** one event per slot, no overlap, exactly two events per resource. A complete answer is a four-row table ordered by event, with each slot used once and each resource used exactly twice. `enumerateSolutions` independently enumerates 4! event orders x C(4,2) resource choices = 144 schedules and evaluates both temporal and resource predicates.
+- **Construction:** `constructSchedulingSpec(seed, difficulty)` chooses a witness order and a two-of-four resource choice. A three-fact `before` chain plus three true resource facts forms the unique six-fact anchor. It adds one temporal, one resource, and 2-4 other true clues, for 10-12 initial clues, then removes redundant clues in seeded order to floors 8/6/4 for levels 1/2/3. It uses at most 64 draws and returns a trace with anchor, temporal/resource, additional, pruning, and draw counts.
+- **Options:** `makeOptions` requires the unique schedule and selects three false choices from the remaining 143 legal schedules. Every choice remains a legal full schedule with the same capacity-two resources; exactly one choice satisfies all clues.
+- **Rules/facts:** code-owned English rules include the fixed slots, the capacity-2 resources, all six operations, and the row-order convention. Facts use the code-owned event/slot/resource templates.
+- **Fingerprint:** `canonicalData` applies `reduceClueCore`, then minimizes the retained typed event/slot/resource constraint graph over 4! event x 2! resource = 48 relabelings. Ordered slot positions and the capacity vector are preserved; do not fingerprint the unpruned clue list.
+- **Verification:** `npm exec vitest run tests/families/scheduling.test.ts`; `npm run check`. Focused tests cover resource-only ambiguity, temporal contradiction, exact capacity, immediately-before meaning, wrong resource despite correct time order, canonical renaming, redundant/implied facts, deterministic mutations, registry registration, and 100 fixed constructions with at least 95 independently verified successes.
+
+### Truth Values (P08)
+
+Files: `src/families/truth/schema.ts`, `src/families/truth/engine.ts`, `src/families/truth/canonical.ts`, `tests/families/truth.test.ts`.
+
+- **DSL:** three people at level 1 and four at levels 2-3. One typed statement AST per person plus a visible `exactTruthful` integer `1..N-1`. Leaves are `truthful(personId)`; operators are `not`, `and`, `or`, and `xor`; each statement is limited to depth 2, three leaves, and seven nodes. No arbitrary English, quoted statements, temporal claims, or extra person types. Local facts are `f001` onward and preserve every original statement.
+- **Meaning:** a truth teller's statement is true and a liar's statement is false, so every assignment must satisfy `T[i] === evaluate(statement[i], T)` and the exact truthful count. XOR means exactly one operand is true. The answer is the complete T/F vector for all people, not a set of merely possible people.
+- **Solver:** `enumerateSolutions` enumerates all 2^N <= 16 assignments, evaluates ASTs recursively, and requires one full vector. Unique results carry one derived `s001` proof fact; zero/multiple fixed points and count contradictions carry no answer or proof.
+- **Construction:** `constructTruthSpec(seed, difficulty)` chooses a witness vector with an extreme truthful count (1 or N-1), builds one leaf/not anchor statement per person (3 at level 1, 4 at levels 2-3), which is unique with the count, then tries seeded one-slot binary/XOR enrichment and up to eight full random selections from the finite legal AST pool. Every candidate is independently solved; at most 64 combinations are attempted. The anchor remains the fallback, so a valid unique system is never silently repaired. Level 1 allows at most one binary statement; level 2 allows and/or; level 3 also allows xor.
+- **Options:** `makeOptions` requires the unique vector and selects three false complete T/F vectors; false choices may violate the count or a statement, but always list every person. Exactly one choice satisfies the spec.
+- **Rules/facts:** code-owned rules state the exact truthful count, role semantics, all four AST operators, depth/leaf/node limits, and self-reference semantics. Facts preserve every original statement as `P<i> says: ...`.
+- **Fingerprint:** `canonicalData` applies `reduceClueCore` to speaker-linked statement-equivalence predicates, then canonicalizes the retained AST/operator graph over person relabelings. Commutative operands are sorted, negation is preserved, and population/exact count stay in the domain tokens. The reduced core may contain fewer than N speaker predicates; the original spec and facts always keep all N statements.
+- **Verification:** `npm exec vitest run tests/families/truth.test.ts`; `npm run check`. Focused tests cover zero/multiple fixed points, exactly-one XOR, count contradictions, oversized/foreign ASTs, independent evaluation, wrong vectors, renaming/commutative forms, redundant-statement reduction, deterministic mutations, registry registration, and 100 fixed constructions across both populations with at least 95 successes.
 
 ## Family Engine Contract
 
@@ -124,7 +135,7 @@ The schema enforces the table in plan section 7.11:
 | symmetry | `reflect_half` | empty | empty | nonempty |
 | counting | `membership_count` | nonempty | nonempty | exactly 25 cells |
 
-The schema also rejects malformed family tokens: ranking clues outside the declared size, matching endpoints without canonical integer category/item notation, scheduling events/slots/resources outside their bounds, truth speaker coverage errors, arithmetic rows outside the declared coefficient/constant bounds, matrix cells outside the 3x3 visible set, arbitrary D4 operations, path edges that are not sorted orthogonal edges of the active tree, symmetry cells outside the declared known half, and counting masks outside `0..2^shapes-1`. Counting region counts must equal the number of geometry cells carrying the same membership mask, and all 25 grid cells must appear exactly once.
+The schema also rejects malformed family tokens: ranking clues outside the declared size, matching endpoints without canonical integer category/item notation, scheduling events/slots/resources outside their bounds, truth speaker indices outside the population or duplicate speakers, arithmetic rows outside the declared coefficient/constant bounds, matrix cells outside the 3x3 visible set, arbitrary D4 operations, path edges that are not sorted orthogonal edges of the active tree, symmetry cells outside the declared known half, and counting masks outside `0..2^shapes-1`. Counting region counts must equal the number of geometry cells carrying the same membership mask, and all 25 grid cells must appear exactly once. Truth relation tokens may contain a reduced subset of speaker predicates for internal fingerprinting. The DSL still requires one statement per person; the reduced core is not a replacement DSL with missing public statements.
 
 Serialization uses canonical JSON over the validated object. `selectCanonicalStructure` chooses the lexicographically smallest serialization after the family applies its allowed relabelings or geometric frame changes. `canonicalStructureHash` hashes that serialization. Structural fingerprints therefore never hash the raw spec, the answer alone, option order, seeds, lane, difficulty label, or clue prose.
 
@@ -177,4 +188,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry contains ranking, matching, and scheduling and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains ranking, matching, scheduling, and truth and is filled by the owning phases.

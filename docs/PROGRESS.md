@@ -377,3 +377,55 @@ npm run check
 Expected: 17 focused tests pass, the fixture prints the rules/facts/unique schedule/options described above, and `npm run check` exits 0 with 132 tests.
 
 **Out of scope, unchanged:** truth, arithmetic, visual families, AI wording, renderers, general calendars, durations, timezone handling, gallery, reports, and any live evidence.
+
+## P08. Truth-Value Engine — 2026-11-04
+
+**State:** implemented, offline-verified. Truth is the fourth real text engine registered in the production registry. No model call, renderer, English truth statements, or recursive proof system exists in this phase.
+
+**Files**
+
+- Schema/AST/pool/solver helpers: `src/families/truth/schema.ts`
+- Construction/options/rules/facts/mutations: `src/families/truth/engine.ts`
+- Speaker-linked reduced-core canonicalization: `src/families/truth/canonical.ts`
+- Tests: `tests/families/truth.test.ts`
+- Shared schema adjustment: `src/families/contracts.ts` now permits a reduced truth speaker subset in internal fingerprints while the DSL still requires one statement per person
+- Registry: `src/families/registry.ts` now registers ranking, matching, scheduling, and truth
+- Documentation: `docs/families.md`, this file
+
+**Observable behavior**
+
+- The DSL has three people at level 1 and four at levels 2-3, one typed statement AST per person, and a visible `exactTruthful` in `1..N-1`. AST leaves are `truthful(personId)`; operators are `not`, `and`, `or`, `xor`; each statement is limited to depth 2, three leaves, and seven nodes. Foreign AST kinds, oversized ASTs, out-of-population leaves, wrong statement counts, and invalid counts are rejected before evaluation.
+- `enumerateSolutions` scans all 2^N <= 16 assignments, evaluates ASTs recursively, requires `T[i] === evaluate(statement[i], T)` for every person and the exact truthful count, and returns one complete T/F vector only when unique. XOR means exactly one operand is true.
+- `constructTruthSpec` chooses a witness with count 1 or N-1, builds a leaf/not cycle that is unique with the count, then tries seeded one-slot binary/XOR enrichment and up to eight full random selections from the finite legal AST pool. Every candidate is independently solved; at most 64 combinations are attempted. The unique anchor is the fallback, so no valid unique system is silently repaired. Level 1 allows at most one binary statement; level 2 allows and/or; level 3 also allows xor.
+- `makeOptions` requires the unique vector and selects three false complete T/F vectors. False choices may violate the count or a statement but always list every person; exactly one choice satisfies the spec.
+- `visibleRules` states the exact truthful count, truth-teller/liar semantics, all four AST operators, depth/leaf/node limits, and self-reference semantics. `facts` preserves every original statement as `P<i> says: ...`.
+- `canonicalData` applies `reduceClueCore` to speaker-linked statement-equivalence predicates, canonicalizes the retained AST/operator graph over person relabelings, sorts commutative operands, preserves negation, population, and exact count. A reduced core may contain fewer than N speaker predicates; the original spec and facts always keep all N statements.
+- The deterministic fixture seed `1d515ad30b0e3dfbf5d3aed4a65d25c145b711865a9eed18e9236d92e4593c3b` at level 1 produces 3 people, count 1, pool size 207, one attempt, one binary statement, zero xor statements, three draws, unique vector P1=F / P2=F / P3=T, and options with correct label C.
+- The 100 fixed construction seeds produced 34/33/33 successes for levels 1/2/3, population subcounts N=3:34 and N=4:66, zero failures, and every success was independently solved and verified.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/families/truth.test.ts` | exit 0; 18 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 8 files / 150 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run `npm exec vitest run tests/families/truth.test.ts --reporter=verbose` and inspect `finds one full truth vector from self-referential statements`, `detects zero and multiple fixed points and exact-count contradictions`, `evaluates exactly-one XOR in a unique vector`, `reduces a tautological statement to an internal subset while facts keep all statements`, `constructs at least 95 of 100 fixed seeds across both populations`, and `keeps the hidden witness out of the generated spec and rejects oversized ASTs before evaluation`.
+2. Run the exact script below. Inspect the printed deterministic fixture: the visible exact truthful count, three statements, unique T/F vector, four complete choices, and correct label C.
+3. Confirm the displayed rules and count account for every solver assumption and that the oversized/foreign AST tests fail before any evaluation.
+4. Run `npm run check` and confirm 150 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/families/truth.test.ts --reporter=verbose
+npm exec tsx -- -e 'import { constructTruthSpec, truthEngine } from "./src/families/truth/engine.ts"; const seed="1d515ad30b0e3dfbf5d3aed4a65d25c145b711865a9eed18e9236d92e4593c3b"; const {spec,trace}=constructTruthSpec(seed,1); const result=truthEngine.enumerateSolutions(spec); const options=truthEngine.makeOptions(spec,result.correctAnswer,"0".repeat(64)); if(result.solutionCount!==1||JSON.stringify(result.correctAnswer)!==JSON.stringify([false,false,true])||options.correctLabel!=="C") process.exit(1); console.log(JSON.stringify({spec,trace,rules:truthEngine.visibleRules(spec),facts:truthEngine.facts(spec),solution:result.correctAnswer,options},null,2));'
+npm run check
+```
+
+Expected: 18 focused tests pass, the fixture prints the count/statements/unique vector/options described above, and `npm run check` exits 0 with 150 tests.
+
+**Out of scope, unchanged:** arithmetic, visual families, AI wording, renderers, unconstrained English truth statements, recursive proof systems, gallery, reports, and any live evidence.

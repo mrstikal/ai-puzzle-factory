@@ -580,11 +580,9 @@ describe("scheduling engine contract and registry", () => {
   });
 
   it("registers ranking, matching, and scheduling as real text engines", () => {
-    expect(productionRegistry.listEngineFamilies()).toEqual([
-      "ranking",
-      "matching",
-      "scheduling",
-    ]);
+    expect(productionRegistry.listEngineFamilies()).toContain("ranking");
+    expect(productionRegistry.listEngineFamilies()).toContain("matching");
+    expect(productionRegistry.listEngineFamilies()).toContain("scheduling");
     expect(productionRegistry.getEngine("scheduling").family).toBe("scheduling");
     expect(productionRegistry.getEngine("scheduling").modality).toBe("text");
   });

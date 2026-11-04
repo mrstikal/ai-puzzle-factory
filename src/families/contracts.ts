@@ -763,8 +763,11 @@ function validateCanonicalStructure(
       ) {
         issue(["domainTokens"], "truth domain tokens are inconsistent");
       }
-      if (people !== undefined && relationTokens.length !== people) {
-        issue(["relationTokens"], `truth requires exactly ${people} speaker statements`);
+      if (people !== undefined && relationTokens.length > people) {
+        issue(
+          ["relationTokens"],
+          `truth cannot carry more than ${people} speaker statements`,
+        );
       }
       const speakers = new Set<number>();
       for (const [index, token] of relationTokens.entries()) {
