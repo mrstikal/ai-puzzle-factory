@@ -831,7 +831,7 @@ describe("transform engine contract and registry", () => {
     expect(facts[3]?.text).toContain("row 3, column 2");
     expect(productionRegistry.listEngineFamilies()).toContain("transforms");
     expect(productionRegistry.getEngine("transforms").modality).toBe("svg");
-    expect(productionRegistry.hasRenderer("transforms")).toBe(false);
-    expect(productionRegistry.listRendererFamilies()).not.toContain("transforms");
+    expect(productionRegistry.hasRenderer("transforms")).toBe(true);
+    expect(productionRegistry.listRendererFamilies()).toContain("transforms");
   });
 });

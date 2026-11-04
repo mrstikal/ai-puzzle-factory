@@ -700,3 +700,58 @@ Expected: 22 focused tests pass, the JSON shows the two hand-checked outputs, a 
 **Acceptance:** accepted by the user on 2026-11-04 after the focused suite, exact non-UI script, and `npm run check` evidence.
 
 **Out of scope, unchanged:** transform SVG layout/renderer, orientation markers, visual evidence, remaining visual families, AI wording, gallery, reports, provider calls, and any live evidence.
+
+## P14. Transform Renderer and Orientation Clarity — 2026-11-04
+
+**State:** implemented, offline-verified, accepted by the user on 2026-11-04. This phase adds the transforms SVG/PNG renderer only; no animation, free-form SVG transformations, gallery, provider call, or live evidence exists.
+
+**Files**
+
+- Scene construction, operation arrows/axes, grid/pivot/orientation geometry, and validation: `src/families/transforms/render.ts`
+- Renderer tests: `tests/render/transforms.test.ts`
+- Registry: `src/families/registry.ts` registers `transformsRenderer`
+- Preview CLI: `src/cli/preview.ts` adds `--difficulty 1|2|3` (default `1`) so a two-operation scene can be previewed
+- Documentation: `docs/families.md`, `README.md`, this file
+
+**Observable behavior**
+
+- The scene is a 1024x1024 viewBox with a source 5x5 grid, one or two ordered operation cards, a viewer-relative axis/clockwise legend, and four A-D option tiles. Every grid uses the same 160px scale (`28px` cells, `5px` gaps), the same center pivot marker at `(2,2)`, and the same top orientation triangle. Source and options show complete masks in the fixed coordinate frame.
+- Rotation cards show `First`/`Then`, the operation name, and a clockwise arc for 90/180/270 degrees with an arrowhead at the declared endpoint. Reflection cards show the matching vertical, horizontal, main-diagonal, or anti-diagonal axis. Identity uses an explicit `=` mark. The legend states `Axes: top = up, right = right.`, `Clockwise: top, right, bottom, left.`, and the center-pivot/top-marker convention.
+- `assertTransformsScene` runs shared `assertScene`, then verifies critical groups `source-grid`, `operation-sequence`, `axis-legend`, and `option-A-grid`..`option-D-grid`; exact 25-cell geometry and fills; identical grid scale; center pivot; top orientation marker; ordered operation text; clockwise-arrow endpoint, radius, angular-step, total-sweep, and arrowhead-tip direction; visible pivot/orientation markers and paint order; mirror-axis orientation; and exactly one correct, four-distinct orbit option set.
+- Explicit renderer errors include `MISSING_AXIS`, `REVERSED_ARROW`, `REVERSED_ORDER`, `DECORATIVE_ROTATION`, `WRONG_AXIS`, `OFF_CENTER_PIVOT`, `MISSING_ORIENTATION`, `INVISIBLE_MARKER`, `WRONG_GEOMETRY`, `MISSING_OPERATION`, and `OPTION_NOT_DISTINCT`.
+- The clockwise-arrow validator checks endpoints, radius, per-step angular gap, total swept extent, sweep direction, and arrowhead tip direction. The pivot ring must be painted after its halo, and the pivot/orientation markers must use their visible ink/background styling. Every `rotation-arrow`, `mirror-axis`, or `identity-mark` must belong to a declared operation card or the axis legend; an extra transform icon is rejected as `DECORATIVE_ROTATION`. Grids cannot be rotated because the top orientation marker and center pivot are fixed.
+- `transformsRenderer` is registered in the canonical renderer registry with version `transforms-v1`. The generic preview CLI resolves it without a special-case import.
+- The preview CLI now accepts `--difficulty 1|2|3` (default `1`) and prints the selected difficulty. `--difficulty 3` renders a two-operation scene that demonstrates both clockwise direction and a mirror axis.
+- Fixed preview hashes at `preview-v1`: level 1 full `6d5eaf53cd1f552b09e50033380feddc9584692df54067715f32b7e90eca53e5`, preview `662efe0d448e3849050ce13085783eadde65f2b270bce58c254430d8cdd78fb3`; level 3 full `7eeef604d17b0de83520ef6f0e18341d5e1d1e661bfd4db1ebdbc3348d393178`, preview `3b68cb49bb6fab82c4c0a1d513d79c49fe33bff80a93497c2726db4ca24051f2`.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/render/transforms.test.ts` | exit 0; 6 tests passed. |
+| `npm run preview -- --family transforms --seed preview-v1` | exit 0; wrote SVG/1024/512 under `data/previews` with the level-1 hashes above. |
+| `npm run preview -- --family transforms --seed preview-v3 --difficulty 3` | exit 0; wrote SVG/1024/512 with the level-3 hashes above. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 14 files / 225 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run the exact commands below.
+2. Open `data/previews/transforms-preview-v1-512.png` (level 1) and confirm the source grid, the single operation card, the clockwise arrow, the viewer-relative axis legend, the center pivot, the top orientation marker, and four same-scale A-D grids.
+3. Open `data/previews/transforms-preview-v3-512.png` and confirm the card order is visibly `1 First` then `2 Then`, the first card shows a clockwise rotation arrow, the second shows a mirror axis, and the axis legend states top/right/clockwise direction.
+4. Confirm no option is visually highlighted as the key and no decorative rotation appears outside the formal operation cards.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/render/transforms.test.ts --reporter=verbose
+npm run preview -- --family transforms --seed preview-v1
+npm run preview -- --family transforms --seed preview-v3 --difficulty 3
+npm run check
+```
+
+Expected: 6 focused renderer tests pass; both preview commands exit 0 and print `family: transforms`, `preview_png:`, and the hashes above; `npm run check` exits 0 with 14 files / 225 tests. Open the printed 512-pixel PNGs; the level-1 scene shows a clockwise rotation card, and the level-3 scene shows `First`/`Then` order, a clockwise rotation, a mirror axis, and the viewer-relative axis legend.
+
+**Acceptance:** accepted by the user on 2026-11-04 after the focused suite, both preview PNGs, and `npm run check` evidence.
+
+**Out of scope, unchanged:** animation, free-form SVG transformations, gallery, provider calls, and any live evidence.

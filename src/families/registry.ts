@@ -14,6 +14,7 @@ import { arithmeticEngine } from "./arithmetic/engine.js";
 import { matrixEngine } from "./matrix/engine.js";
 import { matrixRenderer } from "./matrix/render.js";
 import { transformsEngine } from "./transforms/engine.js";
+import { transformsRenderer } from "./transforms/render.js";
 
 export interface RendererContract<Spec = unknown, Scene = unknown> {
   readonly family: SvgFamily;
@@ -186,3 +187,4 @@ productionRegistry.registerEngine(arithmeticEngine);
 productionRegistry.registerEngine(matrixEngine);
 productionRegistry.registerEngine(transformsEngine);
 productionRegistry.registerRenderer(matrixRenderer);
+productionRegistry.registerRenderer(transformsRenderer);

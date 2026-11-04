@@ -1,6 +1,6 @@
 # Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, P11 adds the matrix formal engine, P12 adds its renderer, and P13 adds the transforms formal engine.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, P11 adds the matrix formal engine, P12 adds its renderer, P13 adds the transforms formal engine, and P14 adds its renderer.
 
 ## Scope
 
@@ -11,7 +11,7 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, P11 registers the matrix engine, P12 registers the matrix renderer, and P13 registers the transforms engine; later phases add the remaining three visual engines and four renderers.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, P11 registers the matrix engine, P12 registers the matrix renderer, P13 registers the transforms engine, and P14 registers the transforms renderer; later phases add the remaining three visual engines and three renderers.
 
 ## Implemented Family Engines
 
@@ -27,7 +27,7 @@ Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
 - **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
 
-The production registry now contains all five text engines plus the matrix engine, matrix renderer, and transforms engine: ranking, matching, scheduling, truth, arithmetic, matrix, and transforms. The remaining three visual engines and four renderers are registered only by their owning phases.
+The production registry now contains all five text engines plus the matrix engine, matrix renderer, transforms engine, and transforms renderer: ranking, matching, scheduling, truth, arithmetic, matrix, and transforms. The remaining three visual engines and three renderers are registered only by their owning phases.
 
 ### Attribute Matching (P06)
 
@@ -113,7 +113,19 @@ Files: `src/families/transforms/schema.ts`, `src/families/transforms/engine.ts`,
 - **Rules/facts:** code-owned rules state the viewer-relative top-left origin, clockwise direction, all eight coordinate maps, the listed-order semantics, the tile center at `(2,2)`, and that choices are complete resulting patterns. Observation facts `p001` onward list occupied source cells in row-major order; the operation sequence is public rule/query data, not a hidden coordinate transcription.
 - **Fingerprint:** `canonicalData` minimizes the source and ordered sequence over all eight D4 frame changes, conjugating every operation by the same frame. Geometry tokens are occupied `cell:r:c` entries; query tokens are `steps=N`, ordered `op0=...`/`op1=...`, and the derived `net=...`. A one-step instruction and a two-step instruction with the same net effect remain distinct fingerprints.
 - **Mutations:** a two-step spec with distinct operations receives a reversed-order mutation; a repeated two-step sequence replaces its second operation, and a one-step spec receives a different D4 operation, in both cases chosen so the resulting answer differs when an admissible alternative exists. Both cases also receive a same-net/different-step-count mutation.
-- **Verification:** `npm exec vitest run tests/families/transforms.test.ts`; `npm run check`. Focused tests cover the complete D4 map/composition/inverse/conjugation table, noncommuting R90/R270 plus reflection, disconnected and out-of-range sources, hand-checked R90 and left-right outputs, reversed-order detection, orbit options, frame-equivalent fingerprints, step-count preservation, deterministic mutations, registry registration without a renderer, and 100 fixed constructions with independently verified outputs.
+- **Verification:** `npm exec vitest run tests/families/transforms.test.ts`; `npm run check`. Focused tests cover the complete D4 map/composition/inverse/conjugation table, noncommuting R90/R270 plus reflection, disconnected and out-of-range sources, hand-checked R90 and left-right outputs, reversed-order detection, orbit options, frame-equivalent fingerprints, step-count preservation, deterministic mutations, engine registration, and 100 fixed constructions with independently verified outputs.
+
+### Transform Renderer (P14)
+
+Files: `src/families/transforms/render.ts`, `tests/render/transforms.test.ts`.
+
+- **Layout:** a 1024x1024 scene with a source 5x5 grid, one or two ordered operation cards, a viewer-relative axis/clockwise legend, and four A-D option tiles. Every grid uses the same 160px scale (`28px` cells, `5px` gaps), the same center pivot marker at `(2,2)`, and the same top orientation triangle. The source and every option show complete masks in the fixed coordinate frame.
+- **Operations:** rotation cards show `First`/`Then`, the operation name, and a clockwise arc for 90/180/270 degrees with an arrowhead at the declared endpoint. Reflection cards show the matching vertical, horizontal, main-diagonal, or anti-diagonal axis. Identity uses an explicit `=` mark. The legend states `Axes: top = up, right = right.`, `Clockwise: top, right, bottom, left.`, and the center-pivot/top-marker convention.
+- **Validation:** `assertTransformsScene` runs shared `assertScene`, then verifies critical groups `source-grid`, `operation-sequence`, `axis-legend`, and `option-A-grid`..`option-D-grid`; exact 25-cell geometry and fills; identical grid scale; center pivot; top orientation marker; ordered operation text; clockwise-arrow endpoint, radius, angular-step, total-sweep, and arrowhead-tip direction; mirror-axis orientation; a visible pivot ring painted after its halo; and exactly one correct, four-distinct orbit option set. Explicit error codes include `MISSING_AXIS`, `REVERSED_ARROW`, `REVERSED_ORDER`, `DECORATIVE_ROTATION`, `WRONG_AXIS`, `OFF_CENTER_PIVOT`, `MISSING_ORIENTATION`, `INVISIBLE_MARKER`, and `OPTION_NOT_DISTINCT`.
+- **Decorative rotations:** every `rotation-arrow`, `mirror-axis`, or `identity-mark` must belong to a declared operation card or the axis legend; any extra transform icon is rejected. Grids cannot be rotated because the top orientation marker and center pivot are fixed.
+- **Preview:** `transformsRenderer` is registered in the canonical renderer registry. `npm run preview -- --family transforms --seed preview-v1` renders the default level-1 preview; `npm run preview -- --family transforms --seed preview-v3 --difficulty 3` renders a two-operation scene that demonstrates both clockwise direction and a mirror axis. Outputs are SVG/1024/512 under ignored `data/previews`.
+- **Evidence:** focused tests render deterministic 1024/512 PNGs, rasterize 100 seeded scenes with bounds and pairwise-distinct option-grid crops, exercise missing-axis/reversed-arrow/decorative-rotation/off-center-pivot/wrong-axis/reversed-order/wrong-geometry/missing-operation fixtures, and run fixed plus ten seeded critical-pixel checks (at least eight changed non-background pixels). Adversarial fixtures cover a reversed arc, a counter-clockwise sweep with the same endpoints, a backwards arrowhead, a chord-like arc, an over-rotated multi-turn arc, reversed pivot paint order, invisible orientation/pivot markers, decorative rotations, and off-center pivots. Operation critical evidence removes arrows/axes while keeping card panels.
+- **Verification:** `npm exec vitest run tests/render/transforms.test.ts`; `npm run preview -- --family transforms --seed preview-v1`; `npm run preview -- --family transforms --seed preview-v3 --difficulty 3`; `npm run check`. Open the printed 512-pixel PNGs and confirm the source, First/Then order, clockwise arrow, mirror axis, viewer-relative axes, same-scale A-D grids, center pivots, and top orientation markers.
 
 ## Family Engine Contract
 
@@ -236,4 +248,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry contains the five text engines, matrix, the matrix renderer, and transforms, and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains the five text engines, matrix, the matrix renderer, transforms, and the transforms renderer, and is filled by the owning phases.

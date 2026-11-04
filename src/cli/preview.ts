@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
-import { SVG_FAMILIES, type Family, type SvgFamily } from "../domain/experiment.js";
+import { SVG_FAMILIES, type Difficulty, type Family, type SvgFamily } from "../domain/experiment.js";
 import { productionRegistry } from "../families/registry.js";
 import { sha256Hex } from "../util/hash.js";
 import { assertScene, previewRegistry, type Scene } from "../render/scene.js";
@@ -11,18 +11,24 @@ export const PROGRAM_NAME = "preview";
 interface PreviewOptions {
   readonly family: string;
   readonly seed: string;
+  readonly difficulty: string;
   readonly out?: string;
 }
 
 interface ResolvedPreviewRenderer {
   readonly family: string;
-  buildScene(seed: string): Scene;
+  buildScene(seed: string, difficulty: Difficulty): Scene;
 }
 
 function resolvePreviewRenderer(family: string): ResolvedPreviewRenderer | undefined {
   const direct = previewRegistry.get(family);
   if (direct !== undefined) {
-    return direct;
+    return {
+      family,
+      buildScene(seed) {
+        return direct.buildScene(seed);
+      },
+    };
   }
   if (
     (SVG_FAMILIES as readonly string[]).includes(family) &&
@@ -32,8 +38,11 @@ function resolvePreviewRenderer(family: string): ResolvedPreviewRenderer | undef
     const renderer = productionRegistry.getRenderer(family as SvgFamily);
     return {
       family,
-      buildScene(seed) {
-        const spec = engine.generateSpec(sha256Hex(`preview:${family}:${seed}`), 1);
+      buildScene(seed, difficulty) {
+        const spec = engine.generateSpec(
+          sha256Hex(`preview:${family}:${seed}`),
+          difficulty,
+        );
         const scene = renderer.buildScene(spec);
         assertScene(scene as Scene);
         return scene as Scene;
@@ -51,6 +60,7 @@ export function createProgram(): Command {
     .showHelpAfterError()
     .requiredOption("--family <family>", "preview renderer family")
     .option("--seed <seed>", "deterministic preview seed", "preview-v1")
+    .option("--difficulty <difficulty>", "puzzle difficulty 1, 2, or 3", "1")
     .option("--out <dir>", "preview output directory (default: data/previews)")
     .action((options: PreviewOptions) => {
       if (!/^[A-Za-z0-9._-]{1,64}$/.test(options.seed)) {
@@ -58,6 +68,14 @@ export function createProgram(): Command {
           exitCode: 1,
         });
       }
+      if (
+        options.difficulty !== "1" &&
+        options.difficulty !== "2" &&
+        options.difficulty !== "3"
+      ) {
+        program.error("difficulty must be 1, 2, or 3", { exitCode: 1 });
+      }
+      const difficulty = Number(options.difficulty) as Difficulty;
       const renderer = resolvePreviewRenderer(options.family);
       if (renderer === undefined) {
         const available = [
@@ -70,7 +88,7 @@ export function createProgram(): Command {
         );
         return;
       }
-      const scene = renderer.buildScene(options.seed);
+      const scene = renderer.buildScene(options.seed, difficulty);
       const exported =
         options.out === undefined
           ? writeScenePreviewExports(scene, renderer.family, options.seed)
@@ -79,6 +97,7 @@ export function createProgram(): Command {
         [
           `family: ${renderer.family}`,
           `seed: ${options.seed}`,
+          `difficulty: ${options.difficulty}`,
           `svg: ${exported.svgPath}`,
           `full_png: ${exported.fullPngPath}`,
           `preview_png: ${exported.previewPngPath}`,
