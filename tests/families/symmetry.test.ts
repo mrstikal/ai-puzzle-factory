@@ -531,7 +531,7 @@ describe("symmetry engine contract and registry", () => {
     expect(facts[5]?.text).toContain("right half is unknown");
     expect(productionRegistry.listEngineFamilies()).toContain("symmetry");
     expect(productionRegistry.getEngine("symmetry").modality).toBe("svg");
-    expect(productionRegistry.hasRenderer("symmetry")).toBe(false);
-    expect(productionRegistry.listRendererFamilies()).not.toContain("symmetry");
+    expect(productionRegistry.hasRenderer("symmetry")).toBe(true);
+    expect(productionRegistry.listRendererFamilies()).toContain("symmetry");
   });
 });

@@ -914,3 +914,55 @@ Expected: 13 focused tests pass; the JSON shows `answerCount: 1`, `enumeratedSta
 **Acceptance:** accepted by the user on 2026-11-04 after the focused suite, exact non-UI script, and `npm run check` evidence.
 
 **Out of scope, unchanged:** symmetry SVG/PNG renderer, continuous shapes, diagonal axes, generic visual symmetry detection, gallery, provider calls, and any live evidence.
+
+## P18. Symmetry Renderer and Unknown-State Clarity — 2026-11-04
+
+**State:** implemented, offline-verified, accepted by the user on 2026-11-04. This phase adds the symmetry SVG/PNG renderer only; no infer-the-axis question, continuous shapes, diagonal axes, gallery, provider call, or live evidence exists.
+
+**Files**
+
+- Scene construction, state fills, dashed axis, completion tiles, and validation: `src/families/symmetry/render.ts`
+- Renderer tests: `tests/render/symmetry.test.ts`
+- Registry: `src/families/registry.ts` registers `symmetryRenderer`
+- Tests: `tests/families/symmetry.test.ts` updated for the new renderer
+- Documentation: `docs/families.md`, `README.md`, this file
+
+**Observable behavior**
+
+- The scene is a 1024x1024 viewBox with a source 8x8 tile, a state/axis legend, and four A-D completion tiles. Every tile uses the same 176px grid (`22px` cells).
+- Occupied cells are ink (`#111111`), explicitly empty cells are white (`#ffffff`), and unknown cells are medium gray (`#c0c0c0`). The source shows occupied/empty known cells and an all-gray unknown half; every option is a full binary completion with no unknown cells.
+- A dashed red (`#b00020`) line lies exactly between the central columns or rows. The source tile has a red axis sample and the label `axis`; the legend states `Dashed red = axis.`, `Between central cells.`, and `Known half unchanged.` Axis nodes are line segments, never cells.
+- `assertSymmetryScene` verifies critical groups `source-tile`, `source-axis`, `state-legend`, and `option-A-tile`..`option-D-tile`; exactly 64 fixed cells per tile; source occupied/empty/unknown fills; option full binary fills with no unknown; identical known half in all choices; four distinct A-D completions with exactly one valid answer; at least six axis dashes on the exact central line with at least 60% coverage; a labeled source axis; and the state legend swatches plus axis legend.
+- Explicit renderer errors include `CHANGED_KNOWN_HALF`, `UNKNOWN_IN_OPTION`, `MISSING_AXIS`, `WRONG_AXIS`, `MISSING_AXIS_LABEL`, `MISSING_LEGEND`, `OPTION_NOT_DISTINCT`, and `WRONG_GEOMETRY`.
+- Focused evidence includes deterministic 1024/512 PNGs, unknown/empty/filled luminance contrast at 512, swapped-known-half, hidden source/option axis, unknown-in-option, off-axis dash, missing axis label, missing legend, duplicate choices, and axis-as-cell fixtures. The suite also rasterizes 100 seeded scenes with bounds and pairwise-distinct completion tiles, and runs fixed plus ten seeded critical-group pixel checks (at least eight changed non-background pixels).
+- Preview hashes at `preview-v1`: full `b1ef765b49a44d95726f7b1a10d1a4daf9a5a1b52f274ecc1b0611e85117d408`, preview `85ffb5eb4bd0ae100e3622f193918aad5ad6571f18f97dd076f6a5728cb5eaf4`.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/render/symmetry.test.ts` | exit 0; 6 tests passed. |
+| `npm run preview -- --family symmetry --seed preview-v1` | exit 0; wrote SVG/1024/512 with the hashes above. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 18 files / 267 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run the exact commands below.
+2. Open `data/previews/symmetry-preview-v1-512.png` and confirm unknown gray is clearly different from empty white and filled black at 512 pixels.
+3. Confirm the dashed red axis lies exactly between the central cells in the source and all four choices, and that no option changes the given known half.
+4. Run `npm run check` and confirm 18 files / 267 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/render/symmetry.test.ts --reporter=verbose
+npm run preview -- --family symmetry --seed preview-v1
+npm run check
+```
+
+Expected: 6 focused renderer tests pass; the preview command exits 0 and prints `family: symmetry`, `preview_png:`, and the hashes above; `npm run check` exits 0 with 18 files / 267 tests. Open the printed 512-pixel PNG and confirm the gray unknown half, white empty cells, black filled cells, dashed red central axis, axis label, state legend, and four full completion tiles with the same known half.
+
+**Acceptance:** accepted by the user on 2026-11-04 after the focused suite, the 512-pixel preview, and `npm run check` evidence.
+
+**Out of scope, unchanged:** infer-the-axis questions, continuous shapes, diagonal axes, gallery, provider calls, and any live evidence.

@@ -18,6 +18,7 @@ import { transformsRenderer } from "./transforms/render.js";
 import { pathsEngine } from "./paths/engine.js";
 import { pathsRenderer } from "./paths/render.js";
 import { symmetryEngine } from "./symmetry/engine.js";
+import { symmetryRenderer } from "./symmetry/render.js";
 
 export interface RendererContract<Spec = unknown, Scene = unknown> {
   readonly family: SvgFamily;
@@ -194,3 +195,4 @@ productionRegistry.registerEngine(symmetryEngine);
 productionRegistry.registerRenderer(matrixRenderer);
 productionRegistry.registerRenderer(transformsRenderer);
 productionRegistry.registerRenderer(pathsRenderer);
+productionRegistry.registerRenderer(symmetryRenderer);
