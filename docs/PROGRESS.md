@@ -1020,3 +1020,60 @@ Expected: 18 focused tests pass; the JSON shows the two- and three-shape summari
 **Acceptance:** accepted by the user on 2026-11-04 after the focused suite, exact non-UI script, and `npm run check` evidence.
 
 **Out of scope, unchanged:** counting SVG/PNG renderer, arbitrary polygon/triangle/square detection, gallery, provider calls, and any live evidence.
+
+## P20. Counting Renderer and Complete Registry Gate — 2026-11-04
+
+**State:** implemented, offline-verified; awaiting user acceptance. This phase adds the counting SVG/PNG renderer, the strict ten-family spec union, and the complete ten-engine/five-renderer registry gate. No provider call, report, gallery, or live evidence exists.
+
+**Files**
+
+- Renderer: `src/families/counting/render.ts`
+- Strict ten-family spec union and parsers: `src/domain/spec.ts`
+- Registry: `src/families/registry.ts` registers `countingRenderer`
+- Tests: `tests/render/counting.test.ts`, `tests/families/registry.test.ts`
+- Updated test: `tests/families/counting.test.ts` now expects the counting renderer
+- Documentation: `docs/families.md`, `README.md`, this file
+
+**Observable behavior**
+
+- The source is a fixed 5x5 grid of 76-pixel cells. Each cell has a white fill and a fixed 8-pixel `#333333` outline.
+- Every cell contains one fixed marker per actual shape. A is a square, B is a circle, and C is a triangle. Filled `#111111` means member; an outline-only glyph with `#111111` stroke means non-member. Membership is never encoded only by a translucent cell fill.
+- The overlap legend renders every non-empty combination. Two-shape specs show `A`, `B`, and `AB`; three-shape specs show `A`, `B`, `AB`, `C`, `AC`, `BC`, and `ABC`. The legend states `Filled = member. Outline = not a member.`
+- The stem prints the exact code-owned query, the shape labels, the marker order, and the counting convention. Four A-D tiles show distinct integers in 0..25; exactly one satisfies the independent checker.
+- `assertCountingScene` validates critical groups `source-grid`, `membership-legend`, and `option-A-number`..`option-D-number`, all 25 fixed source cells, every fixed marker position and fill, the complete legend, the exact query text, and four distinct choices with one correct answer. Negative fixtures cover hidden source/legend overlaps, missing markers, missing legend, color-only cells, wrong query text, and duplicate choices.
+- `src/domain/spec.ts` exposes `FAMILY_SPEC_SCHEMAS`, `FamilySpecEnvelopeSchema`, `parseFamilySpec`, `safeParseFamilySpec`, and `safeParseFamilySpecEnvelope`. The envelope is a strict discriminated union on `family` over the ten real family schemas; raw `unknown` input must be parsed before it can be accepted as a spec.
+- `tests/families/registry.test.ts` asserts all ten engines and all five real renderers, matching family/modality pairs, no text renderer, non-empty visible rules and fact inventories, one unique solution, four distinct options with one correct answer, canonical family data, deterministic mutations, and a valid 1024x1024 scene from every SVG renderer at all three difficulties.
+- The 100 seeded renderer fixtures rasterized with bounds and four distinct numeric choices. All seven non-empty three-shape memberships are rendered as distinct glyph combinations. Fixed and ten seeded critical-group removals changed at least eight non-background pixels.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/render/counting.test.ts tests/families/registry.test.ts` | exit 0; 2 files / 11 tests passed. |
+| `npm run preview -- --family counting --seed preview-v1` | exit 0; full `316be4d8fad238ddf43f764653a36af7a729b66bd82765194aece954538632b8`, preview `bc2caa8d7f4c1cfad703be8626f394cab88132ce278bb84643142fa61b9be89c`. |
+| `npm run preview -- --family counting --seed preview-v1 --difficulty 3` | exit 0; full `35b8f7b2847d56b23baf9addce7720477dd23341ddb99b9cab1f2bfdd1fcc42f`, preview `d8b5c99165e014a76bb6b6e8bda8576485a034a85b26bfe9287a4654bf81a5b8`. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 21 files / 296 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run the exact commands below.
+2. Open `data/previews/p20-two/counting-preview-v1-512.png` and confirm all 25 cells show an A square and a B circle, filled for members and outline-only for non-members, with AB overlaps visible and the legend showing `A`, `B`, `AB`.
+3. Open `data/previews/p20-three/counting-preview-v1-512.png` and confirm every cell shows three markers, the legend shows all seven combinations `A`, `B`, `AB`, `C`, `AC`, `BC`, `ABC`, and the query reads `Query: cells in exactly 2 shapes.` for the default level-3 query.
+4. Confirm the four option tiles show four distinct numbers and exactly one is the independently computed count.
+5. Run `npm run check` and confirm 21 files / 296 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/render/counting.test.ts tests/families/registry.test.ts --reporter=verbose
+npm run preview -- --family counting --seed preview-v1 --out data/previews/p20-two
+npm run preview -- --family counting --seed preview-v1 --difficulty 3 --out data/previews/p20-three
+npm run check
+```
+
+Expected: 11 focused tests pass; both preview commands exit 0 and print `family: counting` plus the full/preview hashes above; `npm run check` exits 0 with 21 files / 296 tests. Open `data/previews/p20-two/counting-preview-v1-512.png` and `data/previews/p20-three/counting-preview-v1-512.png` and confirm the 5x5 cell membership, the filled/outlined square/circle/triangle markers, the all-overlap legend, the exact query, and four distinct numeric choices.
+
+**Acceptance:** accepted by the user on 2026-11-04 after the focused suite, exact non-UI script, preview inspection, and `npm run check` evidence.
+
+**Out of scope, unchanged:** provider calls, reports, gallery, live evidence, and any arbitrary polygon/triangle/square shape detection.

@@ -617,7 +617,7 @@ describe("counting engine contract and registry", () => {
     expect(facts[4]?.text).toContain("Shape B");
     expect(productionRegistry.listEngineFamilies()).toContain("counting");
     expect(productionRegistry.getEngine("counting").modality).toBe("svg");
-    expect(productionRegistry.hasRenderer("counting")).toBe(false);
-    expect(productionRegistry.listRendererFamilies()).not.toContain("counting");
+    expect(productionRegistry.hasRenderer("counting")).toBe(true);
+    expect(productionRegistry.listRendererFamilies()).toContain("counting");
   });
 });
