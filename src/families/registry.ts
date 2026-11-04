@@ -10,6 +10,7 @@ import { matchingEngine } from "./matching/engine.js";
 import { rankingEngine } from "./ranking/engine.js";
 import { schedulingEngine } from "./scheduling/engine.js";
 import { truthEngine } from "./truth/engine.js";
+import { arithmeticEngine } from "./arithmetic/engine.js";
 
 export interface RendererContract<Spec = unknown, Scene = unknown> {
   readonly family: SvgFamily;
@@ -178,3 +179,4 @@ productionRegistry.registerEngine(rankingEngine);
 productionRegistry.registerEngine(matchingEngine);
 productionRegistry.registerEngine(schedulingEngine);
 productionRegistry.registerEngine(truthEngine);
+productionRegistry.registerEngine(arithmeticEngine);

@@ -1,6 +1,6 @@
 # Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, and P08 adds truth values.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, and P09 adds small arithmetic constraints.
 
 ## Scope
 
@@ -11,7 +11,7 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, and P08 registers truth; later phases add the remaining engines and renderers.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, and P09 registers arithmetic; later phases add the five visual engines and renderers.
 
 ## Implemented Family Engines
 
@@ -27,7 +27,7 @@ Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
 - **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
 
-The production registry now contains ranking, matching, scheduling, and truth. The remaining six engines and five renderers are registered only by their owning phases.
+The production registry now contains all five text engines: ranking, matching, scheduling, truth, and arithmetic. The remaining five visual engines and five renderers are registered only by their owning phases.
 
 ### Attribute Matching (P06)
 
@@ -66,6 +66,18 @@ Files: `src/families/truth/schema.ts`, `src/families/truth/engine.ts`, `src/fami
 - **Rules/facts:** code-owned rules state the exact truthful count, role semantics, all four AST operators, depth/leaf/node limits, and self-reference semantics. Facts preserve every original statement as `P<i> says: ...`.
 - **Fingerprint:** `canonicalData` applies `reduceClueCore` to speaker-linked statement-equivalence predicates, then canonicalizes the retained AST/operator graph over person relabelings. Commutative operands are sorted, negation is preserved, and population/exact count stay in the domain tokens. The reduced core may contain fewer than N speaker predicates; the original spec and facts always keep all N statements.
 - **Verification:** `npm exec vitest run tests/families/truth.test.ts`; `npm run check`. Focused tests cover zero/multiple fixed points, exactly-one XOR, count contradictions, oversized/foreign ASTs, independent evaluation, wrong vectors, renaming/commutative forms, redundant-statement reduction, deterministic mutations, registry registration, and 100 fixed constructions across both populations with at least 95 successes.
+
+### Small Arithmetic Constraints (P09)
+
+Files: `src/families/arithmetic/schema.ts`, `src/families/arithmetic/engine.ts`, `src/families/arithmetic/canonical.ts`, `tests/families/arithmetic.test.ts`.
+
+- **DSL:** three integer variables x/y/z in `0..12`, 2-5 linear constraints `sum(coeff*var) op constant`, `op` in `eq|lt|le`, coefficients `-3..3` not all zero, constants `-108..108`, and an explicit `allDifferent` Boolean. No multiplication of variables, division, modulo, implicit precedence, real-valued solutions, or rounding. Local facts are `f001` onward; negative coefficients and constants are parenthesized.
+- **Meaning:** `enumerateSolutions` scans all 13^3 = 2,197 tuples, applies exact integer comparisons and optional pairwise distinctness, and requires one full tuple. Unique results carry one derived `s001` proof fact; no-integer and rank-deficient systems carry no answer or proof.
+- **Construction:** `constructArithmeticSpec(seed, difficulty)` chooses a witness and an `allDifferent` choice, builds a shuffled three-equation full-rank anchor with two multi-variable equations and a unit pin equation. Levels 1/2 add two true pin inequalities with coefficient limits 1/2 and prune the pin equation, leaving the inequalities load-bearing. Level 3 uses limit 3 in the multi-variable equations and replaces the pin equation `v=c` by `v<=c` and `-v<=-c`; it rejects a draw with no retained nonredundant inequality. It prunes redundant constraints in seeded order within the 2-5 bound, records actual operators, and uses at most 64 draws. It does not claim calibrated difficulty.
+- **Options:** `makeOptions` requires the unique tuple, prefers one-step coordinate perturbations, fills from the finite 2,197-tuple domain if needed, and validates exactly one satisfying choice. Tuples are always complete integer triples in the same domain.
+- **Rules/facts:** code-owned rules state the domain, `allDifferent`, exact-integer comparison semantics, and the three operators. Facts display every constraint with explicit coefficients and parenthesized negatives.
+- **Fingerprint:** `canonicalData` applies `reduceClueCore` to normalized rows. Strict `< c` maps to `<= c-1`; `<=` rows divide coefficients by their positive gcd and use `floor(c/g)` without flipping direction; equality rows require divisibility, divide the full row, and make the first nonzero coefficient positive. The retained coefficient/comparison graph is canonicalized over the six variable relabelings. Domain and `allDifferent` stay in the domain tokens. `2*x<11`, `2*x<=11`, and `x<=5` normalize identically without changing the visible DSL.
+- **Verification:** `npm exec vitest run tests/families/arithmetic.test.ts`; `npm run check`. Focused tests cover no-integer, rank-deficient/multiple, strict-vs-nonstrict boundary, equivalent inequality fingerprints, negative bounds, `allDifferent`, forbidden nonlinear grammar, wrong keys, deterministic mutations, 100 fixed constructions, and the five-text-engine/no-visual-stub registry assertion.
 
 ## Family Engine Contract
 
@@ -188,4 +200,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry contains ranking, matching, scheduling, and truth and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains all five text engines and is filled by the owning phases.

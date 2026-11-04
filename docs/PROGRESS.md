@@ -429,3 +429,55 @@ npm run check
 Expected: 18 focused tests pass, the fixture prints the count/statements/unique vector/options described above, and `npm run check` exits 0 with 150 tests.
 
 **Out of scope, unchanged:** arithmetic, visual families, AI wording, renderers, unconstrained English truth statements, recursive proof systems, gallery, reports, and any live evidence.
+
+## P09. Arithmetic-Constraint Engine — 2026-11-04
+
+**State:** implemented, offline-verified. Arithmetic is the fifth and final real text engine registered in the production registry. No model call, renderer, visual family, or approximate numeric solver exists in this phase.
+
+**Files**
+
+- Schema/DSL/tuple solver/normalization helpers: `src/families/arithmetic/schema.ts`
+- Construction/options/rules/facts/mutations: `src/families/arithmetic/engine.ts`
+- Reduced coefficient-row canonicalization: `src/families/arithmetic/canonical.ts`
+- Tests: `tests/families/arithmetic.test.ts`
+- Registry: `src/families/registry.ts` now registers all five text engines
+- Documentation: `docs/families.md`, this file
+
+**Observable behavior**
+
+- The DSL has x/y/z in `0..12`, 2-5 linear constraints `sum(coeff*var) op constant`, `op` in `eq|lt|le`, coefficients `-3..3` not all zero, constants `-108..108`, and explicit `allDifferent`. No multiplication of variables, division, modulo, implicit precedence, real-valued solutions, or rounding. Local facts use `f001` onward and parenthesize negative coefficients/constants.
+- `enumerateSolutions` scans all 2,197 integer tuples, applies exact comparisons and optional pairwise distinctness, and requires one full tuple. Unique results carry one derived `s001` proof fact; no-integer and rank-deficient systems carry no answer or proof.
+- `constructArithmeticSpec` chooses a witness and `allDifferent`, builds a shuffled three-equation full-rank anchor with two multi-variable equations and a unit pin equation. Levels 1/2 add two true pin inequalities with coefficient limits 1/2 and prune the pin equation, leaving the inequalities load-bearing. Level 3 uses limit 3 in the multi-variable equations and replaces the pin equation `v=c` by `v<=c` and `-v<=-c`, and rejects a draw with no retained nonredundant inequality. It prunes redundant constraints in seeded order within 2-5, records actual operators, and uses at most 64 draws. It does not claim calibrated difficulty.
+- `makeOptions` requires the unique tuple, prefers one-step coordinate perturbations, falls back to the finite 2,197-tuple domain, and verifies exactly one satisfying choice.
+- `visibleRules` states the domain, `allDifferent`, exact-integer semantics, and all three operators. `facts` displays every constraint with explicit coefficients and parenthesized negatives.
+- `canonicalData` applies `reduceClueCore` to normalized rows. Strict `< c` maps to `<= c-1`; `<=` rows divide by the positive gcd and use `floor(c/g)` without flipping direction; equality rows require divisibility, divide the full row, and make the first nonzero coefficient positive. The retained graph is canonicalized over six variable relabelings. `2*x<11`, `2*x<=11`, and `x<=5` normalize identically without changing visible instructions.
+- The deterministic fixture seed `90f786eb2f2e6b10eb05f2e3c1c222ea00199f7ceeaf091a55246c2c23f00932` at level 1 produces `allDifferent=true`, two multi-variable equations plus two load-bearing pin inequalities, x=3 / y=4 / z=11, five constraints before pruning and four after, trace operators `eq,eq,le,le`, two nonredundant inequalities, 14 draws, unique tuple `(3,4,11)`, and options with correct label C.
+- The 100 fixed construction seeds produced 34/33/33 successes for levels 1/2/3, zero failures, and every success was independently solved and verified.
+- All five text engines are registered; no visual engine or renderer is registered.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/families/arithmetic.test.ts` | exit 0; 15 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 9 files / 165 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run `npm exec vitest run tests/families/arithmetic.test.ts --reporter=verbose` and inspect `enumerates all 2,197 tuples and requires one exact integer tuple`, `detects no-integer, rank-deficient, strict-boundary, and allDifferent cases`, `builds four tuples, prefers one-step perturbations, and validates the key`, `normalizes strict/nonstrict inequalities and negative bounds without flipping direction`, `constructs at least 95 of 100 fixed seeds with independent uniqueness`, and `registers all five text engines and no visual stub`.
+2. Run the exact script below. Inspect the printed deterministic fixture: the domain/allDifferent rules, four facts, unique tuple, four one-step choices, and correct label C.
+3. Confirm the complete bounded search is 2,197 tuples and every choice is checked with exact integer comparisons, never numerical approximation.
+4. Run `npm run check` and confirm 165 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/families/arithmetic.test.ts --reporter=verbose
+npm exec tsx -- -e 'import { constructArithmeticSpec, arithmeticEngine } from "./src/families/arithmetic/engine.ts"; const seed="90f786eb2f2e6b10eb05f2e3c1c222ea00199f7ceeaf091a55246c2c23f00932"; const {spec,trace}=constructArithmeticSpec(seed,1); const result=arithmeticEngine.enumerateSolutions(spec); const options=arithmeticEngine.makeOptions(spec,result.correctAnswer,"0".repeat(64)); if(result.solutionCount!==1||JSON.stringify(result.correctAnswer)!==JSON.stringify([3,4,11])||options.correctLabel!=="C") process.exit(1); console.log(JSON.stringify({spec,trace,rules:arithmeticEngine.visibleRules(spec),facts:arithmeticEngine.facts(spec),solution:result.correctAnswer,options},null,2));'
+npm run check
+```
+
+Expected: 15 focused tests pass, the fixture prints the rules/facts/unique tuple/options described above, and `npm run check` exits 0 with 165 tests.
+
+**Out of scope, unchanged:** visual families, renderers, AI wording, algebra outside the closed linear DSL, gallery, reports, and any live evidence.
