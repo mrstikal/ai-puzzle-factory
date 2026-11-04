@@ -809,3 +809,54 @@ Expected: 16 focused tests pass; the JSON shows the correct route, the shortcut 
 **Acceptance:** accepted by the user on 2026-11-04 after the focused suite, exact non-UI script, and `npm run check` evidence.
 
 **Out of scope, unchanged:** path SVG/PNG renderer, shortest-path variants, arbitrarily large mazes, gallery, provider calls, and any live evidence.
+
+## P16. Path Renderer and Corridor/Wall Checks — 2026-11-04
+
+**State:** implemented, offline-verified, accepted by the user on 2026-11-04. This phase adds the paths SVG/PNG renderer only; no maze interaction, path-drawing UI, gallery, provider call, or live evidence exists.
+
+**Files**
+
+- Scene construction, wall convention, route overlays, maze validation: `src/families/paths/render.ts`
+- Renderer tests: `tests/render/paths.test.ts`
+- Registry: `src/families/registry.ts` registers `pathsRenderer`
+- Documentation: `docs/families.md`, `README.md`, this file
+
+**Observable behavior**
+
+- The scene is a 1024x1024 viewBox with a source 4x4 maze, a wall/route legend, and four A-D option tiles. Every maze uses the same 160px grid (`40px` cells). Active cells are light, inactive cells are muted with diagonal hatching, and all choices reuse the same maze geometry and S/G markers.
+- One explicit wall convention: the outer border is always a thick black wall; every internal boundary is a wall unless both cells are active and the edge is explicitly open. Open corridors are gaps. Walls use `SCENE_INK` with an 8px stroke, remain distinct in grayscale, and are visibly thick at the 512 preview.
+- Each option draws a white halo plus a blue route polyline through the chosen cell centers. Routes are painted before walls, so a segment crossing a closed boundary is interrupted by the visible wall; the correct route only crosses open gaps. The source maze has no route overlay.
+- `assertPathsScene` verifies critical groups `source-maze`, `wall-legend`, and `option-A-maze`..`option-D-maze`; exact 16-cell fills and hatching; expected outer/internal walls; no wall on an open active edge; S/G halo centers, label anchors, and label positions; identical maze signatures including marker positions; route points and halo alignment at cell centers; orthogonal 40px steps; walls painted after routes; and four distinct choices with exactly one valid route.
+- Explicit renderer errors include `MISSING_WALL`, `UNEXPECTED_WALL`, `WALL_PAINT_ORDER`, `CHANGED_MAZE`, `MISSING_ENDPOINT`, `CLIPPED_ENDPOINT`, `ILLEGAL_DIAGONAL`, `WRONG_ROUTE`, `MISSING_LEGEND`, and `OPTION_NOT_DISTINCT`.
+- Focused evidence includes hidden-wall, clipped-endpoint, displaced-label, displaced-halo, illegal-diagonal, changed-maze-choice, wall-paint-order, missing-legend, and unexpected-wall fixtures; grayscale wall-versus-cell/corridor luminance checks; 100 seeded 512-pixel scenes with bounds and pairwise-distinct route rasters; and fixed plus ten seeded critical-group pixel checks (at least eight changed non-background pixels).
+- Preview hashes at `preview-v1`: full `4e7ebcc294bcb15ecb2b3261111df2aac87abdc30e2c093dde0e9df3b4d1a80d`, preview `c90b92fc89ebcfffdefef9c7b3a6fe6dcc636d6b0e9e6269afd169dc8731d747`.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/render/paths.test.ts` | exit 0; 7 tests passed. |
+| `npm run preview -- --family paths --seed preview-v1` | exit 0; wrote SVG/1024/512 with the hashes above. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 16 files / 248 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run the exact commands below.
+2. Open `data/previews/paths-preview-v1-512.png` and confirm S/G, corridor openings, thick walls, and each highlighted route are unambiguous without looking at source JSON.
+3. Confirm the source maze and all four choices use the same maze geometry and S/G markers; false routes visibly cross hatched cells or closed walls, while the correct route only crosses gaps.
+4. Run `npm run check` and confirm 16 files / 248 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/render/paths.test.ts --reporter=verbose
+npm run preview -- --family paths --seed preview-v1
+npm run check
+```
+
+Expected: 7 focused renderer tests pass; the preview command exits 0 and prints `family: paths`, `preview_png:`, and the hashes above; `npm run check` exits 0 with 16 files / 248 tests. Open the printed 512-pixel PNG and confirm the source maze, four same-maze choices, S/G markers, corridor gaps, walls, and blue routes.
+
+**Acceptance:** accepted by the user on 2026-11-04 after the focused suite, the 512-pixel preview, and `npm run check` evidence.
+
+**Out of scope, unchanged:** maze interaction, path-drawing UI, gallery, provider calls, and any live evidence.

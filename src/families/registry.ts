@@ -16,6 +16,7 @@ import { matrixRenderer } from "./matrix/render.js";
 import { transformsEngine } from "./transforms/engine.js";
 import { transformsRenderer } from "./transforms/render.js";
 import { pathsEngine } from "./paths/engine.js";
+import { pathsRenderer } from "./paths/render.js";
 
 export interface RendererContract<Spec = unknown, Scene = unknown> {
   readonly family: SvgFamily;
@@ -190,3 +191,4 @@ productionRegistry.registerEngine(transformsEngine);
 productionRegistry.registerEngine(pathsEngine);
 productionRegistry.registerRenderer(matrixRenderer);
 productionRegistry.registerRenderer(transformsRenderer);
+productionRegistry.registerRenderer(pathsRenderer);

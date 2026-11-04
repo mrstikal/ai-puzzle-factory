@@ -1,6 +1,6 @@
 # Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, P11 adds the matrix formal engine, P12 adds its renderer, P13 adds the transforms formal engine, P14 adds its renderer, and P15 adds the paths formal engine.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, P11 adds the matrix formal engine, P12 adds its renderer, P13 adds the transforms formal engine, P14 adds its renderer, P15 adds the paths formal engine, and P16 adds its renderer.
 
 ## Scope
 
@@ -11,7 +11,7 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, P11 registers the matrix engine, P12 registers the matrix renderer, P13 registers the transforms engine, P14 registers the transforms renderer, and P15 registers the paths engine; later phases add the remaining two visual engines and three renderers.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, P11 registers the matrix engine, P12 registers the matrix renderer, P13 registers the transforms engine, P14 registers the transforms renderer, P15 registers the paths engine, and P16 registers the paths renderer; later phases add the remaining two visual engines and two renderers.
 
 ## Implemented Family Engines
 
@@ -27,7 +27,7 @@ Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
 - **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
 
-The production registry now contains all five text engines plus the matrix engine, matrix renderer, transforms engine, transforms renderer, and paths engine: ranking, matching, scheduling, truth, arithmetic, matrix, transforms, and paths. The remaining two visual engines and three renderers are registered only by their owning phases.
+The production registry now contains all five text engines plus the matrix engine, matrix renderer, transforms engine, transforms renderer, paths engine, and paths renderer: ranking, matching, scheduling, truth, arithmetic, matrix, transforms, and paths. The remaining two visual engines and two renderers are registered only by their owning phases.
 
 ### Attribute Matching (P06)
 
@@ -139,6 +139,19 @@ Files: `src/families/paths/schema.ts`, `src/families/paths/engine.ts`, `src/fami
 - **Fingerprint:** `canonicalData` minimizes active cells, open edges, and marked S/G over all eight D4 frames and a translation-normalized bounding box. Tokens are `grid=4x4`; `start:r:c`/`goal:r:c`; `open:r1:c1:r2:c2`; and `active:r:c`. Geometry and topology are retained, not just route length.
 - **Verification:** `npm exec vitest run tests/families/paths.test.ts`; `npm run check`. Focused tests cover disconnected/cyclic/diagonal/duplicate/unordered graphs, start=goal, route length bounds, revisit/jump routes, the 200,000-state enumeration cap, closed-edge shortcuts, four distinct options, D4/translation equivalence, different topology, deterministic mutations, registry registration without a renderer, and 100 fixed constructions with independently verified options.
 - **Manual acceptance:** adding an extra open edge to the fixed 6-cell tree makes the edge count 6 for 5 tree edges, so `PathsSpecSchema` rejects it as a non-tree; the visually tempting shortcut `(0,0)->(0,1)->(1,1)->(1,2)` is rejected because the `(0,1)-(1,1)` corridor is closed. No path renderer exists in P15.
+
+### Path Renderer and Corridor/Wall Checks (P16)
+
+Files: `src/families/paths/render.ts`, `tests/render/paths.test.ts`.
+
+- **Layout:** a 1024x1024 scene with a source 4x4 maze, a wall/route legend, and four A-D option tiles. Every maze uses the same 160px grid (`40px` cells). Active cells are light, inactive cells are muted with diagonal hatching, and the same maze geometry plus S/G markers is reused in all choices.
+- **Wall convention:** the outer border is always a thick black wall; every internal boundary is a wall unless both cells are active and the edge is explicitly open. Open corridors are therefore visible as gaps. Inactive cells are separated by walls and hatched. All walls use `SCENE_INK` with an 8px stroke so they remain distinct in grayscale and at the 512 preview.
+- **Routes:** each option draws a white halo and a blue route polyline through the chosen cell centers. Routes are painted before walls, so any segment crossing a closed boundary is interrupted by the visible wall; the correct route only crosses open gaps. The source maze has no route overlay.
+- **Validation:** `assertPathsScene` runs shared `assertScene`, then verifies critical groups `source-maze`, `wall-legend`, and `option-A-maze`..`option-D-maze`; exact 16-cell fills and hatch; expected outer/internal walls; no wall on an open active edge; S/G halo centers, label anchors, and label positions; identical maze signatures including marker positions; route points and halo alignment at cell centers; orthogonal 40px steps; walls painted after routes; and four distinct choices with exactly one valid route. Error codes include `MISSING_WALL`, `UNEXPECTED_WALL`, `WALL_PAINT_ORDER`, `CHANGED_MAZE`, `MISSING_ENDPOINT`, `CLIPPED_ENDPOINT`, `ILLEGAL_DIAGONAL`, `WRONG_ROUTE`, `MISSING_LEGEND`, and `OPTION_NOT_DISTINCT`.
+- **Evidence:** focused tests cover deterministic 1024/512 PNGs, grayscale wall-versus-cell/corridor luminance, hidden-wall, clipped-endpoint, displaced-label, displaced-halo, illegal-diagonal, changed-maze-choice, wall-paint-order, missing-legend, and unexpected-wall fixtures, plus 100 seeded scenes with bounds and pairwise-distinct route rasters. Fixed and ten seeded critical-group pixel checks remove the source/option mazes or the wall legend and require at least eight changed non-background pixels.
+- **Preview:** `pathsRenderer` is registered in the canonical renderer registry (`family: "paths"`, `version: "paths-v1"`). `npm run preview -- --family paths --seed preview-v1` writes SVG/1024/512 under ignored `data/previews`; the accepted hashes are full `4e7ebcc294bcb15ecb2b3261111df2aac87abdc30e2c093dde0e9df3b4d1a80d` and preview `c90b92fc89ebcfffdefef9c7b3a6fe6dcc636d6b0e9e6269afd169dc8731d747`.
+- **Manual acceptance:** open the 512-pixel PNG and confirm that S/G, corridor openings, walls, and each highlighted route are unambiguous without source JSON; false routes visibly cross hatched cells or closed walls, and the correct route only crosses gaps.
+- **Verification:** `npm exec vitest run tests/render/paths.test.ts`; `npm run preview -- --family paths --seed preview-v1`; `npm run check`.
 
 ## Family Engine Contract
 
@@ -261,4 +274,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry contains the five text engines, matrix, the matrix renderer, transforms, the transforms renderer, and paths, and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains the five text engines, matrix, the matrix renderer, transforms, the transforms renderer, paths, and the paths renderer, and is filled by the owning phases.

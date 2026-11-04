@@ -647,7 +647,7 @@ describe("path engine contract and registry", () => {
     expect(facts[12]?.text).toContain("Goal marker");
     expect(productionRegistry.listEngineFamilies()).toContain("paths");
     expect(productionRegistry.getEngine("paths").modality).toBe("svg");
-    expect(productionRegistry.hasRenderer("paths")).toBe(false);
-    expect(productionRegistry.listRendererFamilies()).not.toContain("paths");
+    expect(productionRegistry.hasRenderer("paths")).toBe(true);
+    expect(productionRegistry.listRendererFamilies()).toContain("paths");
   });
 });
