@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
 import { SVG_FAMILIES, type Family, type SvgFamily } from "../domain/experiment.js";
 import { productionRegistry } from "../families/registry.js";
+import { sha256Hex } from "../util/hash.js";
 import { assertScene, previewRegistry, type Scene } from "../render/scene.js";
 import { writeScenePreviewExports } from "../render/png.js";
 
@@ -32,7 +33,7 @@ function resolvePreviewRenderer(family: string): ResolvedPreviewRenderer | undef
     return {
       family,
       buildScene(seed) {
-        const spec = engine.generateSpec(seed, 1);
+        const spec = engine.generateSpec(sha256Hex(`preview:${family}:${seed}`), 1);
         const scene = renderer.buildScene(spec);
         assertScene(scene as Scene);
         return scene as Scene;

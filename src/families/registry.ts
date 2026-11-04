@@ -12,6 +12,7 @@ import { schedulingEngine } from "./scheduling/engine.js";
 import { truthEngine } from "./truth/engine.js";
 import { arithmeticEngine } from "./arithmetic/engine.js";
 import { matrixEngine } from "./matrix/engine.js";
+import { matrixRenderer } from "./matrix/render.js";
 
 export interface RendererContract<Spec = unknown, Scene = unknown> {
   readonly family: SvgFamily;
@@ -182,3 +183,4 @@ productionRegistry.registerEngine(schedulingEngine);
 productionRegistry.registerEngine(truthEngine);
 productionRegistry.registerEngine(arithmeticEngine);
 productionRegistry.registerEngine(matrixEngine);
+productionRegistry.registerRenderer(matrixRenderer);

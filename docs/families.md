@@ -1,6 +1,6 @@
 # Family Contracts and Implemented Families
 
-This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, and P11 adds the matrix formal engine.
+This document records the shared contract implemented in P04 and the family engines implemented after it. P04 provides the interfaces, validation, and bounded deterministic helpers that P05-P20 use; P05 adds the real ranking engine, P06 adds attribute matching, P07 adds scheduling, P08 adds truth values, P09 adds small arithmetic constraints, P11 adds the matrix formal engine, and P12 adds its renderer.
 
 ## Scope
 
@@ -11,7 +11,7 @@ P04 owns:
 - `src/families/registry.ts`: separate formal-engine and renderer registries.
 - `src/domain/answers.ts`: deep option equality and seeded four-choice construction.
 
-P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, and P11 registers the matrix engine; later phases add the remaining four visual engines and renderers.
+P04 does not implement a real family, a renderer, a model adapter, or a production placeholder. P05 registers ranking, P06 registers matching, P07 registers scheduling, P08 registers truth, P09 registers arithmetic, P11 registers the matrix engine, and P12 registers the matrix renderer; later phases add the remaining four visual engines and four renderers.
 
 ## Implemented Family Engines
 
@@ -27,7 +27,7 @@ Files: `src/families/ranking/schema.ts`, `src/families/ranking/engine.ts`, `src/
 - **Fingerprint:** `canonicalData` applies `reduceClueCore`, canonicalizes over item relabelings, preserves position constants/direction/adjacency/size, and emits `size=N` plus sorted typed relation tokens (`before:a:b`, `immediatelyBefore:a:b`, `at:a:p`, `notAt:a:p`). It never hashes only the final permutation.
 - **Verification:** `npm exec vitest run tests/families/ranking.test.ts`; `npm run check`. The focused suite covers schema bounds, explicit unique order, impossible cycle, ambiguity, adjacency direction, positions, wrong keys, all options, relabeling/redundancy, deterministic mutations, registry registration, and 100 fixed construction seeds with at least 95 independently verified successes.
 
-The production registry now contains all five text engines plus the matrix formal engine: ranking, matching, scheduling, truth, arithmetic, and matrix. The remaining four visual engines and five renderers are registered only by their owning phases.
+The production registry now contains all five text engines plus the matrix engine and renderer: ranking, matching, scheduling, truth, arithmetic, and matrix. The remaining four visual engines and four renderers are registered only by their owning phases.
 
 ### Attribute Matching (P06)
 
@@ -90,6 +90,17 @@ Files: `src/families/matrix/schema.ts`, `src/families/matrix/engine.ts`, `src/fa
 - **Scene input:** `matrixSceneInput` exposes the typed 3x3 cells, missing-cell location, fixed glyph positions, empty-mask convention, and A-D choices without rendering SVG. No matrix renderer is registered in P11.
 - **Fingerprint:** `canonicalData` preserves all eight shown masks and the missing-cell location, and minimizes the matrix over the 24 glyph-identity permutations and the matrix transpose. The canonical structure uses `cell:r:c:mask` geometry tokens with `row=xor` and `column=xor`.
 - **Verification:** `npm exec vitest run tests/families/matrix.test.ts`; `npm run check`. Focused tests cover inconsistent rows/columns, unknown rule, malformed missing cell, empty mask, one-bit distractors, transpose/glyph renaming, typed scene input, deterministic mutations, and 100 fixed constructions.
+
+### Matrix Renderer (P12)
+
+Files: `src/families/matrix/render.ts`, `tests/render/matrix.test.ts`.
+
+- **Layout:** a 3x3 stem grid with the bottom-right `?` missing-cell marker, explicit row/column XOR rules, a glyph legend with all four fixed shapes, and four A-D answer tiles. Every cell and option uses the same four normalized glyph positions and shape-per-glyph mapping; color is never an identity cue.
+- **Glyphs:** circle, square, triangle, and diamond at fixed positions. Empty mask 0 is an outlined mini-grid with no glyphs. The missing cell is an outlined `?` cell. Stem rules use position words (`1st XOR 2nd = 3rd`, `top XOR mid = bottom`) and must not reuse bare A-D option labels.
+- **Validation:** `assertMatrixScene` runs the shared scene checks and then verifies the stem grid, missing marker, legend glyphs, option grids, exact mask-to-glyph placement, identical positions/shapes, clipping, cell overlap, empty-mask emptiness, and the critical-group IDs `stem-grid`, `missing-cell`, `legend-glyphs`, and `option-A-grid`..`option-D-grid`. The correct option must be present and the missing cell must be bottom-right.
+- **Preview:** `matrixRenderer` is registered in the canonical renderer registry. `npm run preview -- --family matrix --seed preview-v1` derives a 64-hex preview spec seed from the human seed, builds the checked masks, renders SVG/1024/512 files under ignored `data/previews`, and prints paths plus hashes.
+- **Evidence:** focused tests render 100 seeded scenes at 512 pixels for bounds and distinct option masks, run fixed adversarial plus ten seeded removed-critical-group pixel checks (at least eight changed non-background pixels), and reject swapped glyph positions with the explicit `SWAPPED_GLYPH` code, clipped glyphs, and injected glyphs in the empty mask. Critical-group evidence also removes marks while keeping panels; empty-mask option grids are skipped for that marks-only comparison.
+- **Verification:** `npm exec vitest run tests/render/matrix.test.ts`; `npm run preview -- --family matrix --seed preview-v1`; `npm run check`. Open the printed 512-pixel PNG and confirm the missing cell, both rule directions, every glyph, and A-D are distinguishable without a key cue.
 
 ## Family Engine Contract
 
@@ -212,4 +223,4 @@ Rendered distinctness is a presentation check owned by P22; P04 checks semantic 
 
 `FamilyRegistry` keeps formal engines and SVG renderers in separate maps. `registerEngine` and `registerRenderer` reject duplicates, wrong family/modality pairs, engine schemas without a `parse` function, missing engine methods, empty renderer versions, and renderers for text families. Registering an engine and a renderer for the same SVG family is allowed because they are separate capabilities. `assertComplete` checks all ten engines and, when requested, all five renderers.
 
-Registration does not import a future family or placeholder renderer. The production registry contains the five text engines and matrix, and is filled by the owning phases.
+Registration does not import a future family or placeholder renderer. The production registry contains the five text engines, matrix, and the matrix renderer, and is filled by the owning phases.

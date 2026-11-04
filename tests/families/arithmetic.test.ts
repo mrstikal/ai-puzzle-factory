@@ -478,12 +478,12 @@ describe("arithmetic engine contract and registry", () => {
     expect(facts[0]?.text).toContain("(1)*x");
   });
 
-  it("registers all five text engines and no visual renderer stub", () => {
+  it("registers all five text engines and the real matrix renderer", () => {
     const families = productionRegistry.listEngineFamilies();
     expect(families).toEqual(
       expect.arrayContaining(["ranking", "matching", "scheduling", "truth", "arithmetic"]),
     );
-    expect(productionRegistry.listRendererFamilies()).toEqual([]);
+    expect(productionRegistry.listRendererFamilies()).toContain("matrix");
     expect(productionRegistry.getEngine("arithmetic").family).toBe("arithmetic");
     expect(productionRegistry.getEngine("arithmetic").modality).toBe("text");
   });

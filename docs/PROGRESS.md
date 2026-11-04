@@ -593,3 +593,53 @@ npm run check
 Expected: 13 focused tests pass, exactly one candidate mask (3) is valid, and `npm run check` exits 0 with 190 tests.
 
 **Out of scope, unchanged:** matrix SVG layout/renderer, visual evidence, remaining visual families, AI wording, gallery, reports, and any live evidence.
+
+## P12. Matrix Renderer and Visual Evidence — 2026-11-04
+
+**State:** implemented, offline-verified. This phase adds the matrix renderer and preview only; no other visual family, HTML gallery, or provider call exists.
+
+**Files**
+
+- Matrix scene builder, validation, critical-group metadata, renderer registration object: `src/families/matrix/render.ts`
+- Tests: `tests/render/matrix.test.ts`
+- Registry: `src/families/registry.ts` registers `matrixRenderer`
+- Preview CLI: `src/cli/preview.ts` resolves the canonical matrix engine/renderer and derives a 64-hex preview spec seed from the human seed
+- Documentation: `docs/families.md`, this file
+
+**Observable behavior**
+
+- The renderer builds a 1024x1024 scene with a 3x3 stem grid, bottom-right `?` missing-cell marker, explicit `Rows: 1st XOR 2nd = 3rd.` and `Cols: top XOR mid = bottom.` rules, a four-glyph legend, and four A-D answer tiles. Glyph shapes are circle, square, triangle, and diamond at fixed normalized positions; color is never an identity cue. The scene validator rejects stem text that reuses bare answer-option labels.
+- Every example and option uses the same four glyph positions and shape mapping. Empty mask 0 is an outlined mini-grid with no glyphs.
+- `assertMatrixScene` validates the shared scene and then checks exact mask-to-glyph placement, the correct option is present, identical positions/shapes, missing-cell marker/position, empty-mask emptiness, grid/option clipping, cell overlap, and all critical groups `stem-grid`, `missing-cell`, `legend-glyphs`, and `option-A-grid`..`option-D-grid`. Stem rules must not contain standalone A-D labels.
+- The renderer is registered in the canonical renderer registry. `npm run preview -- --family matrix --seed preview-v1` builds the checked masks, writes SVG/1024/512 previews under ignored `data/previews`, and prints paths plus hashes.
+- Observed preview hashes for `preview-v1`: full `4cf25c961577c01f0cbce536ad23a865499d4c5bb8ada08f250db735a09dade8`, preview `07b8001b5567a87c0d701c5c7992dddfccc4af62524a57ab6401738b932457aa`.
+- Focused tests rasterize 100 seeded scenes at 512 pixels for bounds and distinct option masks, run fixed adversarial plus ten seeded removed-critical-group pixel checks (at least eight changed non-background pixels), and reject swapped glyph positions with the explicit `SWAPPED_GLYPH` code, clipped glyphs, and injected glyphs in the empty mask. Removed-critical-group evidence is repeated with marks removed but panels kept, so the pixel delta reflects the glyphs rather than only the backing panel; empty-mask option grids are skipped for the marks-only comparison.
+- The 512-pixel preview was inspected directly: the missing `?`, both rule directions, all four glyph shapes, and A-D tiles are distinguishable; no option is visually marked as the key.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/render/matrix.test.ts` | exit 0; 7 tests passed. |
+| `npm run preview -- --family matrix --seed preview-v1` | exit 0; printed SVG, full PNG, preview PNG, and both SHA-256 hashes. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 12 files / 197 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run `npm exec vitest run tests/render/matrix.test.ts --reporter=verbose` and inspect the scene, empty-mask, swapped/clipped, 100-seed raster, removed-critical-group, and preview CLI cases.
+2. Run `npm run preview -- --family matrix --seed preview-v1` and open the printed 512-pixel PNG directly. Confirm the missing cell, both row/column rules, every glyph shape, and A-D are distinguishable, with no key cue.
+3. Confirm the printed full/preview hashes match the observed values above and the output is under ignored `data/previews`.
+4. Run `npm run check` and confirm 197 tests pass without an API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec vitest run tests/render/matrix.test.ts --reporter=verbose
+npm run preview -- --family matrix --seed preview-v1
+npm run check
+```
+
+Expected: 7 focused tests pass, the preview command prints existing SVG/full/preview paths with the observed hashes, and `npm run check` exits 0 with 197 tests. Open the printed 512-pixel PNG directly; no gallery is involved.
+
+**Out of scope, unchanged:** other visual families, HTML gallery, AI SVG, reports, provider calls, and any live evidence.

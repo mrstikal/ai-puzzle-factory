@@ -263,7 +263,7 @@ describe("matrix canonicalization and scene input", () => {
     expect(sceneInput.glyphPositions).toHaveLength(4);
     expect(sceneInput.emptyMaskConvention).toBe(EMPTY_MASK_CONVENTION);
     expect(sceneInput.choices.map((choice) => choice.label)).toEqual(["A", "B", "C", "D"]);
-    expect(productionRegistry.listRendererFamilies()).toEqual([]);
+    expect(productionRegistry.listRendererFamilies()).toContain("matrix");
   });
 });
 
@@ -401,6 +401,6 @@ describe("matrix engine contract and registry", () => {
     expect(facts[0]?.text).toContain("Row 1, column 1");
     expect(productionRegistry.listEngineFamilies()).toContain("matrix");
     expect(productionRegistry.getEngine("matrix").modality).toBe("svg");
-    expect(productionRegistry.hasRenderer("matrix")).toBe(false);
+    expect(productionRegistry.hasRenderer("matrix")).toBe(true);
   });
 });
