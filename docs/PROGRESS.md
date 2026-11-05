@@ -1134,3 +1134,61 @@ Expected: the focused suite exits 0 with 17 passing tests and includes the shuff
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 17-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** generation, slot preparation, runner orchestration, reviews, primary verdict reduction, reports, gallery, provider calls, and any claim that the reduced-core proxy detects all logically equivalent clue sets.
+
+## P22. Visible Presentation Assembly and Mechanical Semantic Checks — 2026-11-05
+
+**State:** implemented, offline-verified; awaiting user acceptance. This phase adds the deterministic public/reveal presentation boundary. No model call, prompt builder, raw-response persistence, semantic alignment review, or HTML gallery exists.
+
+**Files**
+
+- Shared presentation schemas: `src/domain/presentation.ts`
+- Strict wording schema and fixture wording: `src/presentation/wording.ts`
+- Presentation assembly and P21 content projection: `src/presentation/assemble.ts`
+- Structural presentation validation: `src/validation/presentation.ts`
+- Tests: `tests/presentation/assemble.test.ts`
+- Documentation: `docs/experiment-protocol.md`, `README.md`, this file
+
+**Observable behavior**
+
+- The wording response is strict: `question` 1..400, at most 12 `clueTexts` of 1..200 each, `hint` 1..300, and at most 8 `explanationSteps` of 1..240 with bounded fact-ID lists. Blank-only strings are rejected. HTML/script-like strings are stored verbatim as plain data.
+- Code-owned `VisibleRules` and A-D option values/labels always come from the family engine. Option text is code-owned per family: ordered labels for ranking, A-to-B/C tables for matching, event-to-slot/resource tables for scheduling, truth vectors, arithmetic tuples, `See labeled tile A/B/C/D` for matrix/transforms/paths/symmetry, and the actual integer for counting.
+- Text wording must cover every local `fNNN` clue fact exactly once; SVG wording must leave `clueTexts` empty. Explanation references must exist in the merged five-rule, local-or-observation, and `sNNN` proof inventory. Missing, extra, duplicate, non-local, and unknown references are rejected.
+- Choices must be four ordered A-D options with exactly one independently correct option, a matching stored `correctLabel`, and a correct value equal to the independent solve result.
+- `VisiblePresentation` contains only public fields (`version`, `slotId`, `family`, `modality`, `question`, `rules`, `clues`, `options`, `assets`) and never the key, hint, explanation, or proof. `RevealData` separately carries `correctLabel`, `correctValue`, `hint`, `explanationSteps`, and the solve proof.
+- SVG presentations require both stored SVG and PNG hashes; text presentations require both to be null. The assembly stores the supplied hashes rather than inventing them.
+- Mechanical checks are reported as `pass`; `semanticAlignment` is always `semantic_alignment_pending`. A correct-ID paraphrase, a same-ID contradiction, or possible answer leakage is retained and remains pending, never silently repaired or mechanically declared true.
+- `makeFixtureWording` is deterministic and labeled `source: "fixture"` for tests/previews only. Model wording uses `source: "model"` through the same assembly checks.
+- `fingerprintContentFor` exposes the exact P21 content projection from the assembled visible text/options plus the reveal hint/explanation.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/presentation/assemble.test.ts --reporter=verbose` | exit 0; 1 file / 12 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 23 files / 325 tests passed, build succeeded. |
+
+The focused suite assembles all ten families, checks public/reveal separation, code-owned rules/options, text clue-fact coverage, missing/extra/duplicate facts, unknown proof references, every wording length bound, wrong ordered choices, wrong stored labels, malformed choice sets, HTML/script strings retained verbatim, missing/extra image hashes, invalid specs, slot mismatches, proof references, fixture determinism, the typed re-validation taxonomy, and a same-ID semantic contradiction that stays pending.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the all-family test assembles ten presentations and that `Object.keys(visible)` contains no `correctLabel`, `correctValue`, `hint`, `explanationSteps`, or `proof`.
+3. Confirm the reveal object separately contains the correct label/value, hint, explanation, and proof.
+4. Confirm the same-ID contradiction test leaves `semanticAlignment` at `semantic_alignment_pending` and retains the contradictory text.
+5. Confirm `npm run check` passes with 23 files / 325 tests and no API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec -- vitest run tests/presentation/assemble.test.ts --reporter=verbose
+npm run check
+```
+
+Expected: the focused suite exits 0 with 12 passing tests covering all ten families and the public/reveal, fact-coverage, length, option-order, HTML-retention, missing-asset, invalid-spec, typed re-validation, proof-reference, and semantic-pending cases; `npm run check` exits 0 with 23 files / 325 tests and a successful build.
+
+**Decision-reviewer:** the first pass found three Low findings: exported validators leaked raw ZodError and two advertised codes were unreachable; `assemblePresentation` did not validate the spec against the family schema; and the structural validator did not enforce empty SVG `clues`. All three were fixed with typed `safeParse` conversion, reachable raw pre-parse checks, `INVALID_SPEC`, and the SVG clue rule. A second pass found one residual Low finding (unvalidated `choices` input); it was fixed with a `ChoiceSetSchema` gate. A third pass found that the new regression assertion did not discriminate that gate; a direct `choices: null` case now does. A fourth pass verified the fix and reported no material findings and no regression.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 12-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** model wording calls, prompt construction, raw-response persistence, semantic alignment review, blind/alignment DTOs, gallery, reports, and any claim that mechanical checks prove arbitrary English semantics.

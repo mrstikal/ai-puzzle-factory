@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P01-P21 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P22 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -203,3 +203,59 @@ The result is a canonical, frozen `DuplicateBarrierResult`:
 - `resultHash` over the canonical result with the hash field excluded.
 
 Tests: `npm exec vitest run tests/validation/duplicates.test.ts`; full gate: `npm run check`.
+
+## 13. Visible presentation assembly (P22)
+
+P22 defines the deterministic boundary between what a solver sees and what only the report/reveal may show.
+
+### Wording schema
+
+The wording response is strict and all fields are required:
+
+```json
+{
+  "question": "string, 1..400 characters",
+  "clueTexts": [{"factId": "fNNN", "text": "string, 1..200 characters"}],
+  "hint": "string, 1..300 characters",
+  "explanationSteps": [{"factIds": ["fNNN|pNNN|sNNN|r-..."], "text": "string, 1..240 characters"}]
+}
+```
+
+`clueTexts` has at most 12 entries; `explanationSteps` has at most 8. Text is stored exactly as supplied, including HTML/script-like strings; it is data, not markup. Blank-only strings are rejected.
+
+### Code-owned rules and options
+
+`VisibleRules` (`domain`, `closedWorld`, `target`, `operations`, `conventions`) always come from the family engine, never from model prose. Option values and A-D labels come from the code-owned `ChoiceSet`; the wording response cannot alter them. Option text is code-owned:
+
+- ranking: complete label order;
+- matching: A-to-B/C table;
+- scheduling: event-to-slot/resource table;
+- truth: `P1=T`-style vector;
+- arithmetic: `(x, y, z) = ...`;
+- matrix, transforms, paths, symmetry: `See labeled tile A/B/C/D`;
+- counting: the actual integer.
+
+### Field and fact coverage
+
+- Text: `clueTexts` must reference every local `fNNN` fact exactly once. Domain/global `r-*` rules are a separate code-owned block and cannot replace clue facts.
+- SVG: `clueTexts` must be empty. The diagram holds `pNNN` observations and the rules hold the operations/query.
+- Explanation references may use the full merged inventory: five rule facts, local or observation facts, and derived `sNNN` proof facts. Unknown IDs are rejected.
+- Missing, extra, duplicate, or non-local clue facts are rejected. Option labels must be A-D in order, exactly one option must satisfy the independent checker, and the stored `correctLabel` must name it.
+
+### Public/reveal boundary
+
+`VisiblePresentation` contains only `version`, `slotId`, `family`, `modality`, `question`, `rules`, `clues`, `options`, and `assets` (`svgHash`/`pngHash`). It contains no key, hint, explanation, or proof. `RevealData` separately contains `correctLabel`, `correctValue`, `hint`, `explanationSteps`, and the solve proof. SVG presentations require both stored SVG and PNG hashes; text presentations require both to be null.
+
+### Mechanical status and semantic pending
+
+The assembly result records mechanical checks as `pass` and always sets `semanticAlignment` to `semantic_alignment_pending`. P22 has no English parser: a paraphrase with correct fact IDs, a same-ID contradiction, and possible answer leakage are retained as supplied and remain pending for the later informed alignment role. P22 never silently repairs, truncates, or substitutes wording, and never claims semantic truth.
+
+### Fixture wording
+
+`makeFixtureWording` is deterministic and labels its output `source: "fixture"`. It is only for tests and previews. Model wording uses `source: "model"` and follows the same assembly checks.
+
+### Tests and commands
+
+`npm exec -- vitest run tests/presentation/assemble.test.ts` covers all ten families, missing/extra/duplicate facts, unknown proof references, length bounds, wrong ordered choices, malformed choice sets, invalid specs, typed re-validation, HTML/script strings retained verbatim, missing SVG assets, slot mismatches, fixture determinism, proof references, and a same-ID contradiction that stays pending. Full gate: `npm run check`.
+
+Out of scope: model calls, prompt construction, raw-response persistence, semantic alignment review, and the HTML gallery.
