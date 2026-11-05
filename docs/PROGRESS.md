@@ -1490,3 +1490,59 @@ Expected: the focused suite exits 0 with 8 passing tests; `npm run check` exits 
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 8-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** blind reviewers, alignment reviewers, repair loops, paid calls, reports, and the gallery.
+
+## P28. Blind Text Reviewer and Leakage Tests — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds a public-only blind text review boundary. It makes no live provider call, paid request, vision review, informed semantic review, or stage commit; it performs the code-key comparison only after parsing, never sends the key in the request, and does not retry content.
+
+**Files**
+
+- Adapter: `src/ai/review-text.ts`
+- Prompt asset: `src/ai/prompts/v1/blind-text.txt`
+- Tests: `tests/ai/review-text.test.ts`
+- Documentation: `README.md`, `docs/experiment-protocol.md`, this file
+
+**Observable behavior**
+
+- The adapter accepts `presentation_ready` or `duplicate_checked`, reads the stored `presentation_ready` assembled presentation, validates it with P22, requires the presentation's slot/family/modality to match the reviewed slot, and requires a text presentation. SVG slots are rejected for the vision phase.
+- The model input is exactly the public allowlist: question, visible rules, clue texts without fact IDs, and four A-D option labels/texts. It never contains slot ID, family, modality, assets, spec/DSL, witness, solution, correct label/value, hidden layout parameters, hint, explanation, proof, fact IDs, lane, or another review.
+- Fixed role instructions treat puzzle text as untrusted data, forbid obeying embedded directions that alter review policy/output, and require independent solving plus ambiguity assessment. This is defense-in-depth, not proof of prompt-injection immunity.
+- The request uses the P25 `puzzle_blind_review` strict schema and a resolved `blind_text` route without image input. The exact allowlisted input is saved in the logical call; the raw response is saved before parsing.
+- The strict schema enforces `selected` with a non-null A-D choice and `no_unique_answer`/`cannot_determine` with null. Text reviews additionally require `visualLegibility: not_applicable`.
+- The request builder never sees the code key. After parsing, the adapter compares the selected option with the stored presentation's code key outside the builder and records `agreed`, `disagreed`, or `not_applicable`. Wrong choices, uncertainty, and disagreement are retained as review evidence; no second content prompt is sent.
+- A successful parse records a `blind_text_review` request event with the input hash, parsed review, choice agreement, and prompt/schema provenance. Refusal, invalid JSON, and invalid review responses retain raw response, attempt, and cost without a workflow stage.
+- No workflow stage is written; P34 commits `blind_reviewed` after the text and vision reviews.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/review-text.test.ts --reporter=verbose` | exit 0; 1 file / 8 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 29 files / 430 tests passed, build succeeded and copied `blind-text.txt`. |
+
+The focused suite covers all text families and both lanes, exact public payload deep-equality, hidden canaries for slot/lane/spec/key/hint/proof/previous review/fact IDs, every answer-status/null relation, wrong choice, uncertainty, text legibility, refusal, invalid JSON, no retry after disagreement, `duplicate_checked` acceptance, stored-slot mismatch rejection, route/stage guards, exact saved request/raw response, choice agreement, and prompt/schema provenance. All responses come from the local fake; no real network or paid call was made.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the focused suite reports 8 passing tests, including the exact public allowlist/canary test, the answer-status/null matrix, and `duplicate_checked`/mismatched-slot handling.
+3. Confirm `npm run check` reports 29 files / 430 tests and a successful build.
+4. Confirm `dist/ai/prompts/v1/blind-text.txt` exists after the build.
+5. Confirm the captured fake request contains exactly the human-visible question and four choices plus fixed role instructions, with no expected label or reveal material.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec -- vitest run tests/ai/review-text.test.ts --reporter=verbose
+npm run check
+ls -l dist/ai/prompts/v1/blind-text.txt
+```
+
+Expected: the focused suite exits 0 with 8 passing tests; `npm run check` exits 0 with 29 files / 430 tests and a successful build; the blind-text prompt exists under `dist/ai/prompts/v1/`. No live provider call or paid request is made.
+
+**Decision-reviewer:** the first pass found four confirmed defects: the stage gate rejected the plan-ordered `duplicate_checked` slot (High); the blind choice was never compared with the code key or persisted as agreement evidence (Medium); the slot-id canary checked the wrong identifier (Low); and the reviewed slot was not bound to the stored presentation's slot/family/modality (Low). Fixes accept `presentation_ready` or `duplicate_checked`, compare the choice with the stored key outside the request builder and record `agreed`/`disagreed`/`not_applicable`, bind the presentation to the reviewed slot, and strengthen the canary/mismatch tests. A second pass confirmed all four findings resolved and found no new material code defect; it flagged one stale phase-summary sentence, now corrected, and recorded that P34 must enforce barrier-before-review ordering because P28 accepts both `presentation_ready` and `duplicate_checked`.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 8-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** vision review, informed semantic review, paid calls, reports, and the gallery.

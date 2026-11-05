@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P01-P27 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P28 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -453,3 +453,35 @@ P27 writes public wording and reveal text for a formally checked slot. It uses o
 `npm exec -- vitest run tests/ai/write-wording.test.ts` covers all ten families, both lanes, text/SVG shapes, missing/duplicate facts, unsupported explanation references, SVG clue transcription, negation drift, answer leakage, HTML/script text, invalid wording schema, empty reasoning-only response, exactly one call per slot, second-call refusal, route/stage guards, and prompt/schema provenance. Full gate: `npm run check`.
 
 Out of scope: blind reviewers, repair loops, paid calls, and semantic alignment decisions.
+
+## 19. Blind text reviewer (P28)
+
+P28 implements the text half of the section 5.3 blind review boundary. It does not write a workflow stage; P34 commits `blind_reviewed` after the text and vision reviews.
+
+### Public allowlist
+
+- The adapter accepts a slot at `presentation_ready` or later `duplicate_checked` (the plan runs the duplicate barrier before reviews) and reads the stored `presentation_ready` assembled presentation. It validates it with the P22 assembled-presentation contract and requires the presentation's slot ID, family, and modality to match the reviewed slot.
+- The model input is exactly `{question, rules, clues, options}`: the public question, the visible rules object, the clue texts only (no fact IDs), and the four A-D option labels/texts.
+- The input never contains slot ID, family, modality, assets, spec/DSL, witness, solution, correct label/value, hidden layout parameters, hint, explanation, proof, fact IDs, lane, or another review. The payload schema is strict.
+- Fixed role instructions treat all puzzle text as untrusted data, forbid obeying embedded directions that alter review policy/output, and require independent solving plus ambiguity assessment. This is defense-in-depth, not proof of prompt-injection immunity.
+- The request uses the P25 `puzzle_blind_review` schema, the resolved `blind_text` route, and text-only messages. The route must not require an image.
+
+### Review contract and evidence
+
+- `selected` requires a non-null A-D choice; `no_unique_answer` and `cannot_determine` require null. The P25 schema enforces this; a violation is `INVALID_REVIEW`.
+- Text reviews must report `visualLegibility: not_applicable`; any other value is rejected as `INVALID_REVIEW`.
+- The request builder never sees the code key. After the response is parsed, the adapter compares the selected option with the stored presentation's code key outside the request builder and records `agreed`, `disagreed`, or `not_applicable`. A wrong choice, uncertainty, or disagreement is retained as review evidence; no second content prompt is sent.
+- The exact allowlisted input is saved in `logical_calls.request_body_json`; the raw response is saved before parsing. `logical_calls.expected_schema_hash` stores the blind schema hash.
+- A successful parse records a `blind_text_review` request event containing the input hash, parsed review, choice agreement, and prompt/schema provenance. Refusal, invalid JSON, and invalid review responses retain the raw response, attempt, and cost without a workflow stage.
+
+### Prompt/version inventory
+
+- `blind-text.txt` declares `PUZZLE_BLIND_TEXT_PROMPT_VERSION: v1`; the schema version is `v1` and the schema name is `puzzle_blind_review`.
+- The system prompt carries `prompt_version`, `prompt_hash`, `schema_name`, `schema_version`, and `schema_hash`. The prompt hash covers the exact template hash plus schema name/version/hash.
+- `scripts/copy-assets.mjs` copies the prompt into `dist/ai/prompts/v1/`.
+
+### Tests
+
+`npm exec -- vitest run tests/ai/review-text.test.ts` covers all text families and both lanes, exact public payload deep-equality, hidden canaries for slot/lane/spec/key/hint/proof/previous review/fact IDs, every answer-status/null relation, wrong choice, uncertainty, text legibility, refusal, invalid JSON, no retry after disagreement, `duplicate_checked` acceptance, stored-slot mismatch rejection, route/stage guards, exact saved request/raw response, choice agreement, and prompt/schema provenance. Full gate: `npm run check`.
+
+Out of scope: vision review and informed semantic review.
