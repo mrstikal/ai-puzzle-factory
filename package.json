@@ -15,7 +15,9 @@
     "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "experiment": "tsx src/cli/experiment.ts",
     "preview": "tsx src/cli/preview.ts",
-    "preflight": "tsx src/cli/preflight.ts"
+    "preflight": "tsx src/cli/preflight.ts",
+    "report": "tsx src/cli/report.ts",
+    "export": "tsx src/cli/export.ts"
   },
   "dependencies": {
     "@resvg/resvg-js": "2.6.2",

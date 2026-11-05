@@ -2166,3 +2166,79 @@ Expected: `status completed`, `slots 20/20 terminal`, `verdicts approved=19 ... 
 **Acceptance:** accepted by the user on 2026-11-05 after the focused suite, the exact non-UI scripts, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** exactly-once external billing, automatic semantic repair, multi-process workers, reports, HTML, the gallery, and any paid provider request.
+
+## P37. Exact Metrics and Machine-Readable Exports — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds pure metric projections and controlled JSONL/CSV/asset exports over committed SQLite snapshots. It does not add the HTML gallery, calibration scoring, or business success claims.
+
+**Files**
+
+- Metrics: `src/reporting/metrics.ts`
+- Export: `src/reporting/export.ts`
+- CLIs: `src/cli/report.ts`, `src/cli/export.ts`
+- Scripts: `package.json` (`report`, `export`)
+- Tests: `tests/reporting/metrics.test.ts`, `tests/reporting/export.test.ts`, `tests/reporting/fixtures.ts`
+- Documentation: `README.md` and this file
+
+**Observable behavior**
+
+- `computeRunMetrics` reads a committed run, its slots, stages, logical calls, attempts, and budget accounts. It never writes to the database.
+- Counts and rates use the planned manifest denominator: planned, started, terminal, fingerprintable, formal-passed, presentation-check-passed, reviewed, approved, rejected, inconclusive, generation-error, paused, unstarted, and infrastructure-only terminal failures. The secondary approval rate excludes only terminal failures whose codes are exclusively `API_ERROR`/`MISSING_REVIEW`/`COST_UNKNOWN`; it is marked provisional when terminal < planned and the planned-denominator primary rate remains beside it.
+- Review metrics report parsed/agreed/disagreed/not-applicable blind counts, ambiguity, incomplete reviews, alignment pass/fail/uncertain, per-role split, review coverage, and the conditional agreement denominator. Structural uniqueness is distinct structure hashes / fingerprintable candidates with separate fingerprint coverage.
+- Cost metrics preserve unknown money as `null`, report a known lower bound, unknown attempts, reserved/unknown exposure per approval, per-role average review cost and request counts, generator/text-review/vision-review rollups, and separate end-to-end costs by preflight/calibration/smoke/full run kind. Usage metrics sum non-null prompt/completion/total/cached/reasoning tokens and report missing-field counts rather than treating null as zero.
+- Latency reports mean/median/nearest-rank-p95 for HTTP attempts and logical-call elapsed time per role, per-candidate preparation/review active time from stage durations, and end-to-end wall time from first stage start to terminal. Missing end times stay null and are counted.
+- Failure-code frequencies may sum above the candidate count and are reported with a separate exclusive verdict histogram. Near-duplicate evidence is split into only-near, additional-quality, and incomplete/failed-review categories by family and lane.
+- Tables cover modality, family, lane, target difficulty, family-by-lane, modality-by-difficulty, and family-by-difficulty, always including planned failures/unstarted slots. Approval rates include Wilson 95% intervals; zero denominators yield null/N/A; notes mark the 6-item SVG `ai_spec` cells exploratory and state that difficulty is the requested setting, not validated human difficulty.
+- `exportRun` writes `manifest.json`, `summary.json`, `candidates.jsonl`, `requests.jsonl`, `results.csv`, `puzzles/<slot-id>.json`, and `images/<slot-id>.svg|png` under `data/runs/<uuid>/`. Candidate and CSV rows preserve one row per planned slot, including missing presentations and failures. Requests include request bodies, raw response bodies, attempt metadata, cost, and reservation evidence; no API key or authorization header is exported.
+- CSV string fields are formula-injection escaped (`=`, `+`, `-`, `@`, leading control/whitespace) while the JSON source remains unchanged. The export path is derived from a validated run UUID under the controlled root; unsafe paths and invalid formats are rejected. JSONL candidates/requests and CSV results can be re-imported structurally.
+- The CLIs are `npm run report -- --run <run-id> [--db <path>]` and `npm run export -- --run <run-id> --format csv|jsonl|all [--db <path>]`. HTML is not generated.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/reporting/metrics.test.ts tests/reporting/export.test.ts` | exit 0; 2 files / 13 tests passed. |
+| `npm run report -- --run 6732cab0-3f25-4183-acd9-4253cc9ada9f` | 20 planned/started/terminal/approved, known actual `0`, 70 attempts, finite tables and Wilson intervals. |
+| `npm run export -- --run 6732cab0-3f25-4183-acd9-4253cc9ada9f --format csv` | wrote `manifest.json`, `summary.json`, `results.csv`; results has 21 lines (header + 20 slots). |
+| `npm run export -- --run 6732cab0-3f25-4183-acd9-4253cc9ada9f --format all` | 45 files: 20 candidates, 70 requests, 20 puzzles, 20 images (10 SVG + 10 PNG), manifest, summary, results CSV. |
+| `npm run report -- --run 123e4567-e89b-42d3-a456-426614174090 --db /tmp/p36-uncertain.sqlite` | 20 planned/terminal, 19 approved + 1 generation_error, presentation missing 1, cost unknown, actual null, known `0`, unknown attempt 1. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 39 files / 523 tests passed, build succeeded. |
+
+The focused metrics suite uses a hand-calculated 20-slot synthetic cohort with five started slots, one approved, one rejected, two inconclusive (one near-only, one review-failure), one generation error, missing presentations, unknown cost/usage/end times, retry-inclusive call durations, multiple failure codes, and near-duplicate evidence. It asserts planned-denominator rates, infrastructure-only exclusion, review coverage, structural uniqueness, cost/usage rollups, mean/median/p95 values, tables, Wilson intervals, and a zero-start/zero-approval run without NaN/Infinity. Additional cases cover prepared/refused-unprocessed attempts as known zero money, non-terminal review-stage failures, and completed-review near findings versus unverified evidence. The export suite asserts one row per planned slot, missing/failed records, real SVG/PNG assets, request/raw-response/reservation evidence, JSONL re-import, CSV parsing, formula escaping, safe paths, invalid formats, format-specific files, non-terminal review failures, and unbilled per-slot cost agreement with `summary.json`.
+
+**Manual acceptance steps**
+
+1. Run the exact commands below against the completed mock run.
+2. Confirm the report shows 20 planned/started/terminal/approved, known cost `0`, 70 attempts, and no unknown money; inspect the tables and missing-evidence counts.
+3. Confirm the CSV has one row per planned slot and the all-format export has 20 candidates, 70 requests, 20 puzzles, and 20 images.
+4. Run the report against `/tmp/p36-uncertain.sqlite` and confirm 20 planned/terminal, 19 approved + 1 generation_error, presentation missing 1, cost unknown with `actual: null` and known `0`, and the failed slot present with an empty question in CSV.
+5. Confirm no HTML/report gallery exists and no API key/authorization header appears in `requests.jsonl`.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+RUN_ID=6732cab0-3f25-4183-acd9-4253cc9ada9f
+npm run report -- --run "$RUN_ID" > /tmp/p37-report.json
+node -e "const m=require('/tmp/p37-report.json'); console.log({planned:m.counts.planned,started:m.counts.started,terminal:m.counts.terminal,approved:m.counts.approved,attempts:m.cost.attempts,known:m.cost.knownActualUsd,actual:m.cost.actualCostUsd,unknown:m.cost.unknownAttempts});"
+npm run export -- --run "$RUN_ID" --format csv
+npm run export -- --run "$RUN_ID" --format all
+DIR="data/runs/$RUN_ID"
+wc -l "$DIR/candidates.jsonl" "$DIR/requests.jsonl" "$DIR/results.csv"
+ls "$DIR/images" | wc -l
+ls "$DIR/puzzles" | wc -l
+npm run report -- --run 123e4567-e89b-42d3-a456-426614174090 --db /tmp/p36-uncertain.sqlite > /tmp/p37-uncertain-report.json
+node -e "const m=require('/tmp/p37-uncertain-report.json'); console.log({planned:m.counts.planned,terminal:m.counts.terminal,approved:m.counts.approved,generation_error:m.counts.generationError,presentation_missing:m.missing.stages.presentation,cost_status:m.cost.costStatus,actual:m.cost.actualCostUsd,known:m.cost.knownActualUsd,unknown_attempts:m.cost.unknownAttempts});"
+npm run export -- --run 123e4567-e89b-42d3-a456-426614174090 --db /tmp/p36-uncertain.sqlite --format csv
+grep 'text-ranking-02' data/runs/123e4567-e89b-42d3-a456-426614174090/results.csv
+grep -c '^' "$DIR/results.csv"
+```
+
+Expected: report `planned 20`, `started 20`, `terminal 20`, `approved 20`, `attempts 70`, `known 0`, `actual 0`, `unknown 0`; candidates `20`, requests `70`, results `21` lines, images `20`, puzzles `20`; uncertain report `planned 20`, `terminal 20`, `approved 19`, `generation_error 1`, `presentation_missing 1`, `cost_status unknown`, `actual null`, `known 0`, `unknown_attempts 1`; the partial CSV row for `text-ranking-02` shows `cost_status` `unknown` and an empty `actual_cost_usd`, never zero.
+
+**Decision-reviewer:** the first static pass found four material findings: candidate review active time was fabricated for candidates without review stages and its missing count was hardcoded to zero (Medium); near-duplicate evidence put completed-review quality findings into the unverified bucket (Medium); provably unbilled prepared/refused attempts still nulled run money (Medium); and failure frequencies omitted non-terminal review-stage failures (Low). The fixes require all four review stages for a review-time observation, derive missing review/wall coverage from started views, reserve `incompleteOrFailedReview` for missing or failed review evidence, share `isProvablyUnbilledAttempt` across metrics and export, and aggregate stage-level `failure` records when no terminal exists. A verification pass confirmed those four fixes but found the same unbilled-money rule still missing from exported per-slot/CSV cost fields (Medium); the shared helper is now used in `costForSlot`, with candidate/CSV/summary agreement tested. The final pass found no material findings; it noted only non-material maintainability/raw-evidence observations. Focused suite: 13 tests; full `npm run check`: 39 files / 523 tests.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** HTML gallery, browser acceptance, calibration scoring, audit labels, business success claims, and any paid provider request.
