@@ -1,5 +1,9 @@
 import type Database from "better-sqlite3";
-import { addUsd, createBudgetAccount } from "../ai/budget.js";
+import {
+  addUsd,
+  createBudgetAccount,
+  getBudgetAccount,
+} from "../ai/budget.js";
 import type { MockScenarioKind, MockTransport } from "../ai/mock.js";
 import type { ResolvedRoute } from "../ai/preflight.js";
 import {
@@ -39,6 +43,19 @@ import {
   reviewSlot,
   type ReviewSlotOutcome,
 } from "./review-slot.js";
+import {
+  markUnfinishedDispatchesUncertain,
+  RunCancellation,
+  withCancellationTransport,
+  type CancellationReason,
+} from "./cancel.js";
+import {
+  DEFAULT_CONCURRENCY,
+  assertConcurrency,
+  runBoundedPool,
+  yieldToEventLoop,
+  type Concurrency,
+} from "./workers.js";
 
 export type RunErrorCode =
   | "INVALID_INPUT"
@@ -123,6 +140,10 @@ export interface RunSmokeMockInput {
   readonly maxCostUsd: string;
   readonly rootSeed?: string;
   readonly clock?: { now(): Date };
+  readonly concurrency?: Concurrency;
+  readonly cancellation?: RunCancellation;
+  readonly drainTimeoutMs?: number;
+  readonly yieldBetweenJobs?: () => Promise<void>;
   readonly preparationScenarios?: Readonly<
     Record<string, PreparationScenarioOverride>
   >;
@@ -132,9 +153,19 @@ export interface RunSmokeMockInput {
   };
 }
 
+export type RunSmokeMockStatus = "completed" | "cancelled";
+
+export interface RunCancellationSummary {
+  readonly reason: CancellationReason;
+  readonly phase: "preparation" | "barrier" | "review" | "unknown";
+  readonly drained: "drained" | "timeout";
+  readonly markedUncertain: number;
+}
+
 export interface RunSmokeMockSummary {
   readonly runId: string;
   readonly planHash: string;
+  readonly status: RunSmokeMockStatus;
   readonly slots: number;
   readonly terminalSlots: number;
   readonly verdicts: Readonly<Record<CandidateVerdict, number>>;
@@ -145,17 +176,26 @@ export interface RunSmokeMockSummary {
     readonly actualCostUsd: string | null;
     readonly costStatus: "known" | "unknown" | "not_applicable";
   };
-  readonly barrier: DuplicateBarrierSummary;
+  readonly budget: {
+    readonly knownActualUsd: string;
+    readonly reservedUsd: string;
+    readonly unknownExposureUsd: string;
+    readonly maxCostUsd: string;
+  };
+  readonly barrier: DuplicateBarrierSummary | null;
+  readonly cancellation: RunCancellationSummary | null;
 }
 
 export interface RunSmokeMockResult {
   readonly runId: string;
   readonly plan: PlanManifest;
-  readonly barrier: ReturnType<typeof runDuplicateBarrier>;
+  readonly status: RunSmokeMockStatus;
+  readonly barrier: ReturnType<typeof runDuplicateBarrier> | null;
   readonly preparations: readonly PreparationResult[];
   readonly reviews: readonly ReviewSlotOutcome[];
   readonly slots: readonly SlotRecord[];
   readonly summary: RunSmokeMockSummary;
+  readonly cancellation: RunCancellationSummary | null;
 }
 
 function nowIso(clock: { now(): Date }): string {
@@ -185,12 +225,19 @@ function errorCode(error: unknown): string | null {
   return null;
 }
 
+function defined<T>(value: T | undefined): value is T {
+  return value !== undefined;
+}
+
 function summarizeRun(
   db: Database.Database,
   runId: string,
+  accountId: string,
   plan: PlanManifest,
   slots: readonly SlotRecord[],
-  barrier: ReturnType<typeof runDuplicateBarrier>,
+  barrier: ReturnType<typeof runDuplicateBarrier> | null,
+  status: RunSmokeMockStatus,
+  cancellation: RunCancellationSummary | null,
 ): RunSmokeMockSummary {
   const verdicts: Record<CandidateVerdict, number> = {
     approved: 0,
@@ -239,9 +286,11 @@ function summarizeRun(
     costStatus === "known"
       ? addUsd(...knownRows.map((row) => row.actual_cost_usd))
       : null;
+  const account = getBudgetAccount(db, accountId);
   return {
     runId,
     planHash: plan.planHash,
+    status,
     slots: slots.length,
     terminalSlots: slots.filter((slot) => slot.stage === "terminal").length,
     verdicts,
@@ -249,7 +298,75 @@ function summarizeRun(
     attempts: attemptRow.count,
     unknownAttempts: unknownRow.count,
     cost: { actualCostUsd, costStatus },
-    barrier: barrier.summary,
+    budget: {
+      knownActualUsd: account.knownActualUsd,
+      reservedUsd: account.reservedUsd,
+      unknownExposureUsd: account.unknownExposureUsd,
+      maxCostUsd: account.maxCostUsd,
+    },
+    barrier: barrier?.summary ?? null,
+    cancellation,
+  };
+}
+
+function finishCancelled(input: {
+  readonly db: Database.Database;
+  readonly runId: string;
+  readonly accountId: string;
+  readonly plan: PlanManifest;
+  readonly clock: { now(): Date };
+  readonly cancellation: RunCancellation;
+  readonly phase: RunCancellationSummary["phase"];
+  readonly drained: "drained" | "timeout";
+  readonly preparations: readonly PreparationResult[];
+  readonly reviews: readonly ReviewSlotOutcome[];
+  readonly barrier: ReturnType<typeof runDuplicateBarrier> | null;
+}): RunSmokeMockResult {
+  const marked = markUnfinishedDispatchesUncertain(
+    input.db,
+    input.runId,
+    nowIso(input.clock),
+  );
+  const slots = listSlots(input.db, input.runId);
+  const cancellation: RunCancellationSummary = {
+    reason: input.cancellation.stopReason ?? "operator",
+    phase: input.phase,
+    drained: input.drained,
+    markedUncertain: marked.length,
+  };
+  const summary = summarizeRun(
+    input.db,
+    input.runId,
+    input.accountId,
+    input.plan,
+    slots,
+    input.barrier,
+    "cancelled",
+    cancellation,
+  );
+  insertEvent(input.db, {
+    runId: input.runId,
+    slotId: null,
+    eventType: "run_cancelled",
+    stage: null,
+    payload: {
+      ...cancellation,
+      markedAttemptIds: marked,
+      terminalSlots: summary.terminalSlots,
+      budget: summary.budget,
+    },
+    createdAt: nowIso(input.clock),
+  });
+  return {
+    runId: input.runId,
+    plan: input.plan,
+    status: "cancelled",
+    barrier: input.barrier,
+    preparations: input.preparations,
+    reviews: input.reviews,
+    slots,
+    summary,
+    cancellation,
   };
 }
 
@@ -259,7 +376,7 @@ export async function runSmokeMockExperiment(
   if (input.transport.isMock !== true) {
     throw new RunError(
       "LIVE_NOT_SUPPORTED",
-      "P34 supports only the deterministic mock transport",
+      "P35 supports only the deterministic mock transport",
     );
   }
   const maxCost = UsdSchema.safeParse(input.maxCostUsd);
@@ -269,6 +386,14 @@ export async function runSmokeMockExperiment(
       "maxCostUsd must be a non-negative decimal USD string",
       { cause: maxCost.error },
     );
+  }
+  let concurrency: Concurrency;
+  try {
+    concurrency = assertConcurrency(input.concurrency ?? DEFAULT_CONCURRENCY);
+  } catch (error) {
+    throw new RunError("INVALID_INPUT", errorMessage(error), {
+      cause: error,
+    });
   }
   const plan = buildPlanManifest({
     runKind: "smoke",
@@ -281,8 +406,13 @@ export async function runSmokeMockExperiment(
     );
   }
   const clock = input.clock ?? { now: () => new Date() };
+  const cancellation = input.cancellation ?? new RunCancellation();
+  const yieldBetweenJobs = input.yieldBetweenJobs ?? yieldToEventLoop;
+  const drainTimeoutMs = input.drainTimeoutMs ?? 95_000;
+  const transport = withCancellationTransport(input.transport, cancellation);
   const createdAt = nowIso(clock);
   let created = false;
+  let phase: RunCancellationSummary["phase"] = "preparation";
   try {
     createRun(input.db, {
       runId: input.runId,
@@ -299,25 +429,72 @@ export async function runSmokeMockExperiment(
       createdAt,
     });
     const routes = buildMockRoutes();
-    const preparations: PreparationResult[] = [];
-    for (const slot of plan.slots) {
-      const scenario = input.preparationScenarios?.[slot.slotId];
-      preparations.push(
-        await prepareSlot({
+
+    const preparationPool = await runBoundedPool(
+      plan.slots,
+      async (slot) => {
+        cancellation.throwIfStopping();
+        const scenario = input.preparationScenarios?.[slot.slotId];
+        return prepareSlot({
           db: input.db,
           runId: input.runId,
           slotId: slot.slotId,
           accountId: input.accountId,
           apiKey: input.apiKey,
-          transport: input.transport,
+          transport,
           routes: { spec: routes.spec, wording: routes.wording },
           reservations: { spec: "0.01", wording: "0.01" },
           ...(scenario === undefined ? {} : { mockScenarioKinds: scenario }),
           clock,
-        }),
+          yieldBetweenJobs,
+        });
+      },
+      { concurrency, cancellation, drainTimeoutMs, yieldBetweenJobs },
+    );
+    phase = "preparation";
+    if (preparationPool.stopped || cancellation.isStopping) {
+      return finishCancelled({
+        db: input.db,
+        runId: input.runId,
+        accountId: input.accountId,
+        plan,
+        clock,
+        cancellation,
+        phase,
+        drained:
+          preparationPool.drained === "timeout" ? "timeout" : "drained",
+        preparations: preparationPool.results.filter(defined),
+        reviews: [],
+        barrier: null,
+      });
+    }
+    if (preparationPool.errors.length > 0) {
+      throw preparationPool.errors[0];
+    }
+    const preparations = preparationPool.results.filter(defined);
+    if (preparations.length !== plan.slots.length) {
+      throw new RunError(
+        "INCOMPLETE_RUN",
+        `preparation completed ${preparations.length}/${plan.slots.length} slots`,
       );
     }
 
+    if (cancellation.isStopping) {
+      return finishCancelled({
+        db: input.db,
+        runId: input.runId,
+        accountId: input.accountId,
+        plan,
+        clock,
+        cancellation,
+        phase: "preparation",
+        drained: "drained",
+        preparations,
+        reviews: [],
+        barrier: null,
+      });
+    }
+    phase = "barrier";
     const barrierStartedAt = nowIso(clock);
     const barrier = runDuplicateBarrier({
       plannedSlots: plan.slots,
@@ -356,17 +533,34 @@ export async function runSmokeMockExperiment(
         clock,
       });
     }
+    if (cancellation.isStopping) {
+      return finishCancelled({
+        db: input.db,
+        runId: input.runId,
+        accountId: input.accountId,
+        plan,
+        clock,
+        cancellation,
+        phase: "barrier",
+        drained: "drained",
+        preparations,
+        reviews: [],
+        barrier,
+      });
+    }
 
-    const reviews: ReviewSlotOutcome[] = [];
-    for (const slot of plan.slots) {
-      reviews.push(
-        await reviewSlot({
+    phase = "review";
+    const reviewPool = await runBoundedPool(
+      plan.slots,
+      async (slot) => {
+        cancellation.throwIfStopping();
+        return reviewSlot({
           db: input.db,
           runId: input.runId,
           slotId: slot.slotId,
           accountId: input.accountId,
           apiKey: input.apiKey,
-          transport: input.transport,
+          transport,
           routes: {
             blindText: routes.blindText,
             blindVision: routes.blindVision,
@@ -378,7 +572,34 @@ export async function runSmokeMockExperiment(
             ? {}
             : { mockScenarioKinds: input.reviewScenarioKinds }),
           clock,
-        }),
+          yieldBetweenJobs,
+        });
+      },
+      { concurrency, cancellation, drainTimeoutMs, yieldBetweenJobs },
+    );
+    if (reviewPool.stopped || cancellation.isStopping) {
+      return finishCancelled({
+        db: input.db,
+        runId: input.runId,
+        accountId: input.accountId,
+        plan,
+        clock,
+        cancellation,
+        phase,
+        drained: reviewPool.drained === "timeout" ? "timeout" : "drained",
+        preparations,
+        reviews: reviewPool.results.filter(defined),
+        barrier,
+      });
+    }
+    if (reviewPool.errors.length > 0) {
+      throw reviewPool.errors[0];
+    }
+    const reviews = reviewPool.results.filter(defined);
+    if (reviews.length !== plan.slots.length) {
+      throw new RunError(
+        "INCOMPLETE_RUN",
+        `review completed ${reviews.length}/${plan.slots.length} slots`,
       );
     }
 
@@ -403,9 +624,12 @@ export async function runSmokeMockExperiment(
     const summary = summarizeRun(
       input.db,
       input.runId,
+      input.accountId,
       plan,
       slots,
       barrier,
+      "completed",
+      null,
     );
     insertEvent(input.db, {
       runId: input.runId,
@@ -419,11 +643,13 @@ export async function runSmokeMockExperiment(
     return {
       runId: input.runId,
       plan,
+      status: "completed",
       barrier,
       preparations,
       reviews,
       slots,
       summary,
+      cancellation: null,
     };
   } catch (error) {
     if (created) {
@@ -440,6 +666,7 @@ export async function runSmokeMockExperiment(
           payload: {
             code: errorCode(error),
             message: boundEvidence(errorMessage(error), input.apiKey),
+            phase,
           },
           createdAt: nowIso(clock),
         });

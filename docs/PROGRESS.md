@@ -1954,3 +1954,89 @@ Expected: `20|20|20`, `completed`, role counts `spec 10 / wording 20 / blind_tex
 **Acceptance:** accepted by the user on 2026-11-05 after the focused suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** full/live execution, resume, cancellation, concurrency, reports, HTML, the gallery, and any paid provider request.
+
+## P35. Bounded Concurrency and Graceful Cancellation — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds one/two bounded workers and graceful SIGINT cancellation to the existing smoke mock runner. It does not add multi-process workers, resume, reports, HTML, or the gallery.
+
+**Files**
+
+- Runner: `src/runner/workers.ts`, `src/runner/cancel.ts`
+- Extended runner: `src/runner/run.ts`, `src/runner/prepare-slot.ts` (yield hook), `src/runner/review-slot.ts` (yield hook)
+- Mock transport: `src/ai/mock.ts` now supports up to two concurrent logical calls with per-call async context; `CONCURRENT_CALL` remains the third-call guard
+- CLI: `src/cli/experiment.ts` (`--concurrency`, SIGINT handler, writer-lock compromise callback, exit 130 on cancellation)
+- Tests: `tests/runner/concurrency.test.ts`; `tests/runner/serial.test.ts` CLI flag update; P02/P34 CLI message updates
+- Documentation: `README.md` and this file
+
+**Observable behavior**
+
+- `--concurrency` accepts exactly 1 or 2; the default is 2. The runner and pool reject 0, 3, and non-integers before creating a data directory or database.
+- Preparation and review use a shared bounded pool. At most two HTTP calls are in flight across roles; workers yield between bounded formal jobs and after each slot. All 20 preparation results still precede the duplicate barrier, and blind/alignment remain sequential per slot.
+- The mock transport supports two concurrent logical calls with per-call scenario context, so `--concurrency 2 --mock` exercises real overlap while a third concurrent call still fails closed.
+- SIGINT stops new admission immediately through the transport guard, drains active calls up to the configured 95-second default, commits only completed stages, writes a `run_cancelled` event, and leaves the run `running` with a resumable checkpoint. It does not write `run_completed` or claim success.
+- Any attempt still `dispatching` after the drain window is transitioned to `uncertain`; its budget reservation is retained, not released. The cancellation event and CLI summary include the marked attempt count and the budget snapshot (`known`, `reserved`, `unknown`).
+- A compromised writer lock calls the same cancellation path; `proper-lockfile` continues its 10-second refresh during normal operation, and lock-release failure does not overwrite the cancellation result.
+- A cancelled CLI run prints `status cancelled`, the phase, drain result, marked-uncertain count, and exits 130. Completed runs still print `status completed` and exit 0.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/runner/concurrency.test.ts --reporter=verbose` | exit 0; 1 file / 9 tests passed. |
+| `npm run experiment -- --smoke --mock --seed puzzle-smoke-v1 --concurrency 2 --max-cost 0` | exit 0; run `6732cab0-3f25-4183-acd9-4253cc9ada9f`, 20/20 terminal, 20 approved, 70 calls, 0 unknown cost, budget reserved 0. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 36 files / 499 tests passed, build succeeded. |
+
+The focused suite asserts concurrency 0/3/non-integer rejection before any database file, a maximum in-flight count of exactly 2, 20/20 terminal slots with no starvation, identical barrier assessments/owners/verdicts at concurrency 1 and 2, SIGINT stop-admission with a `run_cancelled` event and no barrier/completion, transport-guard rejection after a compromised-lock stop, the full runner drain-timeout path with a blocked timeout scenario, `drained: "timeout"`, at least one uncertain attempt, a retained reservation with null actual cost, and no `run_completed`, a direct uncertain-marking fallback with a retained reservation, a two-worker shared-cap admission with exactly one admitted reservation and one `INSUFFICIENT_BUDGET` pause, and a 20-item pool completing every item.
+
+**Manual acceptance steps**
+
+1. Run the exact happy-path command above and confirm `status completed`, 20/20 terminal, 20 approved, 70 calls, and zero cost.
+2. Run the exact cancellation script below. It starts the CLI and emits SIGINT after 700 ms.
+3. Confirm the CLI prints `status cancelled`, `slots 0/20 terminal`, `barrier not-run`, `cancellation reason=sigint phase=preparation drained=drained marked_uncertain=0`, and exits 130.
+4. Inspect `/tmp/p35-cancel.sqlite`: the run remains `running`, there is one `run_cancelled` event, no `duplicate_barrier` or `run_completed`, some slots are partially prepared, no slot is terminal, and no attempt remains `dispatching`.
+5. Confirm the cancellation checkpoint is resumable and the reservations are truthful; no success message or artificial completion is present.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+cat > /tmp/p35-cancel-check.mts <<'TS'
+import { rmSync } from "node:fs";
+import { main } from "/home/alex/ai-puzzle-factory/src/cli/experiment.ts";
+
+const dbPath = "/tmp/p35-cancel.sqlite";
+rmSync(dbPath, { force: true });
+setTimeout(() => {
+  process.emit("SIGINT");
+}, 700);
+const code = await main([
+  "node",
+  "experiment",
+  "--smoke",
+  "--mock",
+  "--seed",
+  "puzzle-smoke-v1",
+  "--concurrency",
+  "2",
+  "--max-cost",
+  "0",
+  "--db",
+  dbPath,
+]);
+console.log("exit", code);
+TS
+npx tsx /tmp/p35-cancel-check.mts
+sqlite3 /tmp/p35-cancel.sqlite "select run_id, control_state from runs;"
+sqlite3 /tmp/p35-cancel.sqlite "select count(*), sum(stage='terminal'), sum(stage='planned') from slots;"
+sqlite3 /tmp/p35-cancel.sqlite "select event_type, count(*) from events group by event_type order by event_type;"
+sqlite3 /tmp/p35-cancel.sqlite "select count(*) from request_attempts where state='dispatching';"
+```
+
+Expected: `exit 130`; `running`; a partial slot count with `0` terminal and some planned slots; `run_cancelled 1`, `run_created 1`, and `stage_committed` events but no `duplicate_barrier` or `run_completed`; `0` dispatching attempts. The cancellation event's budget snapshot shows truthful reserved/unknown amounts.
+
+**Decision-reviewer:** the first static pass confirmed the implementation paths and found two verification gaps against the stage line: the drain-timeout branch and the in-process two-worker shared-cap admission were not exercised. Both were fixed with focused cases: a blocking timeout scenario plus a 50 ms drain window asserts `drained: "timeout"`, an uncertain attempt, a retained reservation with null actual cost, and no `run_completed`; a two-worker `admitRequest` case against a shared `0.01` cap asserts exactly one admitted reservation, one `INSUFFICIENT_BUDGET` pause, reserved `0.01`, and no overshoot. Follow-up passes found two Low test-hygiene issues in the new drain-timeout poller (unhandled rejection, then a hidden captured cause); both were fixed by catching/awaiting the poller, asserting the captured error immediately after the run, and embedding it in the dispatching-attempt guard. The final pass found no material findings or regressions.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** multi-process/distributed workers, full resume/reconciliation, reports, HTML, the gallery, and any paid provider request.

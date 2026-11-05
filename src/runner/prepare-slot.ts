@@ -430,6 +430,7 @@ export interface PrepareSlotInput {
     Record<"spec" | "wording", PreparationMockScenarioKind>
   >;
   readonly clock?: { now(): Date };
+  readonly yieldBetweenJobs?: () => Promise<void>;
 }
 
 interface PreparationSeeds {
@@ -1268,6 +1269,7 @@ export async function prepareSlot(input: PrepareSlotInput): Promise<PreparationR
         "spec acquisition did not commit the spec_ready checkpoint",
       );
     }
+    await input.yieldBetweenJobs?.();
 
     activeStageStartedAt = nowIso(clock);
     const formal = solveAndRender({
@@ -1310,6 +1312,7 @@ export async function prepareSlot(input: PrepareSlotInput): Promise<PreparationR
     committedStages.push("formal_checked");
     formalPassed = true;
     fingerprint = formal.fingerprint;
+    await input.yieldBetweenJobs?.();
 
     activeStageStartedAt = nowIso(clock);
     const wordingResult = await writePresentation({

@@ -38,6 +38,7 @@ import {
   buildMockRoutes,
   mockRoute,
   runSmokeMockExperiment,
+  type RunSmokeMockResult,
 } from "../../src/runner/run.js";
 import { migrate, openDatabase } from "../../src/storage/database.js";
 import {
@@ -78,6 +79,15 @@ function createClock(): {
     },
     sleep: async (_ms: number): Promise<void> => {},
   };
+}
+
+function requireBarrier(
+  result: RunSmokeMockResult,
+): NonNullable<RunSmokeMockResult["barrier"]> {
+  if (result.barrier === null) {
+    throw new Error("expected a persisted duplicate barrier");
+  }
+  return result.barrier;
 }
 
 function run(options: {
@@ -285,7 +295,8 @@ describe("serial smoke mock run", () => {
         actualCostUsd: "0",
         costStatus: "known",
       });
-      expect(result.barrier.summary).toMatchObject({
+      const barrier = requireBarrier(result);
+      expect(barrier.summary).toMatchObject({
         plannedSlots: 20,
         preparedSlots: 20,
         readyCandidates: 20,
@@ -323,7 +334,7 @@ describe("serial smoke mock run", () => {
           getStageResult(db, RUN_ID, slot.slotId, "duplicate_checked").payload,
         );
         expect(duplicate.assessment.outcome).toBe("unique");
-        expect(duplicate.barrierResultHash).toBe(result.barrier.resultHash);
+        expect(duplicate.barrierResultHash).toBe(barrier.resultHash);
         const blind = BlindReviewStagePayloadSchema.parse(
           getStageResult(db, RUN_ID, slot.slotId, "blind_reviewed").payload,
         );
@@ -478,7 +489,7 @@ describe("serial smoke mock run", () => {
         alignment_vision: 10,
       });
       expect(result.summary.attempts).toBe(67);
-      expect(result.barrier.summary).toMatchObject({
+      expect(requireBarrier(result).summary).toMatchObject({
         plannedSlots: 20,
         readyCandidates: 19,
         earlyFailures: 1,
@@ -655,6 +666,8 @@ describe("serial smoke mock run", () => {
           "--mock",
           "--seed",
           "puzzle-smoke-v1",
+          "--concurrency",
+          "2",
           "--max-cost",
           "0",
           "--db",
@@ -742,7 +755,7 @@ describe("serial smoke mock run", () => {
       stderrSpy.mockRestore();
     }
     const text = stderr.join("");
-    expect(text).toContain("P34 execution supports only --smoke --mock");
+    expect(text).toContain("P35 execution supports only --smoke --mock");
     expect(text).toContain("live execution is not implemented");
     expect(text).toContain("resume is not implemented until P36");
     expect(text).toContain("--max-cost must be a non-negative decimal USD string");

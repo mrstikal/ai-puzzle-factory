@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import type Database from "better-sqlite3";
 import { z } from "zod";
@@ -373,20 +374,22 @@ export function createMockTransport(
 ): MockTransport {
   const scenarios = new Map<string, MockScenario>();
   const requests: MockRequest[] = [];
-  let activeCallId: string | null = null;
+  const callContext = new AsyncLocalStorage<string>();
+  let activeCalls = 0;
 
   const fetchImpl: typeof fetch = async (input, init) => {
-    if (activeCallId === null) {
+    const logicalCallId = callContext.getStore();
+    if (logicalCallId === undefined) {
       throw new MockTransportError(
         "MISSING_SCENARIO",
         "mock fetch was called outside an executeCall",
       );
     }
-    const scenario = scenarios.get(activeCallId);
+    const scenario = scenarios.get(logicalCallId);
     if (scenario === undefined) {
       throw new MockTransportError(
         "MISSING_SCENARIO",
-        `no mock scenario is registered for logical call ${activeCallId}`,
+        `no mock scenario is registered for logical call ${logicalCallId}`,
       );
     }
     requests.push({
@@ -422,7 +425,7 @@ export function createMockTransport(
         buildMockContent(
           scenario,
           MOCK_FIXTURE,
-          slotCorrectLabel(options.db, activeCallId),
+          slotCorrectLabel(options.db, logicalCallId),
         ),
         "stop",
         null,
@@ -444,23 +447,25 @@ export function createMockTransport(
   const executeCall = async (
     input: ExecuteOpenRouterCallInput,
   ): ReturnType<typeof real.executeCall> => {
-    if (activeCallId !== null) {
-      throw new MockTransportError(
-        "CONCURRENT_CALL",
-        "the deterministic mock transport supports one active call at a time",
-      );
-    }
     if (!scenarios.has(input.logicalCallId)) {
       throw new MockTransportError(
         "MISSING_SCENARIO",
         `no mock scenario is registered for logical call ${input.logicalCallId}`,
       );
     }
-    activeCallId = input.logicalCallId;
+    if (activeCalls >= 2) {
+      throw new MockTransportError(
+        "CONCURRENT_CALL",
+        "the deterministic mock transport supports at most two active calls",
+      );
+    }
+    activeCalls += 1;
     try {
-      return await real.executeCall(input);
+      return await callContext.run(input.logicalCallId, () =>
+        real.executeCall(input),
+      );
     } finally {
-      activeCallId = null;
+      activeCalls -= 1;
     }
   };
 

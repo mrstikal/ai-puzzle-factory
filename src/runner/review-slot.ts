@@ -308,6 +308,7 @@ export interface ReviewSlotInput {
     readonly alignment?: MockScenarioKind;
   };
   readonly clock?: { now(): Date };
+  readonly yieldBetweenJobs?: () => Promise<void>;
 }
 
 export interface ReviewedSlotResult {
@@ -919,6 +920,7 @@ export async function reviewSlot(
       slot,
       clock,
     });
+    await input.yieldBetweenJobs?.();
     if (getRun(input.db, input.runId).controlState === "running") {
       alignment = await runAlignmentReview({
         db: input.db,
@@ -935,6 +937,7 @@ export async function reviewSlot(
     }
   }
 
+  await input.yieldBetweenJobs?.();
   const cost = aggregateSlotCost(input.db, input.runId, input.slotId);
   const failures: FailureRecord[] = [];
   if (blind?.failure !== null && blind?.failure !== undefined) {

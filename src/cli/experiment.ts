@@ -19,19 +19,26 @@ import {
   runSmokeMockExperiment,
   type RunSmokeMockResult,
 } from "../runner/run.js";
+import { RunCancellation } from "../runner/cancel.js";
+import {
+  DEFAULT_CONCURRENCY,
+  assertConcurrency,
+  type Concurrency,
+} from "../runner/workers.js";
 
 export const PROGRAM_NAME = "experiment";
 
 const SCOPE_NOTE = [
-  "Availability (P34):",
+  "Availability (P35):",
   "  --dry-run              print the deterministic PlanManifest and exit",
   "  --full | --smoke       select the 200-slot or 20-slot plan (default: full)",
-  "  --mock | --live        evidence mode; P34 executes only --smoke --mock",
+  "  --mock | --live        evidence mode; P35 executes only --smoke --mock",
   "  --seed <seed>          restate the fixed root seed for the selected run kind",
+  "  --concurrency <1|2>    candidate workers and max in-flight requests (default: 2)",
   "  --max-cost <usd>       smoke mock budget cap (default: 0; mock calls are nonbilling)",
   "  --db <path>            SQLite path (default: data/experiment.sqlite)",
   "  --resume               rejected until P36",
-  "  P34 writes a serial smoke mock run to SQLite; no live, full, report, or gallery",
+  "  P35 writes a bounded-concurrency smoke mock run; SIGINT drains and leaves a resumable checkpoint",
 ].join("\n");
 
 interface ExperimentOptions {
@@ -44,6 +51,7 @@ interface ExperimentOptions {
   readonly seed?: string;
   readonly maxCost?: string;
   readonly db?: string;
+  readonly concurrency?: string;
 }
 
 function printSummary(result: RunSmokeMockResult, dbPath: string): void {
@@ -51,29 +59,41 @@ function printSummary(result: RunSmokeMockResult, dbPath: string): void {
   const calls = REQUEST_ROLES.map(
     (role) => `${role}=${summary.callsByRole[role]}`,
   ).join(" ");
-  const duplicates =
-    summary.barrier.exactDuplicates +
-    summary.barrier.specDuplicates +
-    summary.barrier.structuralDuplicates;
-  process.stdout.write(
-    [
-      `run ${result.runId}`,
-      `database ${dbPath}`,
-      `slots ${summary.terminalSlots}/${summary.slots} terminal`,
-      `verdicts approved=${summary.verdicts.approved} rejected=${summary.verdicts.rejected} inconclusive=${summary.verdicts.inconclusive} generation_error=${summary.verdicts.generation_error}`,
-      `calls ${calls}`,
-      `attempts ${summary.attempts} unknown=${summary.unknownAttempts}`,
-      `cost status=${summary.cost.costStatus} actual=${summary.cost.actualCostUsd ?? "unknown"}`,
+  const lines = [
+    `run ${result.runId}`,
+    `database ${dbPath}`,
+    `status ${summary.status}`,
+    `slots ${summary.terminalSlots}/${summary.slots} terminal`,
+    `verdicts approved=${summary.verdicts.approved} rejected=${summary.verdicts.rejected} inconclusive=${summary.verdicts.inconclusive} generation_error=${summary.verdicts.generation_error}`,
+    `calls ${calls}`,
+    `attempts ${summary.attempts} unknown=${summary.unknownAttempts}`,
+    `cost status=${summary.cost.costStatus} actual=${summary.cost.actualCostUsd ?? "unknown"}`,
+    `budget known=${summary.budget.knownActualUsd} reserved=${summary.budget.reservedUsd} unknown=${summary.budget.unknownExposureUsd}`,
+  ];
+  if (summary.barrier === null) {
+    lines.push("barrier not-run");
+  } else {
+    const duplicates =
+      summary.barrier.exactDuplicates +
+      summary.barrier.specDuplicates +
+      summary.barrier.structuralDuplicates;
+    lines.push(
       `barrier unique=${summary.barrier.uniqueCandidates} owners=${summary.barrier.owners} near=${summary.barrier.nearSuspectedCandidates} duplicates=${duplicates}`,
-      "",
-    ].join("\n"),
-  );
+    );
+  }
+  if (summary.cancellation !== null) {
+    lines.push(
+      `cancellation reason=${summary.cancellation.reason} phase=${summary.cancellation.phase} drained=${summary.cancellation.drained} marked_uncertain=${summary.cancellation.markedUncertain}`,
+    );
+  }
+  lines.push("");
+  process.stdout.write(lines.join("\n"));
 }
 
 async function handleOptions(
   program: Command,
   options: ExperimentOptions,
-): Promise<void> {
+): Promise<number> {
   if (options.full === true && options.smoke === true) {
     program.error("--full and --smoke are mutually exclusive", { exitCode: 1 });
   }
@@ -85,7 +105,7 @@ async function handleOptions(
   }
   if (options.live === true) {
     program.error(
-      "live execution is not implemented; P34 supports offline --smoke --mock",
+      "live execution is not implemented; P35 supports offline --smoke --mock",
       { exitCode: 1 },
     );
   }
@@ -97,11 +117,11 @@ async function handleOptions(
       ...(options.seed === undefined ? {} : { rootSeed: options.seed }),
     });
     process.stdout.write(serializePlanManifest(plan));
-    return;
+    return 0;
   }
 
   if (options.smoke !== true) {
-    program.error("P34 execution supports only --smoke --mock", {
+    program.error("P35 execution supports only --smoke --mock", {
       exitCode: 1,
     });
   }
@@ -112,6 +132,17 @@ async function handleOptions(
       exitCode: 1,
     });
   }
+  let concurrency: Concurrency;
+  try {
+    concurrency = assertConcurrency(
+      Number(options.concurrency ?? DEFAULT_CONCURRENCY),
+    );
+  } catch (error) {
+    program.error(
+      error instanceof Error ? error.message : "concurrency must be 1 or 2",
+      { exitCode: 1 },
+    );
+  }
   buildPlanManifest({
     runKind: "smoke",
     ...(options.seed === undefined ? {} : { rootSeed: options.seed }),
@@ -119,10 +150,19 @@ async function handleOptions(
   const dbPath = options.db ?? join("data", "experiment.sqlite");
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = openDatabase(dbPath);
+  const cancellation = new RunCancellation();
+  const onSigint = (): void => {
+    cancellation.stop("sigint");
+  };
+  process.on("SIGINT", onSigint);
   let lock: Awaited<ReturnType<typeof acquireWriterLock>> | null = null;
   try {
     migrate(db);
-    lock = await acquireWriterLock(dbPath);
+    lock = await acquireWriterLock(dbPath, {
+      onCompromised: (error) => {
+        cancellation.stop("writer_lock_compromised", error);
+      },
+    });
     const runId = randomUUID();
     const accountId = `smoke-${runId}`;
     const mock = createMockTransport({
@@ -140,18 +180,26 @@ async function handleOptions(
       apiKey: "mock-offline-key",
       transport: mock,
       maxCostUsd: maxCost,
+      concurrency,
+      cancellation,
       ...(options.seed === undefined ? {} : { rootSeed: options.seed }),
     });
     printSummary(result, dbPath);
+    return result.status === "cancelled" ? 130 : 0;
   } finally {
+    process.off("SIGINT", onSigint);
     db.close();
     if (lock !== null) {
-      await lock.release();
+      try {
+        await lock.release();
+      } catch {
+        // A compromised lock may already be gone; preserve the run result.
+      }
     }
   }
 }
 
-export function createProgram(): Command {
+export function createProgram(onExitCode?: (code: number) => void): Command {
   const program = new Command();
   program
     .name(PROGRAM_NAME)
@@ -165,19 +213,24 @@ export function createProgram(): Command {
     .option("--live", "use live provider evidence (not implemented)")
     .option("--resume", "resume a run (not implemented until P36)")
     .option("--seed <seed>", "restate the fixed root seed for the selected run kind")
+    .option("--concurrency <1|2>", "candidate workers (default: 2)")
     .option("--max-cost <usd>", "smoke mock budget cap (default: 0)")
     .option("--db <path>", "SQLite path (default: data/experiment.sqlite)")
     .action(async (options: ExperimentOptions) => {
-      await handleOptions(program, options);
+      const code = await handleOptions(program, options);
+      onExitCode?.(code);
     });
   return program;
 }
 
 export async function main(argv: readonly string[] = process.argv): Promise<number> {
-  const program = createProgram().exitOverride();
+  let exitCode = 0;
+  const program = createProgram((code) => {
+    exitCode = code;
+  }).exitOverride();
   try {
     await program.parseAsync([...argv]);
-    return 0;
+    return exitCode;
   } catch (error) {
     if (error instanceof CommanderError) {
       return error.exitCode;
