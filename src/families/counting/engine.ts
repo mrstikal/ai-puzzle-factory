@@ -308,7 +308,7 @@ function queryDescription(query: CountingQuery): string {
     case "exactlyKShapes":
       return `cells that belong to exactly ${query.k} shapes`;
     default:
-      return String(query.operation);
+      return "unknown counting query";
   }
 }
 

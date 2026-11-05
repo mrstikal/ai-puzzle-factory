@@ -14,7 +14,8 @@
     "test": "vitest run",
     "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "experiment": "tsx src/cli/experiment.ts",
-    "preview": "tsx src/cli/preview.ts"
+    "preview": "tsx src/cli/preview.ts",
+    "preflight": "tsx src/cli/preflight.ts"
   },
   "dependencies": {
     "@resvg/resvg-js": "2.6.2",

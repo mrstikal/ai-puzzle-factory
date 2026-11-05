@@ -1311,3 +1311,67 @@ Expected: the focused suite exits 0 with 26 passing tests covering the refusal/u
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 26-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** paid requests, live provider calls, provider fallback, JSON repair, model selection, automatic resume, reports, gallery, and any claim of exactly-once billing.
+
+## P25. Strict Role Schemas, Capabilities, and Offline Preflight — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds provider-facing strict schemas, explicit live-input validation, exact catalog route checks, and an offline preflight. It makes no paid call, live provider request, model selection, catalog archive, or live probe execution.
+
+**Files**
+
+- Schemas: `src/ai/schemas.ts`
+- Live inputs and request builder: `src/ai/config.ts`
+- Catalog and route preflight: `src/ai/preflight.ts`
+- CLI: `src/cli/preflight.ts`
+- Tests: `tests/ai/preflight.test.ts`
+- Recorded catalog fixture: `tests/fixtures/openrouter/catalog.json`
+- Empty live-input template: `.env.example`
+- Script: `package.json`
+- Documentation: `README.md`, `docs/experiment-protocol.md`, this file
+
+**Observable behavior**
+
+- All ten family spec schemas, family envelopes, wording, blind review, and alignment review compile to provider-compatible strict JSON Schema. Every object has `additionalProperties: false`; `oneOf`, `const`, tuple `items`, and unsupported keywords are normalized or rejected.
+- Blind review has a strict answer status, nullable choice, bounded evidence issues, and a consistency rule between status and choice. Alignment review has per-field status, cited fact IDs, and reasons; `deriveAlignmentOverall` ignores the model-reported `overall` and rejects improper `not_applicable`.
+- Live inputs have no defaults. `OPENROUTER_API_KEY`, all three model IDs, and all three exact provider tags are required. Generator and text/vision reviewer model IDs must differ; vision may reuse the text reviewer, and shared correlations are reported.
+- `buildChatRequest` sends `stream:false`, strict `json_schema`, exactly one provider tag with no fallbacks, and exactly one of `max_tokens`/`max_completion_tokens`. Text roles reject image parts; vision roles require a PNG data URL.
+- Offline preflight resolves one exact active endpoint tag per model. It rejects missing models, base-slug wildcards, duplicate tags, inactive endpoints, missing `structured_outputs`, missing cap fields, insufficient output/context/prompt limits, missing text/image modalities, unknown/invalid/unsupported pricing, missing image pricing without a documented reserve, and unsupported settings.
+- `npm run preflight -- --offline` validates the recorded fixture and prints each role's resolved model, exact endpoint, frozen cap field/value, context, prompt reserve, image declaration, vision-probe requirement, schema name, and schema hash. It uses no network and no inference key.
+- Public catalog GETs accept only the inference key and fail closed on 403 with one request, no retry, and no management credential.
+- Live probe construction requires explicit paid authorization, a positive cost cap, an inference key, separated routes, and an actual PNG. It builds exactly three bounded probes and is not executed in P25. `executeLiveProbePlan` creates `preflight` logical calls with `runKind: preflight` for P46.
+- The CLI rejects `--live` even with `--allow-paid` and `--max-cost`; P46 owns live execution and all-family smoke.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/preflight.test.ts --reporter=verbose` | exit 0; 1 file / 34 tests passed. |
+| `npm run preflight -- --offline` | exit 0; 6 fixture roles resolved, `result: ok`, no network or key. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 26 files / 403 tests passed, build succeeded. |
+
+The focused suite covers strict schema compilation for all families and review roles, schema hash stability, blind/alignment contracts, extra-field rejection, role separation, missing key/model/provider, wildcard providers, single-cap serialization, image-role binding, exact tag/base/duplicate/inactive failures, missing structured outputs/cap/image modalities, output/context/prompt limits, unknown/invalid/unsupported pricing, image reserve behavior, unsupported settings, invalid role schemas, no-network/no-key offline operation, 403 fail-closed catalog access, catalog architecture merging, live-probe authorization, non-separated live routes, and CLI flag handling.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm `npm run preflight -- --offline` prints `network: not used`, `inference_key: not required`, six `role …: ok` lines, and `result: ok`.
+3. Confirm the fixture's generator chooses `cap=max_tokens:8192` while the vision route chooses `cap=max_completion_tokens:4096`.
+4. Confirm the vision role prints `image=declared vision_probe=required`; the text roles print `image=not_required`.
+5. Confirm the focused suite includes the negative capability cases: a multimodal-sounding model whose architecture omits `image` fails with `MISSING_IMAGE_INPUT_MODALITY`, and a base provider slug fails with `PROVIDER_TAG_BASE_WILDCARD`.
+6. Confirm `npm run check` passes with 26 files / 403 tests and no API key or real network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm run preflight -- --offline
+npm exec -- vitest run tests/ai/preflight.test.ts --reporter=verbose
+npm run check
+```
+
+Expected: the offline preflight exits 0 with six resolved fixture roles and no network/key use; the focused suite exits 0 with 34 passing tests; `npm run check` exits 0 with 26 files / 403 tests and a successful build.
+
+**Decision-reviewer:** the first pass found one confirmed Medium finding: the counting family query declared an optional `k`, so `puzzle_spec_counting` and its envelope left `query.k` out of `required` and were not provider-compatible strict schemas. The fix replaces the optional field with a two-branch discriminated union (`exactlyKShapes` requires `k` as `2 | 3`; other operations forbid `k`), tightens `assertStrictJsonSchema` and the focused test helper so every declared property must appear in `required`, and preserves the spec-level `k <= shapes` check. A second pass confirmed the defect resolved and found no new material defect or regression in the counting family, compiled schemas, or preflight.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the offline preflight, the focused 34-test suite, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** live catalog archiving, model selection, paid probes, all-family smoke, provider fallback, reports, and the gallery.

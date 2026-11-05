@@ -111,10 +111,7 @@ export function countingQueryPhrase(query: CountingQuery): string {
     case "exactlyKShapes":
       return `cells in exactly ${query.k} shapes`;
     default:
-      throw new CountingRenderError(
-        "INVALID_SCENE",
-        `unknown counting query ${String(query.operation)}`,
-      );
+      throw new CountingRenderError("INVALID_SCENE", "unknown counting query");
   }
 }
 

@@ -1,0 +1,139 @@
+{
+  "recorded_at": "2026-11-05T00:00:00Z",
+  "source": "offline_fixture",
+  "models": [
+    {
+      "id": "fixture/generator-text",
+      "name": "Fixture Generator Text",
+      "architecture": {
+        "input_modalities": ["text"],
+        "output_modalities": ["text"]
+      },
+      "endpoints": [
+        {
+          "tag": "fixture-generator/turbo",
+          "provider_name": "Fixture Generator Turbo",
+          "status": 0,
+          "context_length": 131072,
+          "max_completion_tokens": 16384,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "structured_outputs",
+            "max_tokens",
+            "max_completion_tokens",
+            "temperature",
+            "seed"
+          ],
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000002"
+          }
+        },
+        {
+          "tag": "fixture-generator/plus",
+          "provider_name": "Fixture Generator Plus",
+          "status": 0,
+          "context_length": 131072,
+          "max_completion_tokens": 16384,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "structured_outputs",
+            "max_completion_tokens",
+            "temperature"
+          ],
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000002"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fixture/reviewer-text",
+      "name": "Fixture Reviewer Text",
+      "architecture": {
+        "input_modalities": ["text"],
+        "output_modalities": ["text"]
+      },
+      "endpoints": [
+        {
+          "tag": "fixture-reviewer/text",
+          "provider_name": "Fixture Reviewer Text",
+          "status": 0,
+          "context_length": 131072,
+          "max_completion_tokens": 16384,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "structured_outputs",
+            "max_tokens",
+            "temperature",
+            "seed"
+          ],
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000002"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fixture/reviewer-vision",
+      "name": "Fixture Reviewer Vision",
+      "architecture": {
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"]
+      },
+      "endpoints": [
+        {
+          "tag": "fixture-vision",
+          "provider_name": "Fixture Reviewer Vision",
+          "status": 0,
+          "context_length": 131072,
+          "max_completion_tokens": 16384,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "structured_outputs",
+            "max_completion_tokens"
+          ],
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000002",
+            "image": "0.0001"
+          }
+        }
+      ]
+    }
+  ],
+  "offline_fixture_roles": [
+    {
+      "role": "spec",
+      "model": "fixture/generator-text",
+      "provider": "fixture-generator/turbo"
+    },
+    {
+      "role": "wording",
+      "model": "fixture/generator-text",
+      "provider": "fixture-generator/turbo"
+    },
+    {
+      "role": "blind_text",
+      "model": "fixture/reviewer-text",
+      "provider": "fixture-reviewer/text"
+    },
+    {
+      "role": "alignment_text",
+      "model": "fixture/reviewer-text",
+      "provider": "fixture-reviewer/text"
+    },
+    {
+      "role": "blind_vision",
+      "model": "fixture/reviewer-vision",
+      "provider": "fixture-vision"
+    },
+    {
+      "role": "alignment_vision",
+      "model": "fixture/reviewer-vision",
+      "provider": "fixture-vision"
+    }
+  ]
+}

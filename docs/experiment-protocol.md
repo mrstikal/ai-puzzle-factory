@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P01-P24 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P25 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -337,3 +337,46 @@ A bounded read-only `GET /generation?id=...` lookup may update a missing actual 
 `npm exec -- vitest run tests/ai/openrouter.test.ts` uses a loopback fake server and covers 429/no-provider 503, short and long Retry-After, 401/402/403, 500/502, HTTP-200 error bodies, provider errors after generation IDs, 429 with generation/usage, timeouts, disconnects, content refusal, reasoning-only/length output, malformed and non-JSON content, missing cost, oversized responses, a saved usable response, identical retry hashes, the three-attempt cap, no hidden retries, invalid request shapes, generation reconciliation, and credential absence from the database. Full gate: `npm run check`.
 
 Out of scope: paid requests, provider fallback, JSON repair, model selection, automatic resume, and any live network evidence.
+
+## 16. Strict role schemas and offline preflight (P25)
+
+P25 defines the provider-facing schemas and validates an exact route before any live call. It does not select a model, contact OpenRouter, or execute a paid probe.
+
+### Strict JSON Schema
+
+- `src/ai/schemas.ts` compiles every family spec, a family envelope, wording, blind review, and alignment review from Zod with `z.toJSONSchema` and normalizes the result for provider strict mode.
+- Normalization removes `$schema`, rewrites `definitions`/`$ref` to `$defs`, converts `oneOf` to `anyOf`, converts `const` to a single-value `enum`, rewrites tuple `items` to an `anyOf` array with fixed `minItems`/`maxItems`, and rejects unsupported keywords.
+- Every object schema has `additionalProperties: false`; every declared property must be listed in `required`. Conditional fields are modeled as explicit discriminated-union branches rather than optional properties.
+- Schema hashes cover the full `{name, strict, schema}` response-format object.
+- Blind review returns `answerStatus`, nullable `chosenOption`, bounded reasoning, clarity, ambiguity, confidence, visual legibility, and bounded issue evidence. A selected answer requires a non-null option; any other status requires null.
+- Alignment review returns `pass|fail|uncertain|not_applicable` per field plus cited fact IDs and reasons. Code derives the overall status from fields; the model-reported `overall` is never authoritative. `not_applicable` is valid only for the text family image field.
+
+### Live inputs and request shape
+
+- Required live inputs are `OPENROUTER_API_KEY`, `GENERATOR_MODEL`, `GENERATOR_PROVIDER`, `REVIEWER_MODEL`, `REVIEWER_PROVIDER`, `VISION_REVIEWER_MODEL`, and `VISION_REVIEWER_PROVIDER`. Every value is empty in `.env.example`; there is no default key or model.
+- The generator model must differ from both reviewer models. The vision reviewer may reuse the text reviewer, and shared model/provider correlations are reported.
+- The selected `outputCapField` is `max_tokens` when that exact endpoint advertises it, otherwise `max_completion_tokens`; otherwise the route is rejected. The serialized request contains exactly one cap field and never both or neither.
+- Text roles cannot carry image parts; vision roles require a PNG data URL. Settings are absent by default and must be advertised by the exact endpoint when configured.
+- Request limits remain 90 seconds, 2 MiB response, 64 KiB input text excluding base64, and 1 MiB PNG.
+
+### Catalog resolution and route validation
+
+- A recorded catalog fixture stores model-level `architecture.input_modalities`, endpoint `tag`, `provider_name`, `status`, context/output/prompt limits, `supported_parameters`, and pricing.
+- Resolution requires exact tag equality and one active entry (`status === 0`). A base slug that only prefixes variant tags, a missing tag, or duplicate exact tags is rejected.
+- `structured_outputs` and one cap field must be advertised by the entry. The requested cap must not exceed the entry's `max_completion_tokens`.
+- The context must fit the output cap plus a conservative prompt reserve: 16,384 text tokens or 32,768 vision tokens. A declared `max_prompt_tokens` must also fit that reserve.
+- Prompt and completion prices must be present non-negative decimal USD strings. Conditional `overrides` are unsupported offline. A vision route requires an image price or an explicit conservative per-role reserve.
+- Image support comes from the enclosing model's `input_modalities`; a multimodal-sounding model name is never evidence. The PNG probe remains mandatory before live vision use.
+- `GET /api/v1/models` and endpoint reads are public and use only the inference key when one is supplied. A 403 fails closed with no retry and no management credential.
+
+### Paid gates
+
+- Live probe construction requires explicit `allowPaid`, a positive `maxCostUsd`, a nonempty inference key, three separated resolved routes, and an actual PNG for the vision probe.
+- The plan builds exactly three bounded probes: generator/spec, text reviewer/blind, and vision reviewer/blind. Execution creates `preflight` logical calls with `runKind: preflight` and a unique probe key.
+- P25 exposes only `npm run preflight -- --offline`. The CLI rejects `--live` even with paid flags; P46 owns live execution and all-family smoke.
+
+### Tests and commands
+
+`npm exec -- vitest run tests/ai/preflight.test.ts` covers schema compilation and strictness, blind/alignment contracts, role separation, missing inputs, exact tag/base/duplicate/inactive failures, structured-output/cap/image/pricing/settings failures, cap serialization, 403 fail-closed behavior, offline no-network/no-key operation, and live probe authorization. Full gate: `npm run check`.
+
+Out of scope: live catalog archiving, model selection, paid probes, all-family smoke, reports, and the gallery.

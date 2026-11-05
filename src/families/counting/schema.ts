@@ -107,28 +107,19 @@ export const CountingOperationSchema = z.enum([
 ]);
 export type CountingOperation = z.infer<typeof CountingOperationSchema>;
 
-export const CountingQuerySchema = z
-  .strictObject({
-    operation: CountingOperationSchema,
-    k: z.union([z.literal(2), z.literal(3)]).optional(),
-  })
-  .superRefine((query, ctx) => {
-    const hasK = query.k !== undefined;
-    if (query.operation === "exactlyKShapes" && !hasK) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["k"],
-        message: "exactlyKShapes requires k=2 or k=3",
-      });
-    }
-    if (query.operation !== "exactlyKShapes" && hasK) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["k"],
-        message: "k is allowed only for exactlyKShapes",
-      });
-    }
-  });
+export const CountingExactlyKQuerySchema = z.strictObject({
+  operation: z.literal("exactlyKShapes"),
+  k: z.union([z.literal(2), z.literal(3)]),
+});
+
+export const CountingOtherQuerySchema = z.strictObject({
+  operation: z.enum(["unionCount", "intersectionAll", "exactlyOneShape"]),
+});
+
+export const CountingQuerySchema = z.discriminatedUnion("operation", [
+  CountingExactlyKQuerySchema,
+  CountingOtherQuerySchema,
+]);
 export type CountingQuery = z.infer<typeof CountingQuerySchema>;
 
 export const CountingAnswerSchema = z.number().int().min(0).max(25);
@@ -234,9 +225,8 @@ export function countQueryBySets(spec: CountingSpec): CountingAnswer {
       ).length;
     }
   } else {
-    const required = spec.query.operation === "exactlyOneShape"
-      ? 1
-      : (spec.query.k ?? -1);
+    const required =
+      spec.query.operation === "exactlyKShapes" ? spec.query.k : 1;
     for (let row = 0; row < COUNTING_GRID_SIZE; row += 1) {
       for (let column = 0; column < COUNTING_GRID_SIZE; column += 1) {
         const key = `${row}:${column}`;
@@ -359,7 +349,6 @@ export const CountingSpecSchema = z
     }
     if (
       spec.query.operation === "exactlyKShapes" &&
-      spec.query.k !== undefined &&
       spec.query.k > spec.shapes.length
     ) {
       issue(["query", "k"], `k=${spec.query.k} exceeds shapes=${spec.shapes.length}`);
