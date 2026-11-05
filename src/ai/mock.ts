@@ -195,7 +195,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function slotCorrectLabel(
+export function slotCorrectLabel(
   db: Database.Database,
   logicalCallId: string,
 ): ChoiceLabel | null {
@@ -367,6 +367,7 @@ export interface CreateMockTransportOptions {
   readonly random?: () => number;
   readonly deadlineMs?: number;
   readonly maxResponseBytes?: number;
+  readonly afterResponseSaved?: (attemptId: string) => Promise<void> | void;
 }
 
 export function createMockTransport(
@@ -442,6 +443,9 @@ export function createMockTransport(
     ...(options.maxResponseBytes === undefined
       ? {}
       : { maxResponseBytes: options.maxResponseBytes }),
+    ...(options.afterResponseSaved === undefined
+      ? {}
+      : { afterResponseSaved: options.afterResponseSaved }),
   });
 
   const executeCall = async (

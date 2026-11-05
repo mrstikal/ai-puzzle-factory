@@ -700,7 +700,7 @@ describe("serial smoke mock run", () => {
     180_000,
   );
 
-  it("rejects full, live, resume, invalid cost, and mismatched seeds explicitly", async () => {
+  it("rejects full, live, invalid cost, and mismatched seeds explicitly", async () => {
     const rejectDb = join(tempDirectory, "reject.sqlite");
     const stderr: string[] = [];
     const stderrSpy = vi
@@ -715,17 +715,6 @@ describe("serial smoke mock run", () => {
       ).resolves.toBe(1);
       await expect(
         main(["node", "experiment", "--smoke", "--live", "--db", rejectDb]),
-      ).resolves.toBe(1);
-      await expect(
-        main([
-          "node",
-          "experiment",
-          "--smoke",
-          "--mock",
-          "--resume",
-          "--db",
-          rejectDb,
-        ]),
       ).resolves.toBe(1);
       await expect(
         main([
@@ -755,9 +744,8 @@ describe("serial smoke mock run", () => {
       stderrSpy.mockRestore();
     }
     const text = stderr.join("");
-    expect(text).toContain("P35 execution supports only --smoke --mock");
+    expect(text).toContain("P36 execution supports only --smoke --mock or --resume <run-id>");
     expect(text).toContain("live execution is not implemented");
-    expect(text).toContain("resume is not implemented until P36");
     expect(text).toContain("--max-cost must be a non-negative decimal USD string");
     expect(text).toContain("fixed to puzzle-smoke-v1");
     expect(existsSync(rejectDb)).toBe(false);

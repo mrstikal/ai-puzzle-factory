@@ -68,7 +68,15 @@ function payloadFor(response: FakeOpenRouterResponse): Buffer {
   return Buffer.from(JSON.stringify(response.body), "utf8");
 }
 
-export async function createFakeOpenRouter(): Promise<FakeOpenRouter> {
+export interface FakeOpenRouterOptions {
+  readonly respond?: (
+    request: FakeOpenRouterRequest,
+  ) => FakeOpenRouterResponse | undefined;
+}
+
+export async function createFakeOpenRouter(
+  options: FakeOpenRouterOptions = {},
+): Promise<FakeOpenRouter> {
   const queue: FakeOpenRouterResponse[] = [];
   const requests: FakeOpenRouterRequest[] = [];
   const sockets = new Set<Socket>();
@@ -80,16 +88,19 @@ export async function createFakeOpenRouter(): Promise<FakeOpenRouter> {
       response.destroy();
       return;
     }
-    requests.push({
+    const record: FakeOpenRouterRequest = {
       method: request.method ?? "",
       url: request.url ?? "",
       headers: headerRecord(request),
       body,
-    });
-    const spec = queue.shift() ?? {
-      status: 500,
-      body: { error: { code: 500, message: "fake response queue is empty" } },
     };
+    requests.push(record);
+    const spec =
+      options.respond?.(record) ??
+      queue.shift() ?? {
+        status: 500,
+        body: { error: { code: 500, message: "fake response queue is empty" } },
+      };
     if (spec.delayMs !== undefined && spec.delayMs > 0) {
       await sleep(spec.delayMs);
     }

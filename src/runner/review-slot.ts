@@ -50,6 +50,7 @@ import {
   insertStageResult,
   listStageResults,
 } from "../storage/repository.js";
+import { StorageError } from "../storage/database.js";
 import { deriveStreamSeed } from "../util/random.js";
 
 export type ReviewSlotErrorCode =
@@ -309,6 +310,8 @@ export interface ReviewSlotInput {
   };
   readonly clock?: { now(): Date };
   readonly yieldBetweenJobs?: () => Promise<void>;
+  readonly resume?: boolean;
+  readonly onStageCommitted?: (stage: WorkflowStage) => Promise<void> | void;
 }
 
 export interface ReviewedSlotResult {
@@ -610,6 +613,7 @@ async function runBlindReview(input: {
   readonly expectedOption: ChoiceLabel;
   readonly slot: { readonly family: Family; readonly modality: Modality; readonly difficulty: Difficulty };
   readonly clock: { now(): Date };
+  readonly onStageCommitted?: (stage: WorkflowStage) => Promise<void> | void;
 }): Promise<BlindReviewStagePayload> {
   const role = input.slot.modality === "text" ? "blind_text" : "blind_vision";
   const route =
@@ -685,6 +689,7 @@ async function runBlindReview(input: {
       clock: input.clock,
       payload,
     });
+    await input.onStageCommitted?.("blind_reviewed");
     return payload;
   } catch (error) {
     if (!isReviewAdapterError(error)) {
@@ -718,6 +723,7 @@ async function runBlindReview(input: {
       clock: input.clock,
       payload,
     });
+    await input.onStageCommitted?.("blind_reviewed");
     return payload;
   }
 }
@@ -733,6 +739,7 @@ async function runAlignmentReview(input: {
   readonly reservationUsd: string;
   readonly slot: { readonly family: Family; readonly modality: Modality; readonly difficulty: Difficulty };
   readonly clock: { now(): Date };
+  readonly onStageCommitted?: (stage: WorkflowStage) => Promise<void> | void;
 }): Promise<AlignmentReviewStagePayload> {
   const role =
     input.slot.modality === "text" ? "alignment_text" : "alignment_vision";
@@ -782,6 +789,7 @@ async function runAlignmentReview(input: {
       clock: input.clock,
       payload,
     });
+    await input.onStageCommitted?.("alignment_reviewed");
     return payload;
   } catch (error) {
     if (!isReviewAdapterError(error)) {
@@ -818,6 +826,7 @@ async function runAlignmentReview(input: {
       clock: input.clock,
       payload,
     });
+    await input.onStageCommitted?.("alignment_reviewed");
     return payload;
   }
 }
@@ -836,10 +845,21 @@ export async function reviewSlot(
     }
     return { status: "preserved", slotId: slot.slotId, verdict: slot.verdict };
   }
-  if (slot.stage !== "duplicate_checked") {
+  const resumableStages: readonly WorkflowStage[] = [
+    "duplicate_checked",
+    "blind_reviewed",
+    "alignment_reviewed",
+  ];
+  if (!input.resume && slot.stage !== "duplicate_checked") {
     throw new ReviewSlotError(
       "INVALID_STAGE",
       `review requires duplicate_checked, received ${slot.stage}`,
+    );
+  }
+  if (input.resume && !resumableStages.includes(slot.stage)) {
+    throw new ReviewSlotError(
+      "INVALID_STAGE",
+      `slot ${slot.slotId} is at ${slot.stage} and cannot resume review`,
     );
   }
   const isMock = input.transport.isMock === true;
@@ -906,7 +926,57 @@ export async function reviewSlot(
 
   let blind: BlindReviewStagePayload | null = null;
   let alignment: AlignmentReviewStagePayload | null = null;
-  if (shouldReview) {
+  if (input.resume && slot.stage === "blind_reviewed") {
+    if (!shouldReview) {
+      throw new ReviewSlotError(
+        "INVALID_STAGE",
+        "a confirmed duplicate cannot resume from blind_reviewed",
+      );
+    }
+    blind = BlindReviewStagePayloadSchema.parse(
+      getStageResult(input.db, input.runId, input.slotId, "blind_reviewed")
+        .payload,
+    );
+    await input.yieldBetweenJobs?.();
+    if (getRun(input.db, input.runId).controlState === "running") {
+      alignment = await runAlignmentReview({
+        db: input.db,
+        runId: input.runId,
+        slotId: input.slotId,
+        accountId: input.accountId,
+        apiKey: input.apiKey,
+        transport,
+        routes: input.routes,
+        reservationUsd: input.reservations.alignment,
+        slot,
+        clock,
+        ...(input.onStageCommitted === undefined
+          ? {}
+          : { onStageCommitted: input.onStageCommitted }),
+      });
+    }
+  } else if (input.resume && slot.stage === "alignment_reviewed") {
+    if (shouldReview) {
+      try {
+        blind = BlindReviewStagePayloadSchema.parse(
+          getStageResult(input.db, input.runId, input.slotId, "blind_reviewed")
+            .payload,
+        );
+      } catch (error) {
+        if (!(error instanceof StorageError) || error.code !== "NOT_FOUND") {
+          throw error;
+        }
+      }
+    }
+    alignment = AlignmentReviewStagePayloadSchema.parse(
+      getStageResult(
+        input.db,
+        input.runId,
+        input.slotId,
+        "alignment_reviewed",
+      ).payload,
+    );
+  } else if (shouldReview) {
     blind = await runBlindReview({
       db: input.db,
       runId: input.runId,
@@ -919,6 +989,9 @@ export async function reviewSlot(
       expectedOption: expectedOption as ChoiceLabel,
       slot,
       clock,
+      ...(input.onStageCommitted === undefined
+        ? {}
+        : { onStageCommitted: input.onStageCommitted }),
     });
     await input.yieldBetweenJobs?.();
     if (getRun(input.db, input.runId).controlState === "running") {
@@ -933,6 +1006,9 @@ export async function reviewSlot(
         reservationUsd: input.reservations.alignment,
         slot,
         clock,
+        ...(input.onStageCommitted === undefined
+          ? {}
+          : { onStageCommitted: input.onStageCommitted }),
       });
     }
   }

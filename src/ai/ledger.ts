@@ -45,6 +45,7 @@ export type LedgerErrorCode =
   | "INVALID_STORED_DATA"
   | "NOT_FOUND"
   | "DUPLICATE_LOGICAL_CALL"
+  | "CALL_CONFIG_MISMATCH"
   | "DUPLICATE_ATTEMPT"
   | "TOO_MANY_ATTEMPTS"
   | "INVALID_STATE"
@@ -827,6 +828,60 @@ export function createLogicalCall(
     throw error;
   }
   return getLogicalCall(db, logicalCallId);
+}
+
+export function getOrCreateLogicalCall(
+  db: Database.Database,
+  input: unknown,
+): LogicalCall {
+  const parsed = LogicalCallInputSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new LedgerError("INVALID_INPUT", "invalid logical call input", {
+      cause: parsed.error,
+    });
+  }
+  const call = parsed.data;
+  const runId = call.runId ?? null;
+  const slotId = call.slotId ?? null;
+  if (runId === null || slotId === null) {
+    return createLogicalCall(db, input);
+  }
+  const existing = db
+    .prepare(
+      "SELECT logical_call_id FROM logical_calls WHERE run_id = ? AND slot_id = ? AND role = ? LIMIT 1",
+    )
+    .get(runId, slotId, call.role) as { logical_call_id: string } | undefined;
+  if (existing === undefined) {
+    return createLogicalCall(db, input);
+  }
+  const body = prepareRequestBody(call.requestBody);
+  const stored = getLogicalCall(db, existing.logical_call_id);
+  const mismatches: string[] = [];
+  if (stored.requestHash !== body.hash) {
+    mismatches.push("request body");
+  }
+  if (stored.expectedSchemaHash !== call.expectedSchemaHash) {
+    mismatches.push("schema hash");
+  }
+  if (stored.model !== call.model) {
+    mismatches.push("model");
+  }
+  if (stored.provider !== call.provider) {
+    mismatches.push("provider");
+  }
+  if (stored.outputCapField !== (call.outputCapField ?? null)) {
+    mismatches.push("output cap field");
+  }
+  if (stored.runKind !== call.runKind) {
+    mismatches.push("run kind");
+  }
+  if (mismatches.length > 0) {
+    throw new LedgerError(
+      "CALL_CONFIG_MISMATCH",
+      `logical call ${stored.logicalCallId} differs from the current configuration: ${mismatches.join(", ")}`,
+    );
+  }
+  return stored;
 }
 
 export function createAttempt(

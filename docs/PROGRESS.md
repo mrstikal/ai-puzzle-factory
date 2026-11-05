@@ -2040,3 +2040,129 @@ Expected: `exit 130`; `running`; a partial slot count with `0` terminal and some
 **Acceptance:** accepted by the user on 2026-11-05 after the focused suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** multi-process/distributed workers, full resume/reconciliation, reports, HTML, the gallery, and any paid provider request.
+
+## P36. Crash-Safe Resume and Reconciliation — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase resumes the same smoke run from committed checkpoints, reuses saved responses, and never resends an uncertain dispatch. It does not add multi-process workers, reports, HTML, or the gallery.
+
+**Files**
+
+- Runner: `src/runner/resume.ts`
+- Extended runner: `src/runner/run.ts` (generic smoke cohort, resume mode, hooks, barrier reuse), `src/runner/prepare-slot.ts` and `src/runner/review-slot.ts` (stage-aware resume)
+- Ledger/storage/transport integration: `src/ai/ledger.ts` (`getOrCreateLogicalCall`), `src/storage/artifacts.ts` (`getArtifactById`), `src/ai/openrouter.ts` (`afterResponseSaved` test hook and `replaySavedResponse`), `src/ai/mock.ts` (hook pass-through and exported oracle helper)
+- Adapters: `src/ai/propose-spec.ts`, `write-wording.ts`, `review-text.ts`, `review-vision.ts`, `review-alignment.ts` now reuse an existing identical logical call and reject request/schema/model changes
+- CLI: `src/cli/experiment.ts` (`--resume <run-id>`, `--ack-budget-increase`, `--operator`, writer lock, exit behavior)
+- Tests: `tests/runner/resume.test.ts`, `tests/helpers/runner-child.ts`, `tests/helpers/fake-openrouter.ts` (responder)
+- Documentation: `README.md` and this file
+
+**Observable behavior**
+
+- Resume is stage-aware. A planned slot may acquire a spec; a `spec_ready` slot skips spec; a `formal_checked` slot skips spec/formal; `presentation_ready` and review-stage slots return the persisted preparation; `terminal` early failures are preserved, and a review-committed terminal is reconstructed from the persisted `formal_checked`/`presentation_ready` checkpoints and preserved without re-running review calls. Reviews resume from `duplicate_checked`, `blind_reviewed`, or `alignment_reviewed` without re-running completed review calls.
+- The adapter/ledger path uses `getOrCreateLogicalCall`, so the same run/slot/role keeps one logical-call key. A changed request body, schema hash, model, provider, output-cap field, or run kind is rejected as `CALL_CONFIG_MISMATCH`; the resume CLI reports `CONFIG_MISMATCH`.
+- The resume transport distinguishes call states: `prepared`/`refused_unprocessed` may be sent; `dispatching` is transitioned to `uncertain`, its reservation is retained, and it is never sent; `response_saved`/`validated`/`failed_known`/`uncertain` replay the stored raw response without a new HTTP request. A valid saved body is revalidated and its stage commits normally.
+- The duplicate barrier is reused from the persisted `duplicate_barrier` event when present; missing `duplicate_checked` stages are filled from the persisted assessments. A missing barrier is recomputed only after all 20 preparation results exist. A barrier event with an assessment gap or duplicate-checked stages without the event is rejected.
+- Resume rejects a completed run, a mode mismatch, a manifest/protocol mismatch, and an active writer. A `paused_budget` run requires `--max-cost` plus `--ack-budget-increase`; the cap change is recorded with operator/old/new values, the run returns to `running`, and the existing pause event is superseded by the cap-change event.
+- No slot is replaced and no new logical call is created for an existing run/slot/role. The run UUID, slot identities, stage keys, attempt keys, and reservation exposure are preserved. An uncertain request remains visible and is not replayed.
+- The CLI supports `npm run experiment -- --resume <run-id> --mock [--max-cost <usd> --ack-budget-increase --operator <name>]`; `--full`, `--smoke`, `--seed`, `--dry-run`, and `--live` are rejected with resume, and invalid concurrency/cost values fail before the database is opened.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/runner/resume.test.ts --reporter=verbose` | exit 0; 1 file / 11 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 37 files / 510 tests passed, build succeeded. |
+| P35 cancellation then CLI resume | cancelled run `b5edc3bc-2952-4223-9af4-6d81128676be` resumed to 20/20 terminal, 20 approved, 70 calls, `completed`, with both `run_cancelled` and `run_completed` events. |
+| Intentional uncertain request then CLI resume | run `123e4567-e89b-42d3-a456-426614174090` ended 20/20 terminal, 19 approved + 1 generation_error, 67 calls, 1 unknown attempt; the uncertain attempt stayed `uncertain` and was not replayed. |
+
+The focused suite spawns a child against a loopback fake and kills it at five crash windows: before dispatch, after acceptance/before response persistence, after response save/before validation, after the first committed presentation checkpoint, and after the first slot's review `terminal` commit. The last window produces a partially reviewed cohort; the restart reconstructs that reviewed terminal as ready and preserves it while reviewing the remaining 19. Each restart asserts no duplicate logical call, no duplicate stage, retained slot identities, the expected saved-response reuse or uncertain non-replay, the correct first-slot verdict, and the expected request count. Separate cases cover completed-run rejection, manifest/protocol mismatch, mode mismatch, stored request/model mismatch, missing run, budget-increase authorization, and active writer.
+
+**Manual acceptance steps**
+
+1. Run the exact cancellation-and-resume script below. It uses the P35 SIGINT script to create a partial mock run, then runs the CLI resume on the same UUID.
+2. Confirm the resumed run is `completed`, has 20/20 terminal slots, 20 approved, 70 calls, and both `run_cancelled` and `run_completed` events. The UUID and slot ledger are the same.
+3. Run the exact uncertain-request script below. It creates a dispatching mock call, marks it uncertain, then resumes through the CLI.
+4. Confirm the resumed run is `completed` with 20/20 terminal, 19 approved + 1 generation_error, the intentionally uncertain attempt remains `uncertain`, it was not replayed, and the run has 67 calls with 1 unknown attempt.
+5. Confirm no `.env`, live provider, HTML, report, gallery, multi-process worker, or slot replacement was involved.
+
+**Exact non-UI acceptance script — cancellation and resume**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+cat > /tmp/p35-cancel-check.mts <<'TS'
+import { rmSync } from "node:fs";
+import { main } from "/home/alex/ai-puzzle-factory/src/cli/experiment.ts";
+const dbPath = "/tmp/p35-cancel.sqlite";
+rmSync(dbPath, { force: true });
+setTimeout(() => process.emit("SIGINT"), 700);
+const code = await main(["node","experiment","--smoke","--mock","--seed","puzzle-smoke-v1","--concurrency","2","--max-cost","0","--db",dbPath]);
+console.log("exit", code);
+TS
+npx tsx /tmp/p35-cancel-check.mts
+RUN_ID=$(sqlite3 /tmp/p35-cancel.sqlite "select run_id from runs limit 1;")
+test -n "$RUN_ID"
+npm run experiment -- --resume "$RUN_ID" --mock --db /tmp/p35-cancel.sqlite
+sqlite3 /tmp/p35-cancel.sqlite "select control_state from runs where run_id='$RUN_ID';"
+sqlite3 /tmp/p35-cancel.sqlite "select count(*), sum(stage='terminal'), sum(verdict='approved') from slots where run_id='$RUN_ID';"
+sqlite3 /tmp/p35-cancel.sqlite "select event_type, count(*) from events where run_id='$RUN_ID' group by event_type order by event_type;"
+```
+
+Expected: the first command exits 130 with a partial run; the resume prints the same run UUID with `status completed`, `slots 20/20 terminal`, `verdicts approved=20`; SQLite shows `completed`, `20|20|20`, and both `run_cancelled` and `run_completed` events.
+
+**Exact non-UI acceptance script — intentional uncertain request**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+cat > /tmp/p36-uncertain-acceptance.mts <<'TS'
+import { execFileSync } from "node:child_process";
+import { rmSync } from "node:fs";
+import { createBudgetAccount } from "/home/alex/ai-puzzle-factory/src/ai/budget.ts";
+import { createMockTransport } from "/home/alex/ai-puzzle-factory/src/ai/mock.ts";
+import { buildPlanManifest } from "/home/alex/ai-puzzle-factory/src/experiment/planner.ts";
+import { prepareSlot } from "/home/alex/ai-puzzle-factory/src/runner/prepare-slot.ts";
+import { mockRoute } from "/home/alex/ai-puzzle-factory/src/runner/run.ts";
+import { markUnfinishedDispatchesUncertain } from "/home/alex/ai-puzzle-factory/src/runner/cancel.ts";
+import { migrate, openDatabase } from "/home/alex/ai-puzzle-factory/src/storage/database.ts";
+import { createRun } from "/home/alex/ai-puzzle-factory/src/storage/repository.ts";
+const dbPath = "/tmp/p36-uncertain.sqlite";
+rmSync(dbPath, { force: true });
+const plan = buildPlanManifest({ runKind: "smoke" });
+const runId = "123e4567-e89b-42d3-a456-426614174090";
+const accountId = "p36-uncertain";
+const db = openDatabase(dbPath);
+migrate(db);
+createRun(db, { runId, plan, evidenceKind: "mock", createdAt: "2026-11-05T00:00:00.000Z" });
+createBudgetAccount(db, { accountId, runId, runKind: "smoke", maxCostUsd: "10", createdAt: "2026-11-05T00:00:00.000Z" });
+const clock = { now: () => new Date(), sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)) };
+const mock = createMockTransport({ db, clock, random: () => 0, deadlineMs: 1000 });
+const preparation = prepareSlot({ db, runId, slotId: "text-ranking-02", accountId, apiKey: "p36-acceptance-key", transport: mock, routes: { spec: mockRoute("spec"), wording: mockRoute("wording") }, reservations: { spec: "0.01", wording: "0.01" }, mockScenarioKinds: { spec: "timeout" }, clock });
+let attemptId = "";
+const deadline = Date.now() + 800;
+while (Date.now() < deadline) {
+  const row = db.prepare("SELECT attempt_id FROM request_attempts WHERE logical_call_id IN (SELECT logical_call_id FROM logical_calls WHERE run_id = ?) AND state = 'dispatching' LIMIT 1").get(runId) as { attempt_id: string } | undefined;
+  if (row !== undefined) { attemptId = row.attempt_id; break; }
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+if (attemptId === "") throw new Error("no dispatching attempt");
+markUnfinishedDispatchesUncertain(db, runId, new Date().toISOString());
+await preparation.catch(() => undefined);
+db.close();
+process.stdout.write(execFileSync("npm", ["run", "--silent", "experiment", "--", "--resume", runId, "--mock", "--db", dbPath], { cwd: "/home/alex/ai-puzzle-factory", encoding: "utf8" }));
+const check = openDatabase(dbPath);
+console.log("slot", check.prepare("SELECT stage, verdict FROM slots WHERE run_id = ? AND slot_id = 'text-ranking-02'").get(runId));
+console.log("attempt", check.prepare("SELECT state FROM request_attempts WHERE attempt_id = ?").get(attemptId));
+console.log("counts", check.prepare("SELECT COUNT(*) AS count, SUM(stage = 'terminal') AS terminal, SUM(verdict = 'approved') AS approved, SUM(verdict = 'generation_error') AS generation_error FROM slots WHERE run_id = ?").get(runId));
+console.log("control", check.prepare("SELECT control_state FROM runs WHERE run_id = ?").get(runId));
+check.close();
+TS
+npx tsx /tmp/p36-uncertain-acceptance.mts
+```
+
+Expected: `status completed`, `slots 20/20 terminal`, `verdicts approved=19 ... generation_error=1`, `attempts 67 unknown=1`; SQLite shows `text-ranking-02` terminal/generation_error, the attempt `uncertain`, `20/20/19/1`, and `completed`.
+
+**Decision-reviewer:** the first static pass found two material findings: a High resume abort when a slot had already committed its review-path `terminal` (the resume preparation reader parsed the reviewed payload with the early-failure schema), and a Medium coverage gap because the fifth child crash point fired before any review call. The fix distinguishes early-failure and reviewed terminal payloads, reconstructs a reviewed terminal from the persisted `formal_checked`/`presentation_ready` checkpoints, filters review roles out of preparation evidence, and moves the fifth crash point to `onSlotReviewed` after the first slot's terminal commit. A second pass confirmed both fixes and found only a Low stale phase-record description plus a non-material inverted parameter name; both were corrected. The final pass found no material findings and confirmed the record and rename are consistent with the implementation.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused suite, the exact non-UI scripts, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** exactly-once external billing, automatic semantic repair, multi-process workers, reports, HTML, the gallery, and any paid provider request.

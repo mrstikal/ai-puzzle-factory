@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
-import { ARTIFACT_LIMITS, storeArtifact } from "../storage/artifacts.js";
+import { ARTIFACT_LIMITS, getArtifactById, storeArtifact } from "../storage/artifacts.js";
 import {
   LedgerError,
   getAttempt,
@@ -89,6 +89,7 @@ export interface OpenRouterTransportOptions {
   readonly random?: () => number;
   readonly deadlineMs?: number;
   readonly maxResponseBytes?: number;
+  readonly afterResponseSaved?: (attemptId: string) => Promise<void> | void;
 }
 
 export interface ExecuteOpenRouterCallInput {
@@ -1027,6 +1028,8 @@ export function createOpenRouterTransport(
         updatedAt: finishedAt.toISOString(),
       });
 
+      await options.afterResponseSaved?.(attemptAfterSave.attemptId);
+
       if (outcome === "refused_unprocessed") {
         releaseReservation(input.db, {
           reservationId,
@@ -1252,4 +1255,113 @@ export function createOpenRouterTransport(
   }
 
   return { executeCall, reconcileGeneration };
+}
+
+export function replaySavedResponse(
+  db: Database.Database,
+  attemptId: string,
+  apiKey: string,
+  at = new Date().toISOString(),
+): OpenRouterCallResult {
+  const attempt = getAttempt(db, attemptId);
+  if (attempt.rawResponseArtifactId === null) {
+    throw new OpenRouterError(
+      "RECONCILIATION_FAILED",
+      "saved response replay requires a raw response artifact",
+    );
+  }
+  if (attempt.state === "dispatching" || attempt.state === "prepared") {
+    throw new OpenRouterError(
+      "INVALID_STATE",
+      `attempt ${attemptId} is ${attempt.state} and cannot be replayed as a saved response`,
+    );
+  }
+  const artifact = getArtifactById(db, attempt.rawResponseArtifactId);
+  const parsed = parseResponse(
+    attempt.httpStatus ?? 0,
+    artifact.bytes,
+    apiKey,
+    false,
+  );
+  const outcome =
+    attempt.state === "validated"
+      ? "success"
+      : attempt.state === "failed_known"
+        ? "failed_known"
+        : attempt.state === "uncertain"
+          ? "uncertain"
+          : attempt.state === "refused_unprocessed"
+            ? "refused_unprocessed"
+            : parsed.jsonParsed
+              ? classifyOutcome(attempt.httpStatus ?? 0, parsed, false)
+              : "uncertain";
+
+  let current = attempt;
+  if (attempt.state === "response_saved") {
+    const reservation = db
+      .prepare(
+        "SELECT reservation_id, state FROM budget_reservations WHERE attempt_id = ? LIMIT 1",
+      )
+      .get(attempt.attemptId) as
+      | { reservation_id: string; state: string }
+      | undefined;
+    if (outcome === "refused_unprocessed") {
+      if (
+        reservation !== undefined &&
+        (reservation.state === "reserved" || reservation.state === "unknown")
+      ) {
+        releaseReservation(db, {
+          reservationId: reservation.reservation_id,
+          createdAt: at,
+        });
+      }
+      current = markAttemptRefusedUnprocessed(db, attempt.attemptId, at);
+    } else {
+      if (
+        reservation !== undefined &&
+        (reservation.state === "reserved" || reservation.state === "unknown")
+      ) {
+        settleReservation(db, {
+          reservationId: reservation.reservation_id,
+          actualCostUsd: parsed.actualCostUsd,
+          createdAt: at,
+        });
+      }
+      if (outcome === "success") {
+        current = markAttemptValidated(db, attempt.attemptId, at);
+      } else if (outcome === "failed_known") {
+        current = markAttemptFailedKnown(
+          db,
+          attempt.attemptId,
+          parsed.errorClassification,
+          at,
+        );
+      } else {
+        current = markAttemptUncertain(
+          db,
+          attempt.attemptId,
+          parsed.errorClassification,
+          at,
+        );
+      }
+    }
+  }
+
+  const error =
+    outcome === "success" || outcome === "refused_unprocessed"
+      ? null
+      : {
+          code: current.errorClassification ?? "RESUME_SAVED_FAILURE",
+          message:
+            outcome === "uncertain"
+              ? "saved response replay is uncertain"
+              : "saved response replay classified as failed",
+        };
+  return resultFor(
+    current.logicalCallId,
+    outcome,
+    parsed,
+    [attemptResult(current, outcome, parsed, error, null)],
+    error,
+  );
 }

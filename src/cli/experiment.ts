@@ -19,6 +19,7 @@ import {
   runSmokeMockExperiment,
   type RunSmokeMockResult,
 } from "../runner/run.js";
+import { resumeSmokeExperiment } from "../runner/resume.js";
 import { RunCancellation } from "../runner/cancel.js";
 import {
   DEFAULT_CONCURRENCY,
@@ -29,16 +30,18 @@ import {
 export const PROGRAM_NAME = "experiment";
 
 const SCOPE_NOTE = [
-  "Availability (P35):",
+  "Availability (P36):",
   "  --dry-run              print the deterministic PlanManifest and exit",
   "  --full | --smoke       select the 200-slot or 20-slot plan (default: full)",
-  "  --mock | --live        evidence mode; P35 executes only --smoke --mock",
+  "  --mock | --live        evidence mode; P36 executes --smoke --mock or --resume <run-id> --mock",
   "  --seed <seed>          restate the fixed root seed for the selected run kind",
   "  --concurrency <1|2>    candidate workers and max in-flight requests (default: 2)",
   "  --max-cost <usd>       smoke mock budget cap (default: 0; mock calls are nonbilling)",
   "  --db <path>            SQLite path (default: data/experiment.sqlite)",
-  "  --resume               rejected until P36",
-  "  P35 writes a bounded-concurrency smoke mock run; SIGINT drains and leaves a resumable checkpoint",
+  "  --resume <run-id>      resume the same run from committed checkpoints",
+  "  --ack-budget-increase  authorize a cost-only cap increase with --max-cost",
+  "  --operator <name>      operator acknowledgement recorded with a cap increase",
+  "  P36 adds crash-safe mock resume; SIGINT drains and leaves a resumable checkpoint",
 ].join("\n");
 
 interface ExperimentOptions {
@@ -47,11 +50,13 @@ interface ExperimentOptions {
   readonly smoke?: boolean;
   readonly mock?: boolean;
   readonly live?: boolean;
-  readonly resume?: boolean;
   readonly seed?: string;
   readonly maxCost?: string;
   readonly db?: string;
   readonly concurrency?: string;
+  readonly resume?: string;
+  readonly ackBudgetIncrease?: boolean;
+  readonly operator?: string;
 }
 
 function printSummary(result: RunSmokeMockResult, dbPath: string): void {
@@ -100,12 +105,116 @@ async function handleOptions(
   if (options.mock === true && options.live === true) {
     program.error("--mock and --live are mutually exclusive", { exitCode: 1 });
   }
-  if (options.resume === true) {
-    program.error("resume is not implemented until P36", { exitCode: 1 });
+  if (options.resume !== undefined) {
+    if (options.dryRun === true) {
+      program.error("--resume cannot be combined with --dry-run", {
+        exitCode: 1,
+      });
+    }
+    if (options.full === true || options.smoke === true) {
+      program.error("--resume uses the stored run mode; omit --full/--smoke", {
+        exitCode: 1,
+      });
+    }
+    if (options.seed !== undefined) {
+      program.error("--resume preserves the stored seed; omit --seed", {
+        exitCode: 1,
+      });
+    }
+    if (options.live === true) {
+      program.error(
+        "live resume is not implemented; P36 supports --resume <run-id> --mock",
+        { exitCode: 1 },
+      );
+    }
+    if (options.ackBudgetIncrease === true && options.maxCost === undefined) {
+      program.error("--ack-budget-increase requires --max-cost", {
+        exitCode: 1,
+      });
+    }
+    if (options.maxCost !== undefined && options.ackBudgetIncrease !== true) {
+      program.error("raising the cap on resume requires --ack-budget-increase", {
+        exitCode: 1,
+      });
+    }
+    if (options.maxCost !== undefined) {
+      const parsed = UsdSchema.safeParse(options.maxCost);
+      if (!parsed.success) {
+        program.error("--max-cost must be a non-negative decimal USD string", {
+          exitCode: 1,
+        });
+      }
+    }
+    let concurrency: Concurrency;
+    try {
+      concurrency = assertConcurrency(
+        Number(options.concurrency ?? DEFAULT_CONCURRENCY),
+      );
+    } catch (error) {
+      program.error(
+        error instanceof Error ? error.message : "concurrency must be 1 or 2",
+        { exitCode: 1 },
+      );
+    }
+    const dbPath = options.db ?? join("data", "experiment.sqlite");
+    mkdirSync(dirname(dbPath), { recursive: true });
+    const db = openDatabase(dbPath);
+    const cancellation = new RunCancellation();
+    const onSigint = (): void => {
+      cancellation.stop("sigint");
+    };
+    process.on("SIGINT", onSigint);
+    let lock: Awaited<ReturnType<typeof acquireWriterLock>> | null = null;
+    try {
+      migrate(db);
+      lock = await acquireWriterLock(dbPath, {
+        onCompromised: (error) => {
+          cancellation.stop("writer_lock_compromised", error);
+        },
+      });
+      const mock = createMockTransport({
+        db,
+        clock: {
+          now: () => new Date(),
+          sleep: (ms: number) =>
+            new Promise((resolve) => setTimeout(resolve, ms)),
+        },
+        random: () => 0,
+      });
+      const result = await resumeSmokeExperiment({
+        db,
+        runId: options.resume,
+        apiKey: "mock-offline-key",
+        transport: mock,
+        concurrency,
+        cancellation,
+        ...(options.maxCost === undefined
+          ? {}
+          : {
+              budgetIncrease: {
+                newMaxCostUsd: options.maxCost,
+                operator: options.operator ?? "cli-operator",
+                acknowledged: true,
+              },
+            }),
+      });
+      printSummary(result, dbPath);
+      return result.status === "cancelled" ? 130 : 0;
+    } finally {
+      process.off("SIGINT", onSigint);
+      db.close();
+      if (lock !== null) {
+        try {
+          await lock.release();
+        } catch {
+          // A compromised lock may already be gone; preserve the run result.
+        }
+      }
+    }
   }
   if (options.live === true) {
     program.error(
-      "live execution is not implemented; P35 supports offline --smoke --mock",
+      "live execution is not implemented; P36 supports offline --smoke --mock or --resume <run-id> --mock",
       { exitCode: 1 },
     );
   }
@@ -121,7 +230,7 @@ async function handleOptions(
   }
 
   if (options.smoke !== true) {
-    program.error("P35 execution supports only --smoke --mock", {
+    program.error("P36 execution supports only --smoke --mock or --resume <run-id>", {
       exitCode: 1,
     });
   }
@@ -211,7 +320,9 @@ export function createProgram(onExitCode?: (code: number) => void): Command {
     .option("--smoke", "plan or run the 20-slot smoke cohort")
     .option("--mock", "use synthetic mock evidence (default)")
     .option("--live", "use live provider evidence (not implemented)")
-    .option("--resume", "resume a run (not implemented until P36)")
+    .option("--resume <run-id>", "resume the same run from committed checkpoints")
+    .option("--ack-budget-increase", "authorize a cost-only cap increase")
+    .option("--operator <name>", "operator name for a cap increase")
     .option("--seed <seed>", "restate the fixed root seed for the selected run kind")
     .option("--concurrency <1|2>", "candidate workers (default: 2)")
     .option("--max-cost <usd>", "smoke mock budget cap (default: 0)")

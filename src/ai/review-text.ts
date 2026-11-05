@@ -7,7 +7,7 @@ import {
   type ChatMessage,
 } from "./config.js";
 import {
-  createLogicalCall,
+  getOrCreateLogicalCall,
   recordRequestEvent,
 } from "./ledger.js";
 import type {
@@ -347,7 +347,7 @@ export async function reviewText(
     ...(settings === undefined ? {} : { settings }),
   });
 
-  const call = createLogicalCall(input.db, {
+  const call = getOrCreateLogicalCall(input.db, {
     runId: input.runId,
     slotId: input.slotId,
     role: "blind_text",

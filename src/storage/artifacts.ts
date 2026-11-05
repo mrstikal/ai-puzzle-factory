@@ -171,6 +171,33 @@ export function getArtifact(
   return { artifact: artifactRowToRecord(row), bytes: row.bytes };
 }
 
+export function getArtifactById(
+  db: Database.Database,
+  artifactId: number,
+): { artifact: ArtifactRecord; bytes: Buffer } {
+  if (!Number.isInteger(artifactId) || artifactId <= 0) {
+    throw new StorageError("INVALID_INPUT", "artifact id must be a positive integer");
+  }
+  const row = db
+    .prepare(
+      "SELECT artifact_id, content_hash, kind, media_type, byte_length, bytes, created_at FROM artifacts WHERE artifact_id = ?",
+    )
+    .get(artifactId) as ArtifactRow | undefined;
+  if (row === undefined) {
+    throw new StorageError("NOT_FOUND", `artifact not found: ${artifactId}`);
+  }
+  if (
+    row.byte_length !== row.bytes.length ||
+    hashArtifactBytes(row.bytes) !== row.content_hash
+  ) {
+    throw new StorageError(
+      "INVALID_STORED_DATA",
+      `artifact ${artifactId} failed integrity check`,
+    );
+  }
+  return { artifact: artifactRowToRecord(row), bytes: row.bytes };
+}
+
 function isEnoent(error: unknown): boolean {
   return (
     typeof error === "object" &&

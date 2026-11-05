@@ -559,7 +559,7 @@ describe("CLI dry-run", () => {
       },
       {
         args: ["--seed", "puzzle-poc-v1"],
-        message: /P35 execution supports only --smoke --mock/,
+        message: /P36 execution supports only --smoke --mock or --resume <run-id>/,
       },
       {
         args: ["--dry-run", "--seed", CALIBRATION_ROOT_SEED],

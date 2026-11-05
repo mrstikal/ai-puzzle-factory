@@ -5,6 +5,9 @@ import {
   getBudgetAccount,
 } from "../ai/budget.js";
 import type { MockScenarioKind, MockTransport } from "../ai/mock.js";
+import type {
+  createOpenRouterTransport,
+} from "../ai/openrouter.js";
 import type { ResolvedRoute } from "../ai/preflight.js";
 import {
   ALIGNMENT_REVIEW_JSON_SCHEMA,
@@ -14,26 +17,34 @@ import {
   strictSchemaHash,
 } from "../ai/schemas.js";
 import {
+  DuplicateBarrierResultSchema,
   type CandidateVerdict,
+  type DuplicateBarrierResult,
   type DuplicateBarrierSummary,
+  type WorkflowStage,
 } from "../domain/candidate.js";
 import {
   REQUEST_ROLES,
   UsdSchema,
   type PlanManifest,
   type RequestRole,
+  type RunKind,
 } from "../domain/experiment.js";
 import { buildPlanManifest } from "../experiment/planner.js";
 import { runDuplicateBarrier } from "../validation/duplicates.js";
 import {
   createRun,
+  getEvents,
   getRun,
+  getStageResult,
   insertEvent,
   listSlots,
   setRunControlState,
   type SlotRecord,
 } from "../storage/repository.js";
+import { StorageError } from "../storage/database.js";
 import {
+  PREPARATION_READY_STATUS,
   prepareSlot,
   type PreparationMockScenarioKind,
   type PreparationResult,
@@ -131,6 +142,48 @@ export interface PreparationScenarioOverride {
   readonly wording?: PreparationMockScenarioKind;
 }
 
+export interface RunSmokeHooks {
+  readonly onStageCommitted?: (input: {
+    readonly slotId: string;
+    readonly stage: WorkflowStage;
+  }) => Promise<void> | void;
+  readonly onBarrierPersisted?: (
+    barrier: DuplicateBarrierResult,
+  ) => Promise<void> | void;
+  readonly onSlotPrepared?: (slotId: string) => Promise<void> | void;
+  readonly onSlotReviewed?: (slotId: string) => Promise<void> | void;
+}
+
+export interface RunSmokeCohortInput {
+  readonly db: Database.Database;
+  readonly runId: string;
+  readonly accountId: string;
+  readonly apiKey: string;
+  readonly transport: ReturnType<typeof createOpenRouterTransport> & {
+    readonly isMock?: true;
+  };
+  readonly evidenceKind: "mock" | "live";
+  readonly runKind: RunKind;
+  readonly routes: MockRoutes;
+  readonly maxCostUsd: string;
+  readonly plan?: PlanManifest;
+  readonly rootSeed?: string;
+  readonly clock?: { now(): Date };
+  readonly concurrency?: Concurrency;
+  readonly cancellation?: RunCancellation;
+  readonly drainTimeoutMs?: number;
+  readonly yieldBetweenJobs?: () => Promise<void>;
+  readonly preparationScenarios?: Readonly<
+    Record<string, PreparationScenarioOverride>
+  >;
+  readonly reviewScenarioKinds?: {
+    readonly blind?: MockScenarioKind;
+    readonly alignment?: MockScenarioKind;
+  };
+  readonly resume?: boolean;
+  readonly hooks?: RunSmokeHooks;
+}
+
 export interface RunSmokeMockInput {
   readonly db: Database.Database;
   readonly runId: string;
@@ -151,6 +204,7 @@ export interface RunSmokeMockInput {
     readonly blind?: MockScenarioKind;
     readonly alignment?: MockScenarioKind;
   };
+  readonly hooks?: RunSmokeHooks;
 }
 
 export type RunSmokeMockStatus = "completed" | "cancelled";
@@ -190,7 +244,7 @@ export interface RunSmokeMockResult {
   readonly runId: string;
   readonly plan: PlanManifest;
   readonly status: RunSmokeMockStatus;
-  readonly barrier: ReturnType<typeof runDuplicateBarrier> | null;
+  readonly barrier: DuplicateBarrierResult | null;
   readonly preparations: readonly PreparationResult[];
   readonly reviews: readonly ReviewSlotOutcome[];
   readonly slots: readonly SlotRecord[];
@@ -229,13 +283,43 @@ function defined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }
 
+function stageExists(
+  db: Database.Database,
+  runId: string,
+  slotId: string,
+  stage: WorkflowStage,
+): boolean {
+  try {
+    getStageResult(db, runId, slotId, stage);
+    return true;
+  } catch (error) {
+    if (error instanceof StorageError && error.code === "NOT_FOUND") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function readBarrierEvent(
+  db: Database.Database,
+  runId: string,
+): DuplicateBarrierResult | null {
+  const event = getEvents(db, runId).find(
+    (record) => record.eventType === "duplicate_barrier",
+  );
+  if (event === undefined) {
+    return null;
+  }
+  return DuplicateBarrierResultSchema.parse(event.payload);
+}
+
 function summarizeRun(
   db: Database.Database,
   runId: string,
   accountId: string,
   plan: PlanManifest,
   slots: readonly SlotRecord[],
-  barrier: ReturnType<typeof runDuplicateBarrier> | null,
+  barrier: DuplicateBarrierResult | null,
   status: RunSmokeMockStatus,
   cancellation: RunCancellationSummary | null,
 ): RunSmokeMockSummary {
@@ -320,7 +404,7 @@ function finishCancelled(input: {
   readonly drained: "drained" | "timeout";
   readonly preparations: readonly PreparationResult[];
   readonly reviews: readonly ReviewSlotOutcome[];
-  readonly barrier: ReturnType<typeof runDuplicateBarrier> | null;
+  readonly barrier: DuplicateBarrierResult | null;
 }): RunSmokeMockResult {
   const marked = markUnfinishedDispatchesUncertain(
     input.db,
@@ -370,13 +454,94 @@ function finishCancelled(input: {
   };
 }
 
-export async function runSmokeMockExperiment(
-  input: RunSmokeMockInput,
+function resolveBarrier(input: {
+  readonly db: Database.Database;
+  readonly runId: string;
+  readonly plan: PlanManifest;
+  readonly preparations: readonly PreparationResult[];
+  readonly resume: boolean;
+  readonly clock: { now(): Date };
+}): DuplicateBarrierResult {
+  const existing = readBarrierEvent(input.db, input.runId);
+  if (existing !== null) {
+    const assessed = new Set(
+      existing.assessments.map((assessment) => assessment.slotId),
+    );
+    for (const preparation of input.preparations) {
+      if (
+        preparation.status === PREPARATION_READY_STATUS &&
+        !assessed.has(preparation.slotId)
+      ) {
+        throw new RunError(
+          "BARRIER_ASSESSMENT_MISSING",
+          `persisted barrier result is missing ${preparation.slotId}`,
+        );
+      }
+    }
+    return existing;
+  }
+  if (input.resume) {
+    for (const preparation of input.preparations) {
+      if (
+        stageExists(
+          input.db,
+          input.runId,
+          preparation.slotId,
+          "duplicate_checked",
+        )
+      ) {
+        throw new RunError(
+          "INCOMPLETE_RUN",
+          "duplicate_checked stages exist without a persisted barrier event",
+        );
+      }
+    }
+  }
+  const barrier = runDuplicateBarrier({
+    plannedSlots: input.plan.slots,
+    candidates: input.preparations.map((preparation) => preparation.candidate),
+  });
+  insertEvent(input.db, {
+    runId: input.runId,
+    slotId: null,
+    eventType: "duplicate_barrier",
+    stage: null,
+    payload: barrier,
+    createdAt: nowIso(input.clock),
+  });
+  return barrier;
+}
+
+function stageHook(
+  hooks: RunSmokeHooks | undefined,
+  slotId: string,
+): ((stage: WorkflowStage) => Promise<void> | void) | undefined {
+  if (hooks?.onStageCommitted === undefined) {
+    return undefined;
+  }
+  return (stage) => hooks.onStageCommitted?.({ slotId, stage });
+}
+
+export async function runSmokeCohort(
+  input: RunSmokeCohortInput,
 ): Promise<RunSmokeMockResult> {
-  if (input.transport.isMock !== true) {
+  if (input.runKind !== "smoke") {
     throw new RunError(
-      "LIVE_NOT_SUPPORTED",
-      "P35 supports only the deterministic mock transport",
+      "INVALID_INPUT",
+      "P36 supports only smoke runs",
+    );
+  }
+  const isMock = input.transport.isMock === true;
+  if (input.evidenceKind === "mock" && !isMock) {
+    throw new RunError(
+      "INVALID_INPUT",
+      "mock runs require the deterministic mock transport",
+    );
+  }
+  if (input.evidenceKind === "live" && isMock) {
+    throw new RunError(
+      "INVALID_INPUT",
+      "live runs cannot use the deterministic mock transport",
     );
   }
   const maxCost = UsdSchema.safeParse(input.maxCostUsd);
@@ -395,14 +560,16 @@ export async function runSmokeMockExperiment(
       cause: error,
     });
   }
-  const plan = buildPlanManifest({
-    runKind: "smoke",
-    ...(input.rootSeed === undefined ? {} : { rootSeed: input.rootSeed }),
-  });
-  if (plan.slots.length !== 20) {
+  const plan =
+    input.plan ??
+    buildPlanManifest({
+      runKind: input.runKind,
+      ...(input.rootSeed === undefined ? {} : { rootSeed: input.rootSeed }),
+    });
+  if (plan.runKind !== "smoke" || plan.slots.length !== 20) {
     throw new RunError(
       "INVALID_INPUT",
-      `smoke plan must contain 20 slots, received ${plan.slots.length}`,
+      "P36 supports only the fixed 20-slot smoke plan",
     );
   }
   const clock = input.clock ?? { now: () => new Date() };
@@ -411,31 +578,58 @@ export async function runSmokeMockExperiment(
   const drainTimeoutMs = input.drainTimeoutMs ?? 95_000;
   const transport = withCancellationTransport(input.transport, cancellation);
   const createdAt = nowIso(clock);
+  const resume = input.resume === true;
   let created = false;
   let phase: RunCancellationSummary["phase"] = "preparation";
   try {
-    createRun(input.db, {
-      runId: input.runId,
-      plan,
-      evidenceKind: "mock",
-      createdAt,
-    });
-    created = true;
-    createBudgetAccount(input.db, {
-      accountId: input.accountId,
-      runId: input.runId,
-      runKind: "smoke",
-      maxCostUsd: maxCost.data,
-      createdAt,
-    });
-    const routes = buildMockRoutes();
+    if (resume) {
+      const run = getRun(input.db, input.runId);
+      if (run.evidenceKind !== input.evidenceKind) {
+        throw new RunError(
+          "INVALID_INPUT",
+          `run evidence mode is ${run.evidenceKind}, not ${input.evidenceKind}`,
+        );
+      }
+      if (
+        run.manifestHash !== plan.planHash ||
+        run.protocolVersion !== plan.protocolVersion ||
+        run.rootSeed !== plan.rootSeed ||
+        run.runKind !== plan.runKind
+      ) {
+        throw new RunError(
+          "INVALID_INPUT",
+          "stored run manifest, protocol, seed, or mode no longer matches",
+        );
+      }
+      if (run.controlState === "completed") {
+        throw new RunError("INVALID_INPUT", "run is already completed");
+      }
+      created = true;
+    } else {
+      createRun(input.db, {
+        runId: input.runId,
+        plan,
+        evidenceKind: input.evidenceKind,
+        createdAt,
+      });
+      created = true;
+      createBudgetAccount(input.db, {
+        accountId: input.accountId,
+        runId: input.runId,
+        runKind: "smoke",
+        maxCostUsd: maxCost.data,
+        createdAt,
+      });
+    }
+    const routes = input.routes;
 
     const preparationPool = await runBoundedPool(
       plan.slots,
       async (slot) => {
         cancellation.throwIfStopping();
         const scenario = input.preparationScenarios?.[slot.slotId];
-        return prepareSlot({
+        const onStageCommitted = stageHook(input.hooks, slot.slotId);
+        const preparation = await prepareSlot({
           db: input.db,
           runId: input.runId,
           slotId: slot.slotId,
@@ -447,7 +641,11 @@ export async function runSmokeMockExperiment(
           ...(scenario === undefined ? {} : { mockScenarioKinds: scenario }),
           clock,
           yieldBetweenJobs,
+          resume,
+          ...(onStageCommitted === undefined ? {} : { onStageCommitted }),
         });
+        await input.hooks?.onSlotPrepared?.(slot.slotId);
+        return preparation;
       },
       { concurrency, cancellation, drainTimeoutMs, yieldBetweenJobs },
     );
@@ -496,24 +694,29 @@ export async function runSmokeMockExperiment(
     }
     phase = "barrier";
     const barrierStartedAt = nowIso(clock);
-    const barrier = runDuplicateBarrier({
-      plannedSlots: plan.slots,
-      candidates: preparations.map((preparation) => preparation.candidate),
-    });
-    const barrierFinishedAt = nowIso(clock);
-    insertEvent(input.db, {
+    const barrier = resolveBarrier({
+      db: input.db,
       runId: input.runId,
-      slotId: null,
-      eventType: "duplicate_barrier",
-      stage: null,
-      payload: barrier,
-      createdAt: barrierFinishedAt,
+      plan,
+      preparations,
+      resume,
+      clock,
     });
     const assessmentBySlot = new Map(
       barrier.assessments.map((assessment) => [assessment.slotId, assessment]),
     );
     for (const preparation of preparations) {
-      if (preparation.status !== "ready_for_duplicate_barrier") {
+      if (preparation.status !== PREPARATION_READY_STATUS) {
+        continue;
+      }
+      if (
+        stageExists(
+          input.db,
+          input.runId,
+          preparation.slotId,
+          "duplicate_checked",
+        )
+      ) {
         continue;
       }
       const assessment = assessmentBySlot.get(preparation.slotId);
@@ -533,6 +736,7 @@ export async function runSmokeMockExperiment(
         clock,
       });
     }
+    await input.hooks?.onBarrierPersisted?.(barrier);
     if (cancellation.isStopping) {
       return finishCancelled({
         db: input.db,
@@ -554,7 +758,8 @@ export async function runSmokeMockExperiment(
       plan.slots,
       async (slot) => {
         cancellation.throwIfStopping();
-        return reviewSlot({
+        const onStageCommitted = stageHook(input.hooks, slot.slotId);
+        const reviewed = await reviewSlot({
           db: input.db,
           runId: input.runId,
           slotId: slot.slotId,
@@ -573,7 +778,11 @@ export async function runSmokeMockExperiment(
             : { mockScenarioKinds: input.reviewScenarioKinds }),
           clock,
           yieldBetweenJobs,
+          resume,
+          ...(onStageCommitted === undefined ? {} : { onStageCommitted }),
         });
+        await input.hooks?.onSlotReviewed?.(slot.slotId);
+        return reviewed;
       },
       { concurrency, cancellation, drainTimeoutMs, yieldBetweenJobs },
     );
@@ -676,4 +885,41 @@ export async function runSmokeMockExperiment(
     }
     throw error;
   }
+}
+
+export async function runSmokeMockExperiment(
+  input: RunSmokeMockInput,
+): Promise<RunSmokeMockResult> {
+  return runSmokeCohort({
+    db: input.db,
+    runId: input.runId,
+    accountId: input.accountId,
+    apiKey: input.apiKey,
+    transport: input.transport,
+    evidenceKind: "mock",
+    runKind: "smoke",
+    routes: buildMockRoutes(),
+    maxCostUsd: input.maxCostUsd,
+    ...(input.rootSeed === undefined ? {} : { rootSeed: input.rootSeed }),
+    ...(input.clock === undefined ? {} : { clock: input.clock }),
+    ...(input.concurrency === undefined
+      ? {}
+      : { concurrency: input.concurrency }),
+    ...(input.cancellation === undefined
+      ? {}
+      : { cancellation: input.cancellation }),
+    ...(input.drainTimeoutMs === undefined
+      ? {}
+      : { drainTimeoutMs: input.drainTimeoutMs }),
+    ...(input.yieldBetweenJobs === undefined
+      ? {}
+      : { yieldBetweenJobs: input.yieldBetweenJobs }),
+    ...(input.preparationScenarios === undefined
+      ? {}
+      : { preparationScenarios: input.preparationScenarios }),
+    ...(input.reviewScenarioKinds === undefined
+      ? {}
+      : { reviewScenarioKinds: input.reviewScenarioKinds }),
+    ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
+  });
 }

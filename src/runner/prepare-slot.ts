@@ -65,6 +65,7 @@ import { serializeScene } from "../render/svg.js";
 import { getRun, getSlot, getStageResult, insertStageResult } from "../storage/repository.js";
 import type { ArtifactInput } from "../storage/artifacts.js";
 import { deriveStreamSeed } from "../util/random.js";
+import { TerminalStagePayloadSchema } from "./review-slot.js";
 import { canonicalJson, sha256Hex } from "../util/hash.js";
 
 export const PREPARATION_READY_STATUS = "ready_for_duplicate_barrier" as const;
@@ -431,6 +432,8 @@ export interface PrepareSlotInput {
   >;
   readonly clock?: { now(): Date };
   readonly yieldBetweenJobs?: () => Promise<void>;
+  readonly resume?: boolean;
+  readonly onStageCommitted?: (stage: WorkflowStage) => Promise<void> | void;
 }
 
 interface PreparationSeeds {
@@ -512,15 +515,20 @@ function collectLogicalCallEvidence(
   db: Database.Database,
   runId: string,
   slotId: string,
+  skipReviewRoles = false,
 ): LogicalCallEvidence[] {
   const rows = db
     .prepare(
       "SELECT logical_call_id FROM logical_calls WHERE run_id = ? AND slot_id = ? ORDER BY role, created_at, logical_call_id",
     )
     .all(runId, slotId) as Array<{ logical_call_id: string }>;
-  return rows.map((row) => {
+  const evidence: LogicalCallEvidence[] = [];
+  for (const row of rows) {
     const call = getLogicalCall(db, row.logical_call_id);
     if (call.role !== "spec" && call.role !== "wording") {
+      if (skipReviewRoles) {
+        continue;
+      }
       throw new PreparationError(
         "UNEXPECTED_ROLE",
         `slot preparation made an unexpected ${call.role} call`,
@@ -538,20 +546,23 @@ function collectLogicalCallEvidence(
       : knownCosts.length === 0
         ? "not_applicable"
         : "known";
-    return LogicalCallEvidenceSchema.parse({
-      role: call.role,
-      logicalCallId: call.logicalCallId,
-      state: call.state,
-      attemptIds: attempts.map((attempt) => attempt.attemptId),
-      rawResponseArtifactIds: attempts.flatMap((attempt) =>
-        attempt.rawResponseArtifactId === null
-          ? []
-          : [attempt.rawResponseArtifactId],
-      ),
-      actualCostUsd: costStatus === "known" ? addUsd(...knownCosts) : null,
-      costStatus,
-    });
-  });
+    evidence.push(
+      LogicalCallEvidenceSchema.parse({
+        role: call.role,
+        logicalCallId: call.logicalCallId,
+        state: call.state,
+        attemptIds: attempts.map((attempt) => attempt.attemptId),
+        rawResponseArtifactIds: attempts.flatMap((attempt) =>
+          attempt.rawResponseArtifactId === null
+            ? []
+            : [attempt.rawResponseArtifactId],
+        ),
+        actualCostUsd: costStatus === "known" ? addUsd(...knownCosts) : null,
+        costStatus,
+      }),
+    );
+  }
+  return evidence;
 }
 
 function terminalVerdictFor(failureRecord: FailureRecord): Exclude<CandidateVerdict, "approved"> {
@@ -1145,6 +1156,189 @@ async function writePresentation(input: {
   }
 }
 
+
+function readSpecFromStage(input: {
+  readonly db: Database.Database;
+  readonly runId: string;
+  readonly slotId: string;
+  readonly engine: AnyFamilyEngine;
+}): unknown {
+  const stage = getStageResult(input.db, input.runId, input.slotId, "spec_ready");
+  const spec = (stage.payload as { spec?: unknown }).spec;
+  const parsed = input.engine.schema.safeParse(spec);
+  if (!parsed.success) {
+    throw new PreparationError(
+      "INVALID_STAGE",
+      `stored spec_ready checkpoint does not satisfy the ${input.engine.family} schema`,
+      { cause: parsed.error },
+    );
+  }
+  return parsed.data;
+}
+
+function readFormalFromStage(input: {
+  readonly db: Database.Database;
+  readonly runId: string;
+  readonly slotId: string;
+  readonly engine: AnyFamilyEngine;
+}): FormalCheckResult {
+  const stage = getStageResult(
+    input.db,
+    input.runId,
+    input.slotId,
+    "formal_checked",
+  );
+  const payload = FormalStagePayloadSchema.parse(stage.payload);
+  const parsed = input.engine.schema.safeParse(payload.spec);
+  if (!parsed.success) {
+    throw new PreparationError(
+      "INVALID_STAGE",
+      "stored formal_checked checkpoint contains an invalid spec",
+      { cause: parsed.error },
+    );
+  }
+  return {
+    spec: parsed.data,
+    solveResult: payload.solveResult,
+    choices: payload.choices,
+    fingerprint: payload.fingerprint,
+    render: payload.render,
+    artifacts: [],
+  };
+}
+
+function readReadyPreparation(input: {
+  readonly db: Database.Database;
+  readonly runId: string;
+  readonly slot: {
+    readonly slotId: string;
+    readonly slotOrdinal: number;
+    readonly family: Family;
+    readonly modality: Modality;
+    readonly lane: Lane;
+    readonly difficulty: Difficulty;
+  };
+  readonly engine: AnyFamilyEngine;
+}): PreparationResult {
+  const formal = readFormalFromStage({
+    db: input.db,
+    runId: input.runId,
+    slotId: input.slot.slotId,
+    engine: input.engine,
+  });
+  const presentationStage = getStageResult(
+    input.db,
+    input.runId,
+    input.slot.slotId,
+    "presentation_ready",
+  );
+  const presentation = (
+    presentationStage.payload as { presentation?: unknown }
+  ).presentation;
+  if (presentation === undefined) {
+    throw new PreparationError(
+      "INVALID_STAGE",
+      "stored presentation_ready checkpoint is missing its presentation",
+    );
+  }
+  const finalFingerprint = assertFingerprintConsistency({
+    ...formal.fingerprint,
+    contentHash: computeContentHash(
+      fingerprintContentFor(
+        presentation as Parameters<typeof fingerprintContentFor>[0],
+      ),
+    ),
+  });
+  const logicalCalls = collectLogicalCallEvidence(
+    input.db,
+    input.runId,
+    input.slot.slotId,
+    true,
+  );
+  const cost = aggregateCost(logicalCalls);
+  const candidate = CandidateBarrierInputSchema.parse({
+    slotId: input.slot.slotId,
+    slotOrdinal: input.slot.slotOrdinal,
+    family: input.slot.family,
+    modality: input.slot.modality,
+    lane: input.slot.lane,
+    preparationStatus: "ready",
+    presentationCheckPassed: true,
+    formalPassed: true,
+    terminalVerdict: null,
+    fingerprint: finalFingerprint,
+  });
+  return PreparationResultSchema.parse({
+    version: 1,
+    runId: input.runId,
+    slotId: input.slot.slotId,
+    slotOrdinal: input.slot.slotOrdinal,
+    family: input.slot.family,
+    modality: input.slot.modality,
+    lane: input.slot.lane,
+    difficulty: input.slot.difficulty,
+    status: PREPARATION_READY_STATUS,
+    terminalVerdict: null,
+    stages: ["spec_ready", "formal_checked", "presentation_ready"],
+    failures: [],
+    fingerprint: finalFingerprint,
+    candidate,
+    logicalCalls,
+    cost,
+  });
+}
+
+function readTerminalPreparation(input: {
+  readonly db: Database.Database;
+  readonly runId: string;
+  readonly slot: {
+    readonly slotId: string;
+    readonly slotOrdinal: number;
+    readonly family: Family;
+    readonly modality: Modality;
+    readonly lane: Lane;
+    readonly difficulty: Difficulty;
+  };
+}): PreparationResult {
+  const stage = getStageResult(
+    input.db,
+    input.runId,
+    input.slot.slotId,
+    "terminal",
+  );
+  const payload = PreparationFailureStagePayloadSchema.parse(stage.payload);
+  const candidate = CandidateBarrierInputSchema.parse({
+    slotId: input.slot.slotId,
+    slotOrdinal: input.slot.slotOrdinal,
+    family: input.slot.family,
+    modality: input.slot.modality,
+    lane: input.slot.lane,
+    preparationStatus: "early_failure",
+    presentationCheckPassed: false,
+    formalPassed: payload.fingerprint !== null,
+    terminalVerdict: payload.terminalVerdict,
+    fingerprint: payload.fingerprint,
+  });
+  return PreparationResultSchema.parse({
+    version: 1,
+    runId: input.runId,
+    slotId: input.slot.slotId,
+    slotOrdinal: input.slot.slotOrdinal,
+    family: input.slot.family,
+    modality: input.slot.modality,
+    lane: input.slot.lane,
+    difficulty: input.slot.difficulty,
+    status: PREPARATION_FAILURE_STATUS,
+    terminalVerdict: payload.terminalVerdict,
+    stages: payload.stages,
+    failures: payload.failures,
+    fingerprint: payload.fingerprint,
+    candidate,
+    logicalCalls: payload.logicalCalls,
+    cost: payload.cost,
+  });
+}
+
 export async function prepareSlot(input: PrepareSlotInput): Promise<PreparationResult> {
   const run = getRun(input.db, input.runId);
   if (run.runKind !== "full" && run.runKind !== "smoke") {
@@ -1154,10 +1348,26 @@ export async function prepareSlot(input: PrepareSlotInput): Promise<PreparationR
     );
   }
   const slot = getSlot(input.db, input.runId, input.slotId);
-  if (slot.stage !== "planned") {
+  const resumableStages: readonly WorkflowStage[] = [
+    "planned",
+    "spec_ready",
+    "formal_checked",
+    "presentation_ready",
+    "duplicate_checked",
+    "blind_reviewed",
+    "alignment_reviewed",
+    "terminal",
+  ];
+  if (!input.resume && slot.stage !== "planned") {
     throw new PreparationError(
       "INVALID_STAGE",
       `slot ${slot.slotId} is already at ${slot.stage}; preparation requires planned`,
+    );
+  }
+  if (input.resume && !resumableStages.includes(slot.stage)) {
+    throw new PreparationError(
+      "INVALID_STAGE",
+      `slot ${slot.slotId} is at ${slot.stage} and cannot resume preparation`,
     );
   }
   const engine = productionRegistry.getEngine(slot.family);
@@ -1221,6 +1431,52 @@ export async function prepareSlot(input: PrepareSlotInput): Promise<PreparationR
       )
     : input.transport;
 
+  if (input.resume) {
+    if (slot.stage === "terminal") {
+      const terminalStage = getStageResult(
+        input.db,
+        input.runId,
+        input.slotId,
+        "terminal",
+      );
+      if (
+        PreparationFailureStagePayloadSchema.safeParse(terminalStage.payload)
+          .success
+      ) {
+        return readTerminalPreparation({
+          db: input.db,
+          runId: input.runId,
+          slot,
+        });
+      }
+      if (TerminalStagePayloadSchema.safeParse(terminalStage.payload).success) {
+        return readReadyPreparation({
+          db: input.db,
+          runId: input.runId,
+          slot,
+          engine,
+        });
+      }
+      throw new PreparationError(
+        "INVALID_STAGE",
+        "terminal checkpoint is neither a preparation early failure nor a reviewed terminal",
+      );
+    }
+    if (
+      slot.stage === "presentation_ready" ||
+      slot.stage === "duplicate_checked" ||
+      slot.stage === "blind_reviewed" ||
+      slot.stage === "alignment_reviewed"
+    ) {
+      return readReadyPreparation({
+        db: input.db,
+        runId: input.runId,
+        slot,
+        engine,
+      });
+    }
+  }
+
   const committedStages: WorkflowStage[] = [];
   let formalPassed = false;
   let fingerprint: CandidateFingerprint | null = null;
@@ -1229,7 +1485,18 @@ export async function prepareSlot(input: PrepareSlotInput): Promise<PreparationR
   try {
     let spec: unknown;
     activeStageStartedAt = nowIso(clock);
-    if (slot.lane === "spec_first") {
+    if (
+      input.resume &&
+      (slot.stage === "spec_ready" || slot.stage === "formal_checked")
+    ) {
+      spec = readSpecFromStage({
+        db: input.db,
+        runId: input.runId,
+        slotId: input.slotId,
+        engine,
+      });
+      committedStages.push("spec_ready");
+    } else if (slot.lane === "spec_first") {
       spec = generateSpecFirst({
         db: input.db,
         runId: input.runId,
@@ -1244,6 +1511,7 @@ export async function prepareSlot(input: PrepareSlotInput): Promise<PreparationR
         apiKey: input.apiKey,
       });
       committedStages.push("spec_ready");
+      await input.onStageCommitted?.("spec_ready");
     } else {
       if (routes.spec === null) {
         throw new PreparationError("INVALID_INPUT", "ai_spec requires a spec route");
@@ -1262,8 +1530,12 @@ export async function prepareSlot(input: PrepareSlotInput): Promise<PreparationR
         clock,
       });
       committedStages.push("spec_ready");
+      await input.onStageCommitted?.("spec_ready");
     }
-    if (getSlot(input.db, input.runId, input.slotId).stage !== "spec_ready") {
+    if (
+      getSlot(input.db, input.runId, input.slotId).stage !== "spec_ready" &&
+      getSlot(input.db, input.runId, input.slotId).stage !== "formal_checked"
+    ) {
       throw new PreparationError(
         "INVALID_STAGE",
         "spec acquisition did not commit the spec_ready checkpoint",
@@ -1272,46 +1544,60 @@ export async function prepareSlot(input: PrepareSlotInput): Promise<PreparationR
     await input.yieldBetweenJobs?.();
 
     activeStageStartedAt = nowIso(clock);
-    const formal = solveAndRender({
-      family: slot.family,
-      modality: slot.modality,
-      lane: slot.lane,
-      difficulty: slot.difficulty,
-      engine,
-      spec,
-      seeds,
-      apiKey: input.apiKey,
-    });
-    commitStage({
-      db: input.db,
-      runId: input.runId,
-      slotId: input.slotId,
-      stage: "formal_checked",
-      startedAt: activeStageStartedAt,
-      clock,
-      payload: FormalStagePayloadSchema.parse({
-        version: 1,
+    let formal: FormalCheckResult;
+    if (input.resume && slot.stage === "formal_checked") {
+      formal = readFormalFromStage({
+        db: input.db,
+        runId: input.runId,
+        slotId: input.slotId,
+        engine,
+      });
+      committedStages.push("formal_checked");
+      formalPassed = true;
+      fingerprint = formal.fingerprint;
+    } else {
+      formal = solveAndRender({
         family: slot.family,
         modality: slot.modality,
-        difficulty: slot.difficulty,
         lane: slot.lane,
-        spec: formal.spec,
-        solveResult: formal.solveResult,
-        choices: formal.choices,
+        difficulty: slot.difficulty,
+        engine,
+        spec,
         seeds,
-        fingerprint: formal.fingerprint,
-        render: formal.render,
-        checks: {
-          uniqueness: "pass",
-          options: "pass",
-          render: slot.modality === "svg" ? "pass" : "not_applicable",
-        },
-      }),
-      artifacts: formal.artifacts,
-    });
-    committedStages.push("formal_checked");
-    formalPassed = true;
-    fingerprint = formal.fingerprint;
+        apiKey: input.apiKey,
+      });
+      commitStage({
+        db: input.db,
+        runId: input.runId,
+        slotId: input.slotId,
+        stage: "formal_checked",
+        startedAt: activeStageStartedAt,
+        clock,
+        payload: FormalStagePayloadSchema.parse({
+          version: 1,
+          family: slot.family,
+          modality: slot.modality,
+          difficulty: slot.difficulty,
+          lane: slot.lane,
+          spec: formal.spec,
+          solveResult: formal.solveResult,
+          choices: formal.choices,
+          seeds,
+          fingerprint: formal.fingerprint,
+          render: formal.render,
+          checks: {
+            uniqueness: "pass",
+            options: "pass",
+            render: slot.modality === "svg" ? "pass" : "not_applicable",
+          },
+        }),
+        artifacts: formal.artifacts,
+      });
+      committedStages.push("formal_checked");
+      formalPassed = true;
+      fingerprint = formal.fingerprint;
+      await input.onStageCommitted?.("formal_checked");
+    }
     await input.yieldBetweenJobs?.();
 
     activeStageStartedAt = nowIso(clock);
@@ -1334,6 +1620,7 @@ export async function prepareSlot(input: PrepareSlotInput): Promise<PreparationR
       clock,
     });
     committedStages.push("presentation_ready");
+    await input.onStageCommitted?.("presentation_ready");
     if (
       getSlot(input.db, input.runId, input.slotId).stage !==
       "presentation_ready"

@@ -202,7 +202,7 @@ describe("experiment CLI bootstrap", () => {
     stdout.mockRestore();
     const result = spawnSync(TSX_BIN, ["src/cli/experiment.ts", "--help"], { encoding: "utf8" });
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Availability (P35)");
+    expect(result.stdout).toContain("Availability (P36)");
   });
 
   it("fails explicitly for an unknown execution flag", () => {
@@ -216,6 +216,6 @@ describe("experiment CLI bootstrap", () => {
   it("fails explicitly when a smoke mock run is not requested", () => {
     const result = spawnSync(TSX_BIN, ["src/cli/experiment.ts"], { encoding: "utf8" });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toMatch(/P35 execution supports only --smoke --mock/);
+    expect(result.stderr).toMatch(/P36 execution supports only --smoke --mock or --resume <run-id>/);
   });
 });
