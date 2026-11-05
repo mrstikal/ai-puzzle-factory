@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "valid": {
+    "blind": {
+      "answerStatus": "selected",
+      "chosenOption": "A",
+      "reasoning": "The public clues force the selected option.",
+      "clarity": "clear",
+      "ambiguity": "none",
+      "confidence": 0.9,
+      "visualLegibility": "not_applicable",
+      "issues": []
+    },
+    "alignmentText": {
+      "overall": "pass",
+      "fields": {
+        "question": { "status": "pass", "factIds": ["r-domain"], "reason": "The question matches the visible rules." },
+        "rulesAndClues": { "status": "pass", "factIds": ["r-domain"], "reason": "The rules and clues match the DSL." },
+        "options": { "status": "pass", "factIds": ["r-domain"], "reason": "The options match the formal values." },
+        "hint": { "status": "pass", "factIds": ["r-domain"], "reason": "The hint is consistent with the proof." },
+        "explanation": { "status": "pass", "factIds": ["r-domain"], "reason": "The explanation follows the proof." },
+        "image": { "status": "not_applicable", "factIds": [], "reason": "The text modality has no image." }
+      }
+    },
+    "alignmentVision": {
+      "overall": "pass",
+      "fields": {
+        "question": { "status": "pass", "factIds": ["r-domain"], "reason": "The question matches the visible rules." },
+        "rulesAndClues": { "status": "pass", "factIds": ["r-domain"], "reason": "The rules and clues match the rendered diagram." },
+        "options": { "status": "pass", "factIds": ["r-domain"], "reason": "The options match the formal values." },
+        "hint": { "status": "pass", "factIds": ["r-domain"], "reason": "The hint is consistent with the proof." },
+        "explanation": { "status": "pass", "factIds": ["r-domain"], "reason": "The explanation follows the proof." },
+        "image": { "status": "pass", "factIds": ["r-domain"], "reason": "The PNG matches the diagram observations." }
+      }
+    }
+  },
+  "failures": {
+    "schemaInvalid": { "unexpected": true },
+    "refusal": {
+      "finishReason": "content_filter",
+      "refusal": "mock refusal"
+    },
+    "httpError": {
+      "status": 500,
+      "body": { "error": { "code": 500, "message": "mock http error" } }
+    },
+    "timeout": {}
+  }
+}

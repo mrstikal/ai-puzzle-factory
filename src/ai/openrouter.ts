@@ -64,6 +64,7 @@ export type OpenRouterErrorCode =
   | "MISSING_COST"
   | "INVALID_COST"
   | "TEST_BASE_URL_FORBIDDEN"
+  | "MOCK_NOT_ALLOWED"
   | "RECONCILIATION_FAILED";
 
 export class OpenRouterError extends Error {
@@ -647,6 +648,19 @@ function findActiveReservation(
 export function createOpenRouterTransport(
   options: OpenRouterTransportOptions = {},
 ) {
+  const optionKeys = Object.keys(options);
+  if (
+    optionKeys.includes("mockRegistry") ||
+    optionKeys.includes("mockScenario") ||
+    optionKeys.includes("mockOracle") ||
+    optionKeys.includes("oracle") ||
+    optionKeys.includes("mock")
+  ) {
+    throw new OpenRouterError(
+      "MOCK_NOT_ALLOWED",
+      "mock scenarios and oracles are not allowed in the live transport factory",
+    );
+  }
   const baseUrl = resolveBaseUrl(options.baseUrl);
   const clock = options.clock ?? {
     now: () => new Date(),

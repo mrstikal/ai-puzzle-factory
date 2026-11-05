@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P01-P31 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P32 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -581,3 +581,28 @@ P31 reduces persisted candidate evidence to one quality verdict. It is pure: no 
 `npm exec -- vitest run tests/validation/verdict.test.ts` covers every verdict, every failure code, correct-reviewer-with-invalid-spec, incorrect-reviewer-on-valid-spec, blind/alignment conflict, missing vision, exact duplicate ownership, near-pairs on both members, paused/incomplete stages, pending-check approval prohibition, cost-unknown distinction, deterministic vs model mismatch sources, and precedence preservation. Full gate: `npm run check`.
 
 Out of scope: human overwriting of primary verdicts and rate calculation.
+
+## 23. Deterministic mock transport (P32)
+
+P32 provides a test/simulation transport only. It does not add a runner, scheduling, duplicate barrier, or experiment execution.
+
+### Construction and registry
+
+- `createMockTransport({ db, ... })` wraps the real `createOpenRouterTransport` with an injected deterministic fetch and exposes `isMock: true`, captured requests, `registerScenario(logicalCallId, scenario)`, `clearScenarios()`, and `clear()`.
+- The scenario registry is keyed by logical call ID, not request content. `registerScenario` verifies the logical call exists and rejects duplicate scenarios. The mock transport supports one active call at a time (P34 is serial) and rejects concurrent calls.
+- Each scenario names role, family, difficulty, seed, and kind. Registration cross-checks the scenario role/family/difficulty against the logical call and its slot; mismatches fail closed at registration.
+- The mock module builds content from the real family engines and fixture wording/review templates. Blind/alignment oracle labels prefer the slot's stored `presentation_ready` key; content-level fallback uses the canonical `hashCanonicalJson(spec)` choice ordering. No oracle is exposed or written into the request.
+- `createOpenRouterTransport` rejects `mock`, `mockRegistry`, `mockScenario`, `mockOracle`, and `oracle` options with `MOCK_NOT_ALLOWED`. Mock scenarios never become production fallback.
+
+### Response behavior
+
+- Successful and failing chat responses carry `id: mock-...`, `model: mock/model`, `provider: mock`, and zero synthetic `usage` (`prompt/completion/total` 0, `cost` 0). The real transport persists the raw response, parses it, and the real ledger transitions the call; `isMock` and the mock identity keep the evidence visibly non-live.
+- Scenario kinds: `valid`, `wrong_answer`, `schema_invalid`, `refusal`, `http_error`, `timeout`. `wrong_answer` applies only to review roles; alignment wrong-answer marks the options field fail and overall fail. `timeout` waits for the transport deadline and produces an uncertain/network-timeout result. No scenario injects content into the request.
+- Captured requests are real public role request bodies. The suite drives the real `reviewText` adapter through the mock transport and asserts its captured public payload; other role content is checked at schema level. No oracle, scenario, expected option, or key data is present. Blind request allowlists remain unchanged.
+- Mock transport uses an injected fetch; no global fetch, network, or real credential is used. Tests use a synthetic key only.
+
+### Tests
+
+`npm exec -- vitest run tests/ai/mock.test.ts` covers every family/role valid content, repeated-seed stability, zero synthetic usage/cost, mock identity, keyed scenarios with identical request bodies, canonical oracle labels, registration cross-checks, wrong-answer/schema-invalid/refusal/HTTP-error/timeout through the transport, a real blind adapter request, missing scenarios, live-factory mock rejection, no global fetch, and unchanged blind request allowlists. Full gate: `npm run check`.
+
+Out of scope: slot orchestration, duplicate barrier, and experiment execution.

@@ -1719,3 +1719,60 @@ Expected: the focused suite exits 0 with 20 passing tests; `npm run check` exits
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 20-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** human overwriting of primary verdicts, rate calculation, paid calls, reports, and the gallery.
+
+## P32. Deterministic Mock Transport and Role Scenarios — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds a test/simulation transport only. It makes no live provider call, paid request, runner, scheduling decision, duplicate barrier, or experiment execution.
+
+**Files**
+
+- Mock transport: `src/ai/mock.ts`
+- Fixture: `tests/fixtures/mock/role-responses.json`
+- Tests: `tests/ai/mock.test.ts`
+- Live-factory guard: `src/ai/openrouter.ts` (`MOCK_NOT_ALLOWED`)
+- Documentation: `README.md`, `docs/experiment-protocol.md`, this file
+
+**Observable behavior**
+
+- `createMockTransport({ db, ... })` wraps the real OpenRouter transport and ledger path, exposes `isMock`, captured requests, a scenario registry keyed by logical call, and clear helpers.
+- Scenarios name role/family/difficulty/seed/kind. Registration cross-checks role/family/difficulty against the logical call and slot; mismatches fail closed. Valid spec/wording content is built from the real family engines/templates; blind/alignment content uses the mock fixture and prefers the slot's stored presentation key for its hidden oracle, with canonical choice ordering as content-level fallback.
+- Successful/failing chat responses carry `id: mock-...`, `model: mock/model`, `provider: mock`, and zero synthetic usage/cost. The real transport persists raw responses and the real ledger transitions the call, so mock evidence is visibly not live.
+- Scenario kinds cover `valid`, `wrong_answer`, `schema_invalid`, `refusal`, `http_error`, and `timeout`. Wrong-answer applies only to review roles; timeout produces an uncertain/network-timeout result.
+- Scenarios are keyed by logical call, so identical request bodies can produce different registered responses. Missing/duplicate scenarios and concurrent calls fail closed.
+- Captured requests are real public role request bodies; the suite drives the real blind `reviewText` adapter and asserts its public payload, while other roles are content-level checked. Requests never contain oracle, expected-option, scenario, or key data. Blind request allowlists are unchanged.
+- The mock transport uses an injected fetch and a synthetic key; no global fetch, network, or real credential is used.
+- The live transport factory rejects `mock`, `mockRegistry`, `mockScenario`, `mockOracle`, and `oracle` options with `MOCK_NOT_ALLOWED`.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/mock.test.ts --reporter=verbose` | exit 0; 1 file / 9 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 33 files / 477 tests passed, build succeeded. |
+
+The focused suite covers every family/role valid content, repeated-seed stability, zero synthetic usage/cost, mock identity, keyed scenarios with identical request bodies, canonical oracle labels, registration cross-checks, wrong-answer/schema-invalid/refusal/HTTP-error/timeout through the transport, a real blind adapter request, missing scenarios, live-factory mock rejection, no global fetch, and unchanged blind request allowlists. No network or paid call is made.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the focused suite reports 9 passing tests, including every-family/role valid content, the keyed-scenario test, and the real blind adapter request.
+3. Confirm `npm run check` reports 33 files / 477 tests and a successful build.
+4. Inspect `tests/fixtures/mock/role-responses.json` and confirm hidden oracle data is not present in any request body; the mock module derives it.
+5. Confirm captured simulated requests contain real public request fields only, and mock responses are visibly `mock-...`/`mock/model`/`mock` with zero cost.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec -- vitest run tests/ai/mock.test.ts --reporter=verbose
+npm run check
+sed -n '1,160p' tests/fixtures/mock/role-responses.json
+```
+
+Expected: the focused suite exits 0 with 9 passing tests; `npm run check` exits 0 with 33 files / 477 tests and a successful build; the fixture contains role templates/failure bodies but no request oracle; no live network or paid call is made.
+
+**Decision-reviewer:** the first pass found three confirmed defects: the blind oracle used the scenario seed instead of the canonical choice ordering (Medium); `registerScenario` did not cross-check role/family/difficulty against the logical call/slot (Low); and the captured-request/allowlist verification used placeholder requests and did not exercise the other roles or failure kinds through the transport (Low). Fixes use `hashCanonicalJson(spec)` for oracle choice ordering, reject scenario/call mismatches at registration, and add a real `reviewText` adapter request plus wrong/schema/refusal/HTTP/timeout transport coverage. A second pass confirmed those three resolved but found one Low residual: the oracle still fell back to the scenario seed when the slot key was available. The mock now prefers the slot's stored `presentation_ready` key, and the adapter test registers a different scenario seed to prove the stored key wins. A third pass confirmed the residual resolved and found only a stale README oracle sentence, now corrected to match the protocol and progress documents.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 9-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** slot orchestration, duplicate barrier, experiment execution, paid calls, reports, and the gallery.
