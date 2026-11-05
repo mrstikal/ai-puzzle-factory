@@ -1662,3 +1662,60 @@ Expected: the focused suite exits 0 with 11 passing tests; `npm run check` exits
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 11-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** adjudication, rewriting the presentation, changing the primary answer, paid calls, reports, and the gallery.
+
+## P31. Pure Primary-Verdict Reducer — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds a pure exhaustive verdict reducer and the documented truth table. It makes no provider call, paid request, stage mutation, scheduling decision, human adjudication, or rate calculation.
+
+**Files**
+
+- Reducer: `src/validation/verdict.ts`
+- Tests: `tests/validation/verdict.test.ts`
+- Truth table: `docs/verdict-table.md`
+- Failure-code schema: `src/domain/candidate.ts` (`MISSING_REVIEW`)
+- Documentation: `README.md`, `docs/experiment-protocol.md`, this file
+
+**Observable behavior**
+
+- The reducer is pure: it validates a strict evidence envelope and returns a quality verdict without mutating input or storage.
+- Precedence: unstarted/in-progress/paused preparation -> no quality verdict (`null`, `incomplete`); no usable generation or a generation-facing `API_ERROR`/`SCHEMA_INVALID` -> `generation_error`; deterministic formal/presentation/duplicate failures -> `rejected`; a paused/interrupted/failed run with a required review still pending -> no quality verdict (`null`, `incomplete`) after known generation/rejected outcomes; only model/near-duplicate/missing-review concerns -> `inconclusive`; approval only after every required check passes. Review-stage `API_ERROR`/`SCHEMA_INVALID` are inconclusive, not generation errors.
+- `SOLVER_LIMIT` is inconclusive, not a deterministic rejection; `TEXT_SPEC_MISMATCH`/`EXPLANATION_MISMATCH` are model allegations unless `source: deterministic`.
+- Every input failure is preserved. `primaryFailure` follows the documented class precedence; `MISSING_REVIEW` is derived for a required blind/alignment review that did not complete. A completed negative review is considered even when `required` is false; review codes win over `NEAR_DUPLICATE_SUSPECTED`.
+- Approval requires ready preparation, usable generation, formal/presentation pass, owner/unique duplicate outcome, a completed blind review selecting the code key with clear wording/no ambiguity/no issues (and `legible` for SVG), and a completed alignment review with `derivedOverall: pass`.
+- `COST_UNKNOWN` blocks business `proceed` without reversing an otherwise valid `approved` quality label: `verdict: approved`, `proceed: false`, `primaryFailure: null`, `businessBlockers: [COST_UNKNOWN]`.
+- Paused/incomplete candidates are never converted to `generation_error` merely to make a run look complete.
+- The truth table documents every decision row, failure class, primary-failure precedence, and edge case without requiring a later runner to invent policy.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/validation/verdict.test.ts --reporter=verbose` | exit 0; 1 file / 20 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 32 files / 468 tests passed, build succeeded. |
+
+The focused suite covers every verdict, every failure code, correct reviewer with invalid spec, incorrect reviewer on valid spec, blind/alignment conflict, missing vision, exact duplicate ownership, near-pairs on both members, paused/incomplete stages, budget-paused pending review, review-stage API/schema failures, near-pair/review precedence, completed negative reviews marked not required, pending-check approval prohibition, cost-unknown distinction, deterministic vs model mismatch sources, precedence preservation, and reducer purity. No network or paid call is made.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the focused suite reports 20 passing tests.
+3. Confirm `npm run check` reports 32 files / 468 tests and a successful build.
+4. Read `docs/verdict-table.md` and confirm each edge case has one unambiguous row/class and primary-failure precedence.
+5. Confirm `approved` with `COST_UNKNOWN` keeps the quality label but sets `proceed: false`; confirm paused/incomplete never becomes `generation_error`.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec -- vitest run tests/validation/verdict.test.ts --reporter=verbose
+npm run check
+sed -n '1,220p' docs/verdict-table.md
+```
+
+Expected: the focused suite exits 0 with 20 passing tests; `npm run check` exits 0 with 32 files / 468 tests and a successful build; the truth table clearly covers all verdicts, failure classes, precedence, cost distinction, review-stage failures, near-pair/review precedence, and incomplete/paused/failed review handling.
+
+**Decision-reviewer:** the first pass found two confirmed defects and two probable defects: generation-class `API_ERROR`/`SCHEMA_INVALID` at review stages were misreported as `generation_error`; the truth table contradicted the near-duplicate primary precedence; a budget-paused review stage could not be represented and became a complete `inconclusive`; and a completed negative review was ignored when `required:false`. Fixes made failure classification stage-aware, aligned the truth table with review precedence, added `runControl` so paused pending reviews stay incomplete, and derive/consider completed negative reviews regardless of `required`. A second pass confirmed those four resolved but found three residual Low gaps: `failed` run-control was not treated like paused, the exported static failure-class map remained stage-blind, and review-stage `API_ERROR`/`SCHEMA_INVALID` were absent from inconclusive primary precedence. Those are fixed by including `failed`, removing the stage-blind exported map in favour of the stage-aware `failureClass`, and adding the two codes to inconclusive precedence; regression tests cover each. A third pass confirmed those residuals but found one further pause-ordering gap: the run-control pause branch preceded known generation/rejected outcomes. The reducer now reports generation/rejection first and only then marks a paused/failed pending-review slot incomplete; a regression test covers both cases. A fourth pass confirmed the pause-ordering fix and found no new material defect or regression.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 20-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** human overwriting of primary verdicts, rate calculation, paid calls, reports, and the gallery.

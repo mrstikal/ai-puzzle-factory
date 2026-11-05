@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P01-P30 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P31 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -544,3 +544,40 @@ P30 implements section 5.2 as a new stateless request. It does not reuse the bli
 `npm exec -- vitest run tests/ai/review-alignment.test.ts` covers text and SVG valid reviews, actual PNG input, model-authored contradiction retained as model evidence, changed visual option, SVG rules/observation mismatch with empty clueTexts, model overall pass with a failed field, improper N/A, uncertain status, unknown fact citations, refusal/invalid JSON/invalid schema, missing formal evidence, wrong routes, already-reviewed slots, blind request hash preservation, and prompt/schema provenance. Full gate: `npm run check`.
 
 Out of scope: adjudication, rewriting the presentation, and changing the primary answer.
+
+## 22. Pure primary-verdict reducer (P31)
+
+P31 reduces persisted candidate evidence to one quality verdict. It is pure: no provider call, stage mutation, scheduling, or failure rewriting. The complete decision table is in [verdict-table.md](verdict-table.md).
+
+### Input and output
+
+- Input is a strict evidence envelope: slot/family/modality, run-control state, preparation state, generation state, formal/presentation pass flags, duplicate outcome/owner/near pairs, blind evidence, alignment evidence, cost status, and all failure records.
+- Output has `verdict` (quality label or null), `completion`, `proceed` (business authorization), `primaryFailure`, `businessBlockers`, every input failure plus derived failures, and a short rationale.
+- `MISSING_REVIEW` is added to the failure-code vocabulary for a required blind or alignment review that never completed.
+
+### Precedence
+
+1. `not_started`, `in_progress`, or `paused` preparation -> `verdict: null`, `completion: incomplete`; never `generation_error`.
+2. No usable generation or an `API_ERROR`/`SCHEMA_INVALID` failure at a generation-facing stage -> `generation_error`. Generation-facing means `planned`, `spec_ready`, `formal_checked`, `presentation_ready`, `duplicate_checked`, `terminal`; the same codes at `blind_reviewed`/`alignment_reviewed` are inconclusive review failures.
+3. Formal/presentation failure with a rejected-class failure -> `rejected`; with only an inconclusive-class failure (for example `SOLVER_LIMIT`) -> `inconclusive`; with no explanation -> `rejected`.
+4. Exact/spec/structural duplicate -> `rejected`.
+5. Any rejected-class failure -> `rejected`.
+6. A paused/interrupted/failed run with a required review still pending -> `verdict: null`, `completion: incomplete`; known generation/rejected outcomes are already reported by steps 2-5.
+7. Near-duplicate suspicion -> `inconclusive`; review codes win primary precedence when a review concern also exists.
+8. Missing/wrong/unclear blind or alignment review -> `inconclusive`; a completed negative review is considered even when `required` is false.
+9. Any inconclusive-class failure -> `inconclusive`.
+10. Every required check passes -> `approved`.
+
+`TEXT_SPEC_MISMATCH` and `EXPLANATION_MISMATCH` are model allegations by default; only `source: deterministic` makes them rejected-class. `API_ERROR`/`SCHEMA_INVALID` at review stages are inconclusive and appear in the inconclusive primary precedence. All failure records are preserved even when one code decides the verdict; `primaryFailure` follows the documented class precedence.
+
+### Approval and business proceed
+
+- Approval requires ready preparation, usable generation, formal and presentation pass, owner/unique duplicate outcome, a completed blind review selecting the code key with clear wording/no ambiguity/no issues (and `legible` for SVG), and a completed alignment review with `derivedOverall: pass`. Any pending required check blocks approval; `required` only controls whether a missing review is a failure.
+- `COST_UNKNOWN` is a business blocker, not a quality reversal: an otherwise valid candidate keeps `verdict: approved` but `proceed: false`, `primaryFailure: null`, and `businessBlockers: [COST_UNKNOWN]`.
+- Paused/incomplete candidates return no quality label; they are not converted to `generation_error` to make a run look complete.
+
+### Tests
+
+`npm exec -- vitest run tests/validation/verdict.test.ts` covers every verdict, every failure code, correct-reviewer-with-invalid-spec, incorrect-reviewer-on-valid-spec, blind/alignment conflict, missing vision, exact duplicate ownership, near-pairs on both members, paused/incomplete stages, pending-check approval prohibition, cost-unknown distinction, deterministic vs model mismatch sources, and precedence preservation. Full gate: `npm run check`.
+
+Out of scope: human overwriting of primary verdicts and rate calculation.
