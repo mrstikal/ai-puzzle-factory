@@ -1,0 +1,143 @@
+{
+  "guidanceVersion": "v1",
+  "schemaVersion": "v1",
+  "families": {
+    "ranking": {
+      "schemaName": "puzzle_spec_ranking_envelope",
+      "domain": "size is 4 or 5. Item IDs are integers 0..size-1. Positions are integers 1..size. Visible labels A..E are code-owned.",
+      "difficulty": {
+        "1": { "size": 4, "clues": "3-12" },
+        "2": { "size": 5, "clues": "3-12" },
+        "3": { "size": 5, "clues": "3-12" }
+      },
+      "rules": [
+        "Use only before, immediatelyBefore, at, and notAt clues.",
+        "before and immediatelyBefore reference two distinct item IDs.",
+        "at and notAt reference one item and one position inside the requested size.",
+        "Do not include the hidden order, answer key, options, prose, hint, or explanation."
+      ]
+    },
+    "matching": {
+      "schemaName": "puzzle_spec_matching_envelope",
+      "domain": "Categories are A, B, C. Item IDs are integers 0..3. Each endpoint is {category,item}. Clue kind is same or different.",
+      "difficulty": {
+        "1": { "clues": "8-12" },
+        "2": { "clues": "6-12" },
+        "3": { "clues": "4-12" }
+      },
+      "rules": [
+        "Use only same and different clues between two endpoints.",
+        "Use distinct endpoints within one clue.",
+        "Do not include the matching table, answer key, options, prose, hint, or explanation."
+      ]
+    },
+    "scheduling": {
+      "schemaName": "puzzle_spec_scheduling_envelope",
+      "domain": "Event IDs are 0..3. Slots are 1..4. Resources are 0..1. Clue kinds are at, notAt, before, immediatelyBefore, usesResource, notResource.",
+      "difficulty": {
+        "1": { "clues": "8-12" },
+        "2": { "clues": "6-12" },
+        "3": { "clues": "4-12" }
+      },
+      "rules": [
+        "Use only the declared clue kinds and the fixed event, slot, and resource IDs.",
+        "Do not repeat or contradict the same event/slot, event/resource, or order pair.",
+        "Do not include the schedule table, answer key, options, prose, hint, or explanation."
+      ]
+    },
+    "truth": {
+      "schemaName": "puzzle_spec_truth_envelope",
+      "domain": "People counts are 3 or 4. Person IDs are 0..people-1. Statements use truthful, not, and, or, xor; depth <= 2, leaves <= 3, nodes <= 7. exactTruthful is 1..people-1. statements length equals people.",
+      "difficulty": {
+        "1": { "people": 3, "binary": "at most one", "xor": "forbidden" },
+        "2": { "people": 4, "binary": "and/or allowed", "xor": "forbidden" },
+        "3": { "people": 4, "binary": "and/or allowed", "xor": "allowed" }
+      },
+      "rules": [
+        "Use only the declared AST kinds and person IDs inside 0..people-1.",
+        "Keep every statement within the depth, leaf, and node bounds.",
+        "Do not include the truth vector, answer key, options, prose, hint, or explanation."
+      ]
+    },
+    "arithmetic": {
+      "schemaName": "puzzle_spec_arithmetic_envelope",
+      "domain": "Variables are x, y, z. Domain is integers 0..12. allDifferent is boolean. constraints length is 2..5. Coefficients are integers -3..3; constants are integers -108..108; ops are eq, lt, le; no all-zero coefficient row.",
+      "difficulty": {
+        "1": { "max_abs_coefficient": 1 },
+        "2": { "max_abs_coefficient": 2 },
+        "3": { "max_abs_coefficient": 3, "inequality": "at least one nonredundant inequality" }
+      },
+      "rules": [
+        "Use only the fixed variables, domain, operators, and numeric bounds.",
+        "Do not include the solution tuple, answer key, options, prose, hint, or explanation.",
+        "Do not write a free-form constraint string; express every constraint as the structured object."
+      ]
+    },
+    "matrix": {
+      "schemaName": "puzzle_spec_matrix_envelope",
+      "domain": "The rule is xor. The matrix is 3x3. Masks are integers 0..15. The bottom-right cell is null. The top-left 2x2 seed masks are cells (0,0), (0,1), (1,0), (1,1).",
+      "difficulty": {
+        "1": { "seed_population": "1-2" },
+        "2": { "seed_population": "1-3" },
+        "3": { "seed_population": "2-3" }
+      },
+      "rules": [
+        "Use only the xor rule and the fixed 3x3 cell coordinates.",
+        "Do not include the missing mask, answer key, options, prose, hint, or explanation."
+      ]
+    },
+    "transforms": {
+      "schemaName": "puzzle_spec_transforms_envelope",
+      "domain": "The source is a 5x5 binary grid with 4..8 connected occupied cells. Operations are D4 operations and length is 1..2.",
+      "difficulty": {
+        "1": { "operations": "one rotation from rotate90, rotate180, rotate270" },
+        "2": { "operations": "one reflection from reflectLeftRight, reflectTopBottom, reflectMainDiagonal, reflectAntiDiagonal" },
+        "3": { "operations": "two operations: one rotate90/rotate270 and one reflection, in either order, noncommuting" }
+      },
+      "rules": [
+        "Use only the declared D4 operation names and the fixed 5x5 source coordinates.",
+        "Do not include the transformed result, answer key, options, prose, hint, or explanation."
+      ]
+    },
+    "paths": {
+      "schemaName": "puzzle_spec_paths_envelope",
+      "domain": "The grid is 4x4. active cells are coordinates 0..3 inside the grid. edges connect active orthogonal neighbors. start and goal are active cells. The open edges form a spanning tree over active.",
+      "difficulty": {
+        "1": { "active": "6-8", "route_edges": "3-5" },
+        "2": { "active": "7-10", "route_edges": "5-7" },
+        "3": { "active": "9-12", "route_edges": "7-11" }
+      },
+      "rules": [
+        "Use only the fixed 4x4 coordinates (row and column 0..3) and orthogonal edges.",
+        "Do not include the route, answer key, options, prose, hint, or explanation."
+      ]
+    },
+    "symmetry": {
+      "schemaName": "puzzle_spec_symmetry_envelope",
+      "domain": "The grid is 8x8. axis is vertical or horizontal. The known half is fixed; the other half is unknown. Occupied cells are 4..10.",
+      "difficulty": {
+        "1": { "occupied": "4-5", "axis": "vertical" },
+        "2": { "occupied": "6-7", "axis": "horizontal" },
+        "3": { "occupied": "8-10", "axis": "vertical or horizontal", "known_components": "at least 2" }
+      },
+      "rules": [
+        "Use only the fixed 8x8 coordinates, axis, and cell states.",
+        "Do not include the completed mirror, answer key, options, prose, hint, or explanation."
+      ]
+    },
+    "counting": {
+      "schemaName": "puzzle_spec_counting_envelope",
+      "domain": "The grid is 5x5. shapes are 2 or 3 connected, sorted, distinct cell sets. Query operations are unionCount, intersectionAll, exactlyOneShape, exactlyKShapes(k=2 or 3).",
+      "difficulty": {
+        "1": { "shapes": 2, "cells_per_shape": "3-5", "query": "unionCount" },
+        "2": { "shapes": 2, "cells_per_shape": "6-8", "query": "intersectionAll or exactlyOneShape" },
+        "3": { "shapes": 3, "cells_per_shape": "4-8", "query": "intersectionAll or exactlyKShapes" }
+      },
+      "rules": [
+        "Use only the fixed 5x5 coordinates and declared query operations.",
+        "Shapes must be distinct, orthogonally connected, and sorted by row then column.",
+        "Do not include the count, answer key, options, prose, hint, or explanation."
+      ]
+    }
+  }
+}

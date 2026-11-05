@@ -1375,3 +1375,61 @@ Expected: the offline preflight exits 0 with six resolved fixture roles and no n
 **Acceptance:** accepted by the user on 2026-11-05 after the offline preflight, the focused 34-test suite, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** live catalog archiving, model selection, paid probes, all-family smoke, provider fallback, reports, and the gallery.
+
+## P26. One-Shot AI Specification Proposer — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds one-shot strict spec proposals, family/difficulty validation, independent-engine uniqueness checks, and saved `spec_ready` evidence. It makes no live provider call, paid request, wording call, option generation, or fallback to programmatic construction.
+
+**Files**
+
+- Adapter: `src/ai/propose-spec.ts`
+- Prompt assets: `src/ai/prompts/v1/spec.txt`, `src/ai/prompts/v1/family-guidance.json`
+- Tests: `tests/ai/propose-spec.test.ts`
+- Ledger integration: `src/ai/ledger.ts` (`recordRequestEvent`)
+- Build assets: `scripts/copy-assets.mjs` copies prompts into `dist/ai/prompts/`
+- Documentation: `README.md`, `docs/experiment-protocol.md`, this file
+
+**Observable behavior**
+
+- The adapter builds the P25 family envelope response schema with fixed family, IDs/domain, and difficulty guidance. The request uses role `spec`, the exact resolved model/provider/cap, and no slot/seed metadata.
+- The system prompt carries `prompt_version: v1`, `prompt_hash`, `schema_name`, `schema_version: v1`, and `schema_hash`. The same metadata is stored in a `proposal_metadata` request event, `logical_calls.expected_schema_hash`, and the `spec_ready` payload.
+- Exactly one content proposal is accepted. The adapter rejects supplied answers, answer keys, options, prose, hints, explanations, SVG/HTML, and arbitrary constraint strings; strict family schemas reject every extra field.
+- The requested family must match the response envelope; the requested difficulty bounds are enforced per family before and after the independent engine check.
+- The parsed spec is passed to the independent `productionRegistry` engine. Exactly one solution and one answer are required; unsat, multiple solutions, and solver exhaustion are explicit failures.
+- On success, `spec_ready` stores the spec, family/difficulty, prompt/schema metadata, logical call/attempt IDs, model/provider/cap, usage/cost, and formal counts. The answer and proof are returned to the caller but are not stored in the public stage payload.
+- On failure, the slot remains `planned`, no `spec_ready` stage is written, and the raw response artifact, attempt, and cost remain queryable. No programmatic fallback or hidden second content proposal occurs.
+- The build copies prompt assets into `dist/ai/prompts/`.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/propose-spec.test.ts --reporter=verbose` | exit 0; 1 file / 11 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 27 files / 414 tests passed, build succeeded and copied prompt assets. |
+
+The focused suite covers valid and invalid responses for all ten families, wrong family, out-of-domain IDs, extra answer/options/prose, unsat/multiple solutions, refusal/truncation, one saved content proposal without hidden retry, all per-family difficulty bounds, symmetry axis binding, the two-constraint level-3 arithmetic edge case, route-role rejection, prompt/schema metadata stability, paths 4x4 guidance, saved raw response/cost, and `spec_ready` provenance. All responses come from the local fake; no real network or paid call was made.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the focused suite reports 11 passing tests, including `rejects an invalid schema for every family and leaves the slot planned`, `rejects refusal and truncation with one saved content proposal`, `binds the symmetry axis to the requested difficulty`, and `reports a two-constraint level-3 arithmetic spec as a typed difficulty failure`.
+3. Confirm `npm run check` reports 27 files / 414 tests and a successful build.
+4. Confirm `dist/ai/prompts/v1/spec.txt` and `dist/ai/prompts/v1/family-guidance.json` exist after the build.
+5. Confirm the focused test asserts that a malformed first proposal leaves the slot at `planned`, saves the raw response artifact and cost, writes no `spec_ready` stage, and sends exactly one request.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec -- vitest run tests/ai/propose-spec.test.ts --reporter=verbose
+npm run check
+ls -l dist/ai/prompts/v1/spec.txt dist/ai/prompts/v1/family-guidance.json
+```
+
+Expected: the focused suite exits 0 with 11 passing tests; `npm run check` exits 0 with 27 files / 414 tests and a successful build; both prompt assets exist under `dist/ai/prompts/v1/`. No live provider call or paid request is made.
+
+**Decision-reviewer:** the first pass found four confirmed defects: the paths guidance stated a 5x5 grid instead of the DSL's 4x4 grid (Medium); symmetry did not bind level 1 to a vertical axis or level 2 to a horizontal axis (Low); `FORBIDDEN_FIELD` omitted the logical call/attempt/result evidence (Low); and a two-constraint level-3 arithmetic spec could escape as an untyped Zod error during the nonredundancy check (Low). Fixes corrected the paths guidance, added the symmetry axis rules to guidance and validation, passed ledger evidence into `FORBIDDEN_FIELD`, and padded a one-constraint subset with a duplicate before solving while converting residual check failures into `DIFFICULTY_OUT_OF_BOUNDS`. Regression tests cover the paths 4x4 text, symmetry axis binding, forbidden-field evidence, and the two-constraint arithmetic case. A second pass confirmed all four findings resolved and found no new material defect or regression; it recorded one pre-existing arithmetic construction edge outside the P26 proposer path as an out-of-scope pointer for the owning family phase.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 11-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** wording, option generation, provider fallback, JSON repair, live experimentation, reports, and the gallery.

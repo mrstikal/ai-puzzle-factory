@@ -697,6 +697,39 @@ export function listRequestEvents(
   return rows.map(rowToEvent);
 }
 
+export interface RecordRequestEventInput {
+  readonly logicalCallId: string;
+  readonly eventType: string;
+  readonly payload: unknown;
+  readonly createdAt?: string;
+}
+
+export function recordRequestEvent(
+  db: Database.Database,
+  input: RecordRequestEventInput,
+): void {
+  const eventType = input.eventType.trim();
+  if (eventType.length === 0 || eventType.length > 64) {
+    throw new LedgerError(
+      "INVALID_INPUT",
+      "request event type must be 1..64 characters",
+    );
+  }
+  const call = getLogicalCall(db, input.logicalCallId);
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  withTransaction(db, () => {
+    insertRequestEvent(db, {
+      logicalCallId: call.logicalCallId,
+      attemptId: null,
+      eventType,
+      fromState: call.state,
+      toState: call.state,
+      payload: input.payload,
+      createdAt,
+    });
+  });
+}
+
 export function createLogicalCall(
   db: Database.Database,
   input: unknown,

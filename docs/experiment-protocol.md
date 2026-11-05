@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P01-P25 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P26 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -380,3 +380,49 @@ P25 defines the provider-facing schemas and validates an exact route before any 
 `npm exec -- vitest run tests/ai/preflight.test.ts` covers schema compilation and strictness, blind/alignment contracts, role separation, missing inputs, exact tag/base/duplicate/inactive failures, structured-output/cap/image/pricing/settings failures, cap serialization, 403 fail-closed behavior, offline no-network/no-key operation, and live probe authorization. Full gate: `npm run check`.
 
 Out of scope: live catalog archiving, model selection, paid probes, all-family smoke, reports, and the gallery.
+
+## 17. One-shot specification proposal (P26)
+
+P26 turns one strict model response into a validated family specification. It never repairs, retries with a different content prompt, or falls back to programmatic generation.
+
+### Versioned assets and prompt hashing
+
+- `src/ai/prompts/v1/spec.txt` is the common system prompt. Its first line declares `PUZZLE_SPEC_PROMPT_VERSION: v1`; the adapter refuses a mismatched header.
+- `src/ai/prompts/v1/family-guidance.json` is the normative family guidance inventory. It declares `guidanceVersion: v1`, `schemaVersion: v1`, and exactly one entry for each of the ten families.
+- `promptTemplateHash` is SHA-256 over the exact `spec.txt` bytes. `guidanceHash` is SHA-256 over canonical JSON of the requested family guidance. `promptHash` is SHA-256 over canonical JSON containing `promptVersion`, `promptTemplateHash`, `guidanceVersion`, `schemaName`, `schemaVersion`, `guidanceHash`, and `schemaHash`.
+- `schemaHash` is the P25 strict schema hash over the full `{name, strict, schema}` envelope response format.
+- The system prompt saved in `logical_calls.request_body_json` contains `prompt_version`, `prompt_hash`, `schema_name`, `schema_version`, and `schema_hash`. `logical_calls.expected_schema_hash` stores `schemaHash`, and a `proposal_metadata` request event stores the same metadata with the logical call.
+- The build copies `src/ai/prompts/` to `dist/ai/prompts/`. Once P26 is accepted, v1 is immutable; any later prompt or guidance change requires a new versioned directory and an updated hash inventory. Pre-acceptance corrections update v1 and re-run the focused/full gates.
+
+### Request and response
+
+- The request uses the P25 family envelope schema, so the response must be `{"family":"<requested>","spec":{...}}` with `additionalProperties: false` at every object. The P25 resolved spec route is a capability check; P26 sends and records the per-family envelope schema hash, not the route's default ranking-schema hash.
+- The user message fixes the requested family, difficulty, code-owned IDs/domain, and the family guidance. The prompt forbids supplied answers, answer keys, options, prose, hints, explanations, SVG/HTML, URLs, tools, code, and free-form constraint strings.
+- The adapter accepts exactly one content proposal. P24 transport retry policy may retry allowlisted transport failures, but P26 never sends a second content prompt.
+- A response for another family is rejected as `WRONG_FAMILY`; extra forbidden fields are rejected before schema parsing; any other extra field fails strict schema validation.
+
+### Difficulty bounds
+
+The adapter enforces the requested structural target before the formal engine:
+
+- ranking: size 4 at level 1; size 5 at levels 2-3.
+- matching and scheduling: at least 8/6/4 clues at levels 1/2/3.
+- truth: 3/4/4 people; level 1 allows at most one binary statement; levels 1-2 forbid xor; level 3 allows xor.
+- arithmetic: maximum absolute coefficient 1/2/3; level 3 requires at least one nonredundant inequality.
+- matrix: upper-left 2x2 seed-mask populations 1-2/1-3/2-3.
+- transforms: level 1 one nonidentity rotation; level 2 one reflection; level 3 one quarter-turn rotation plus one reflection in either order, noncommuting.
+- paths: 4x4 grid with coordinates 0..3; 6-8/7-10/9-12 active cells and route length 3-5/5-7/7-11 edges.
+- symmetry: 4-5/6-7/8-10 occupied cells; level 1 requires a vertical axis, level 2 a horizontal axis, level 3 either axis and at least two known occupied components.
+- counting: 2/2/3 shapes with 3-5/6-8/4-8 cells; level 1 `unionCount`, level 2 `intersectionAll` or `exactlyOneShape`, level 3 `intersectionAll` or `exactlyKShapes`.
+
+### Formal check and persistence
+
+- The parsed spec is passed to the independent `productionRegistry` engine. `enumerateSolutions` must return exactly one solution and one answer; zero is `UNSAT`, more than one is `MULTIPLE_SOLUTIONS`, and solver exhaustion is `SOLVER_LIMIT`.
+- On success the adapter commits `spec_ready` with the spec, family/difficulty, prompt/schema metadata, logical call/attempt IDs, model/provider/cap, usage/cost, and formal counts. The answer and proof are returned to the caller but are not stored in the public stage payload.
+- On any failure the slot remains `planned`; the logical call, raw response artifact, attempt, and cost record remain available. No `spec_ready` stage is written and no programmatic spec is substituted.
+
+### Tests
+
+`npm exec -- vitest run tests/ai/propose-spec.test.ts` covers valid and invalid responses for all ten families, wrong family, out-of-domain IDs, extra answer/options/prose, unsat/multiple solutions, refusal/truncation, one content proposal without hidden retry, all per-family difficulty bounds, route-role rejection, prompt/schema metadata stability, saved raw response/cost, and `spec_ready` provenance. Full gate: `npm run check`.
+
+Out of scope: wording, option generation, provider fallback, JSON repair, live experimentation, reports, and the gallery.
