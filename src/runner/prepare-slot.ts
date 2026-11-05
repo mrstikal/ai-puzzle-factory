@@ -661,6 +661,7 @@ function commitStage(input: {
     finishedAt,
     elapsedMs: elapsedMs(input.startedAt, finishedAt),
     ...(input.verdict === undefined ? {} : { verdict: input.verdict }),
+    createdAt: finishedAt,
     payload: input.payload,
     ...(input.artifacts === undefined ? {} : { artifacts: input.artifacts }),
   });

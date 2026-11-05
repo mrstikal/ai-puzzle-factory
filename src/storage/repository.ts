@@ -324,7 +324,7 @@ function getSlotRow(
     .get(runId, slotId) as SlotRow | undefined;
 }
 
-function insertEvent(
+export function insertEvent(
   db: Database.Database,
   input: {
     runId: string;
@@ -464,6 +464,21 @@ export function getRun(db: Database.Database, runId: string): RunRecord {
   return rowToRun(row);
 }
 
+export function setRunControlState(
+  db: Database.Database,
+  runId: string,
+  controlState: z.infer<typeof RunControlStateSchema>,
+): void {
+  assertUuid(runId, "runId");
+  const parsed = RunControlStateSchema.parse(controlState);
+  const result = db
+    .prepare("UPDATE runs SET control_state = ? WHERE run_id = ?")
+    .run(parsed, runId);
+  if (result.changes === 0) {
+    throw new StorageError("NOT_FOUND", `run ${runId} does not exist`);
+  }
+}
+
 export function listSlots(db: Database.Database, runId: string): SlotRecord[] {
   assertUuid(runId, "runId");
   assertRunExists(db, runId);
@@ -500,7 +515,7 @@ export function insertStageResult(
     finishedAt: input.finishedAt ?? null,
     elapsedMs: input.elapsedMs ?? null,
     verdict: input.verdict ?? null,
-    createdAt: input.createdAt ?? new Date().toISOString(),
+    createdAt: input.createdAt ?? input.finishedAt ?? new Date().toISOString(),
   });
   if (!scalar.success) {
     throw new StorageError("INVALID_INPUT", "invalid stage result input", {

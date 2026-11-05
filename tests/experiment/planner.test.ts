@@ -559,7 +559,7 @@ describe("CLI dry-run", () => {
       },
       {
         args: ["--seed", "puzzle-poc-v1"],
-        message: /no experiment execution mode is implemented yet/,
+        message: /P34 execution supports only --smoke --mock/,
       },
       {
         args: ["--dry-run", "--seed", CALIBRATION_ROOT_SEED],

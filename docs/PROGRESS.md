@@ -1887,3 +1887,70 @@ Expected: the three slots print `presentation_ready null 3`, `terminal generatio
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 5-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** the full smoke command, serial cohort barrier, blind/alignment reviews, concurrent workers, resume, reports, and the gallery.
+
+## P34. Serial Cohort Barrier, Reviews, and Mock Smoke CLI — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase runs only the fixed 20-slot smoke cohort with the deterministic mock transport. It does not implement full/live execution, resume, reports, HTML, the gallery, or concurrency.
+
+**Files**
+
+- Runner: `src/runner/review-slot.ts`, `src/runner/run.ts`
+- CLI: `src/cli/experiment.ts`
+- Storage integration: `src/storage/repository.ts` (`insertEvent` export and `setRunControlState`)
+- Tests: `tests/runner/serial.test.ts`; updated P02 CLI expectations in `tests/experiment/planner.test.ts` and `tests/bootstrap.test.ts`
+- Documentation: `README.md` and this file
+
+**Observable behavior**
+
+- `runSmokeMockExperiment` allocates the fixed 20-slot smoke plan, prepares each slot serially through P33, and refuses a non-mock transport, a duplicate run UUID, or a non-20-slot plan. Full, live, and resume paths are rejected by the CLI.
+- The duplicate barrier runs only after all 20 preparation results exist. The full barrier result is persisted as a `duplicate_barrier` event, and every ready slot receives a `duplicate_checked` stage containing the barrier result hash and its own assessment. Early failures stay terminal and are never given a barrier or review stage.
+- Confirmed exact/spec/structural duplicates skip both reviews and are rejected by P31 with the duplicate failure. Owner, unique, and near-suspected candidates run blind text/vision first and informed alignment second, once each. A blind disagreement still runs alignment; a blind transport failure still attempts alignment unless the run control has left `running` (for example a budget pause).
+- `blind_reviewed` and `alignment_reviewed` stages store the parsed review, choice agreement, expected option, prompt/schema provenance, usage, cost, attempts, and any raw failure evidence. Review transport/schema failures are recorded as `API_ERROR`/`SCHEMA_INVALID` at the review stage and become P31 `MISSING_REVIEW`/inconclusive outcomes, not generation errors.
+- P31 receives ready/usable/formal-passed/presentation-passed evidence, the barrier outcome, both review states, the aggregated spec+wording+review cost, and all raw failures. The terminal stage stores the complete P31 result (`verdict`, `completion`, `proceed`, `primaryFailure`, `businessBlockers`, `failures`, `rationale`) plus the duplicate outcome and owner.
+- Near suspicion never skips reviews and remains inconclusive even when both reviews pass. Cost unknown adds `COST_UNKNOWN` without reversing an otherwise approved quality label.
+- The run is marked `completed` only when all 20 slots are terminal with a verdict; the `run_completed` event is written first. A failure while the run is still `running` marks it `failed` and writes a sanitized `run_failed` event; a budget pause is left as paused.
+- The CLI supports `npm run experiment -- --smoke --mock --seed puzzle-smoke-v1 --max-cost 0 [--db <path>]`, acquires the P03 writer lock, uses no `.env` or real key, and prints the run UUID, database path, slot/verdict counts, role counts, attempt/cost counts, and barrier summary. Reports, HTML, gallery, concurrency, and resume are absent.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/runner/serial.test.ts --reporter=verbose` | exit 0; 1 file / 8 tests passed. |
+| `npm exec -- vitest run tests/storage/checkpoints.test.ts tests/ai/propose-spec.test.ts tests/ai/write-wording.test.ts tests/runner/prepare.test.ts tests/runner/serial.test.ts --reporter=verbose` | exit 0; 5 files / 50 tests passed. |
+| `npm run experiment -- --smoke --mock --seed puzzle-smoke-v1 --max-cost 0` | exit 0; printed `run de497698-1254-4edd-a2be-b284a70e18e2`, 20/20 terminal, 20 approved, 70 calls, 0 unknown cost, 0 paid traffic. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 35 files / 490 tests passed, build succeeded. |
+
+The focused suite covers the full 20-slot mock run, one ai_spec schema failure preserved while the other 19 are reviewed, a confirmed duplicate with zero review calls, a near-suspected candidate with both reviews and an inconclusive outcome, a blind disagreement followed by alignment, duplicate-UUID rejection, the CLI end-to-end run, and explicit rejection of full/live/resume/invalid-cost/mismatched-seed paths. The full run asserts 70 logical calls, 70 validated attempts, zero known cost, nonbilling settled reservations, 140 stage results, 30 P33 artifacts, barrier-before-review ordering, no report/HTML artifact, and no reviewer call on the failed slot.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the printed run UUID and `slots 20/20 terminal`, `verdicts approved=20`, `calls spec=10 wording=20 blind_text=10 blind_vision=10 alignment_text=10 alignment_vision=10`, `attempts 70 unknown=0`, `cost status=known actual=0`.
+3. Confirm SQLite reports 20 slots, 20 terminal, 20 approved, 40 review stages, a `duplicate_barrier` event, a `run_completed` event, and `control_state = completed`.
+4. Confirm no `html` or report artifact/event exists and no `.env` or API key is needed.
+5. Confirm the printed run UUID reopens with all 20 slots and honest outcomes; no resume, concurrency, report, HTML, or gallery behavior is present.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+OUT=$(npm run --silent experiment -- --smoke --mock --seed puzzle-smoke-v1 --max-cost 0)
+printf '%s\n' "$OUT"
+RUN_ID=$(printf '%s\n' "$OUT" | sed -n 's/^run //p')
+test -n "$RUN_ID"
+sqlite3 data/experiment.sqlite "select count(*), sum(case when stage='terminal' then 1 else 0 end), sum(case when verdict='approved' then 1 else 0 end) from slots where run_id='$RUN_ID';"
+sqlite3 data/experiment.sqlite "select control_state from runs where run_id='$RUN_ID';"
+sqlite3 data/experiment.sqlite "select role, count(*) from logical_calls where run_id='$RUN_ID' group by role order by role;"
+sqlite3 data/experiment.sqlite "select count(*) from stage_results where run_id='$RUN_ID' and stage in ('blind_reviewed','alignment_reviewed');"
+sqlite3 data/experiment.sqlite "select event_type, count(*) from events where run_id='$RUN_ID' group by event_type order by event_type;"
+sqlite3 data/experiment.sqlite "select count(*) from artifacts where kind in ('html','json');"
+```
+
+Expected: `20|20|20`, `completed`, role counts `spec 10 / wording 20 / blind_text 10 / blind_vision 10 / alignment_text 10 / alignment_vision 10`, review-stage count `40`, event counts `duplicate_barrier 1`, `run_completed 1`, `run_created 1`, `stage_committed 140`, and HTML/JSON artifact count `0`.
+
+**Decision-reviewer:** the first static pass found two Low findings: the seed-mismatch CLI rejection opened/migrated/locked the default database before validation, and injected-clock stage rows mixed the real wall clock with the injected clock. The CLI now builds the fixed smoke plan before any filesystem/database/lock action, the rejection test uses a temporary `--db` path and asserts no file is created, and `insertStageResult` now defaults `created_at` to the same `finished_at` used by the injected clock so P26/P27/P33/P34 stage rows, stage events, artifacts, and the barrier/run events share one time base. A follow-up pass found the P26/P27 adapter commit sites still fell back to the wall clock; the central repository default closed that remainder. The final pass found no material findings or regressions and confirmed the focused suites remain green.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** full/live execution, resume, cancellation, concurrency, reports, HTML, the gallery, and any paid provider request.
