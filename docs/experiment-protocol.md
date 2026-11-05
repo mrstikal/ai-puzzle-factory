@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P02 planning and P03 transactional storage implemented and offline-verified; no puzzle generation, provider call, rendering, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P21 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -157,3 +157,49 @@ Not implemented in P02: calibration and preflight manifests (reserved for P40/P2
 - One writer at a time: `proper-lockfile` on the database file with a 30-second stale timeout and 10-second update. A competing writer receives `WRITER_LOCKED`.
 - Export paths are resolved only beneath `data/runs/<run-id>/`; absolute paths, traversal, drive letters, backslashes, empty segments, and symbolic links (including dangling links and symlinked parent components) are rejected. Exports themselves remain a later phase.
 - P03 does not add request/budget tables, paid calls, runner resume, JSON-as-database, or report UI.
+
+## 12. Novelty and duplicate barrier (P21)
+
+P21 is a pure validation layer. It consumes a fully prepared cohort, computes immutable candidate assessments, and emits deterministic pair evidence. It does not generate, review, replace, or repair candidates.
+
+### Fingerprint values
+
+Keep four distinct values per candidate:
+
+- `contentHash`: SHA-256 over the strict visible projection `{question, rules, clues, options, hint, explanation}`. Option labels A-D and their order are visible and included.
+- `specHash`: SHA-256 over canonical JSON of the complete parsed DSL. It preserves stored clue order and stable IDs; it is not the structural fingerprint.
+- `structureHash`: SHA-256 over the family `canonicalData` `CanonicalStructure`. Clue-based families use their already reduced canonical core; visual families use their normalized operations/geometry.
+- `renderHashes`: separate SVG and PNG SHA-256 values for visual candidates; both are null for text.
+
+The P04 feature multiset is extracted from the canonical structure with `q:`, `r:`, and `g:` prefixes. Raw JSON/text hashes are never called structural fingerprints.
+
+### Eligibility and completeness
+
+The barrier accepts every planned slot plus one candidate record per slot. It refuses to run unless every planned slot has a preparation result. `ready` means formal and presentation checks passed; `early_failure` preserves an existing terminal verdict; `incomplete` covers budget/operator pauses and is not completion. Missing or `incomplete` slots raise `INCOMPLETE_PREPARATION`. Failed or incomplete presentations cannot own or suppress a usable candidate, and terminal failures are never rewritten. Formal-passed early failures may still contribute diagnostic pair evidence.
+
+### Exact, spec, and structural groups
+
+Groups are family-scoped across both lanes:
+
+- exact content duplicate: same `contentHash`; for visual candidates the same PNG render hash is also required.
+- canonical spec duplicate: same `specHash`;
+- structural duplicate: same `structureHash`.
+
+Processing is sequential: exact content first, then canonical spec, then structural. In each group the lowest eligible slot ordinal owns the group; later eligible members are rejected. Exact and canonical-spec duplicates record `EXACT_DUPLICATE`; structural duplicates record `STRUCTURAL_DUPLICATE`. A rejected candidate does not become an owner in a later stage. Exact rendered content across visual families is a separate PNG-hash diagnostic and never changes ownership.
+
+### Near policy
+
+Near comparison is allowed only within the same `(family, domainTokens, queryKind)`. With unequal structure hashes, at least one common feature, and multiset `editDistance = max(removed, added) = 1`, both eligible members are flagged `NEAR_DUPLICATE_SUSPECTED` and first-pass approval is blocked. Unit-weight multiset Jaccard is recorded as a diagnostic, not a gate. The mandatory counting positive (`k=2` versus `k=3`) has edit distance 1 and Jaccard 33/35. Empty features and unequal hashes over identical complete canonical data are implementation errors.
+
+Near suspicion is conservative, not a duplicate proof. Both members still receive reviews in later phases; the primary outcome remains inconclusive. Diagnostic pairs involving early failures are retained without changing their terminal verdicts. The barrier does not claim complete semantic novelty, and the reduced-core proxy does not detect all logically equivalent clue sets.
+
+### Output
+
+The result is a canonical, frozen `DuplicateBarrierResult`:
+
+- one assessment per planned slot with eligibility, fingerprintable flag, group-owner flag, outcome, owner slot, duplicate kind, near-pair slot IDs, failure codes, preserved terminal verdict, and the candidate's content/spec/structure/render hashes plus canonical structure and feature multiset;
+- pair evidence with kind, ordered slot IDs, family, eligibility, diagnostic flag, comparison metrics for near pairs, and bounded evidence text;
+- summary counts for planned/prepared/ready/early, eligible/fingerprintable/ineligible, groups, duplicate kinds, near pairs, diagnostic pairs, visual exact diagnostics, zero replacements, and zero rewritten terminal failures;
+- `resultHash` over the canonical result with the hash field excluded.
+
+Tests: `npm exec vitest run tests/validation/duplicates.test.ts`; full gate: `npm run check`.

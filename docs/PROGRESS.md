@@ -1077,3 +1077,60 @@ Expected: 11 focused tests pass; both preview commands exit 0 and print `family:
 **Acceptance:** accepted by the user on 2026-11-04 after the focused suite, exact non-UI script, preview inspection, and `npm run check` evidence.
 
 **Out of scope, unchanged:** provider calls, reports, gallery, live evidence, and any arbitrary polygon/triangle/square shape detection.
+
+## P21. Structural Fingerprints and Deterministic Duplicate Barrier — 2026-11-04
+
+**State:** implemented, offline-verified; awaiting user acceptance. This phase adds a pure validation layer over the completed canonical data. No provider call, report, gallery, runner, or live evidence exists.
+
+**Files**
+
+- Fingerprints: `src/validation/fingerprints.ts`
+- Deterministic barrier: `src/validation/duplicates.ts`
+- Candidate assessment schemas: `src/domain/candidate.ts`
+- Tests: `tests/validation/duplicates.test.ts`
+- Documentation: `docs/experiment-protocol.md`, `README.md`, this file
+
+**Observable behavior**
+
+- Each candidate fingerprint separates `contentHash` (strict visible question/rules/clues/options/hint/explanation projection), `specHash` (complete parsed DSL in canonical JSON), `structureHash` (family `canonicalData` with its reduced core), and separate SVG/PNG render hashes. Text candidates carry no render hashes.
+- Structural features use P04's `q:`, `r:`, and `g:` multiset. Raw JSON/text hashes are never used as structural fingerprints.
+- The barrier requires one candidate record for every planned slot. Missing slots and `incomplete`/budget-paused slots raise `INCOMPLETE_PREPARATION`; a pause is not completion.
+- Exact content, canonical spec, and structural duplicate groups are family-scoped across both lanes. For visual candidates the exact-content key also includes the PNG render hash, so a shared text shell alone cannot reject a distinct diagram. Processing is exact content -> canonical spec -> structural; the lowest eligible slot ordinal owns each group and later eligible members are rejected. Exact/spec duplicates record `EXACT_DUPLICATE`; structural duplicates record `STRUCTURAL_DUPLICATE`.
+- Failed or incomplete presentations cannot own or suppress a usable candidate. Formal-passed early failures remain ineligible but contribute diagnostic pair evidence; terminal verdicts are preserved unchanged.
+- Near detection is limited to the same `(family, domainTokens, queryKind)`, unequal structure hashes, at least one common feature, and multiset edit distance exactly one. Both eligible members are flagged `NEAR_DUPLICATE_SUSPECTED`; Jaccard is diagnostic only. The mandatory counting pair (`k=2` versus `k=3`) produces edit distance 1 and Jaccard 33/35.
+- Exact PNG matches across visual families are a separate diagnostic pair and never change ownership.
+- Assessments are frozen and self-contained: hashes, canonical structure, feature multiset, eligibility, fingerprintable flag, group-owner flag, outcome, owner, duplicate kind, near-pair IDs, failure codes, and preserved terminal verdict. Pair evidence carries comparison metrics for near pairs. `resultHash` covers the canonical result with the hash field excluded.
+- Summary counters report planned/prepared/ready/early/eligible/fingerprintable/ineligible, groups by kind, duplicates by kind, near pairs, near-suspected candidates, diagnostic pairs, visual exact diagnostics, and explicit zero replacements and zero rewritten terminal failures.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec vitest run tests/validation/duplicates.test.ts` | exit 0; 1 file / 17 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 22 files / 313 tests passed, build succeeded. |
+
+The focused suite covers content/spec/structure/render separation, relabelings, known redundant clues, nonredundant added clues, exact/spec/structural ownership across lanes, shuffled completion order, the mandatory counting one-edit pair and both flag directions, two-edit and zero-overlap negatives, different comparison scopes, identical canonical data with unequal hashes, distinct transform step sequences, visual exact-content PNG matching, exhaustive early-failure diagnostics, preserved terminal verdicts, cross-family visual exact diagnostics, incomplete-barrier refusal, immutable assessments, result-hash tampering, and zero replacements.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the focused test `is byte-identical for the same cohort in different completion orders` passes, proving the same prepared cohort yields identical owners and flags regardless of completion order.
+3. Confirm the focused test `assigns exact, spec, and structural duplicates to the lowest eligible ordinal across lanes` rejects the redundant-clue variant as a structural duplicate despite its different raw spec JSON.
+4. Confirm the mandatory counting test reports both members as `NEAR_DUPLICATE_SUSPECTED` with edit distance 1 and Jaccard 33/35.
+5. Confirm `npm run check` passes with 22 files / 313 tests and no API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec -- vitest run tests/validation/duplicates.test.ts --reporter=verbose
+npm run check
+```
+
+Expected: the focused suite exits 0 with 17 passing tests and includes the shuffled-order, redundant-clue structural-duplicate, mandatory counting near-pair, transform-step, visual exact-content PNG, exhaustive early-failure, and incomplete-barrier cases; `npm run check` exits 0 with 22 files / 313 tests and a successful build.
+
+**Decision-reviewer:** the first pass found three material findings (one medium, two low): a schema-valid structureless formal-passed fingerprint could surface as a raw ZodError; same-family visual exact-content grouping ignored the PNG hash; and group diagnostics omitted early-failure pairs against non-first members. All three were fixed with a canonical-structure input requirement plus typed `INVALID_FINGERPRINT` defense, a visual exact-content key that includes the PNG hash, and exhaustive diagnostic pair loops. A second pass verified the fixes and reported no material findings and no material regression.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 17-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** generation, slot preparation, runner orchestration, reviews, primary verdict reduction, reports, gallery, provider calls, and any claim that the reduced-core proxy detects all logically equivalent clue sets.
