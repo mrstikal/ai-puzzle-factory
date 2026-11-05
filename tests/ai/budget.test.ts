@@ -241,7 +241,7 @@ describe("logical call ledger", () => {
     expect(resumeDisposition(call.state)).toBe("send_prepared");
     expectLedgerError(
       () => markAttemptDispatching(db, attempt.attemptId, at(2)),
-      "INVALID_STATE",
+      "RESERVATION_REQUIRED",
     );
 
     makeAccount("dispatch-account", runId, "smoke", "1");
@@ -256,6 +256,10 @@ describe("logical call ledger", () => {
       }),
     );
     markAttemptDispatching(db, attempt.attemptId, at(2));
+    expectLedgerError(
+      () => markAttemptDispatching(db, attempt.attemptId, at(3)),
+      "INVALID_STATE",
+    );
     expect(getLogicalCall(db, call.logicalCallId).state).toBe("dispatching");
     expect(resumeDisposition("dispatching")).toBe("uncertain_no_resend");
     expectLedgerError(

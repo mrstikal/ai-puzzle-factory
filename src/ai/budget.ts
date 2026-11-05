@@ -530,7 +530,7 @@ export function createBudgetAccount(
   return getBudgetAccount(db, accountId);
 }
 
-function assertCallBelongsToAccount(
+export function assertCallBelongsToAccount(
   db: Database.Database,
   account: BudgetAccount,
   logicalCallId: string,

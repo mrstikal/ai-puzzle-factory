@@ -1251,3 +1251,63 @@ Expected: the focused suite exits 0 with 18 passing tests covering the boundary,
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 18-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** fetch, retries, live price estimation, provider calls, automatic resume, reports, gallery, and any claim of exactly-once billing.
+
+## P24. OpenRouter Transport and Conservative Retry Policy — 2026-11-05
+
+**State:** implemented, offline-verified; awaiting user acceptance. This phase adds a locally tested non-streaming transport. No paid request, live provider call, provider fallback, JSON repair, model selection, or automatic resume exists.
+
+**Files**
+
+- Transport: `src/ai/openrouter.ts`
+- Retry policy: `src/ai/retry.ts`
+- Credential redaction: `src/ai/redact.ts`
+- Tests: `tests/ai/openrouter.test.ts`
+- Loopback fake server: `tests/helpers/fake-openrouter.ts`
+- Retry deadline persistence: `src/storage/migrations/0003_retry_not_before.sql`, `src/ai/ledger.ts`
+- Documentation: `docs/experiment-protocol.md`, `README.md`, this file
+
+**Observable behavior**
+
+- The production host is fixed to `https://openrouter.ai/api/v1`; custom base URLs are accepted only for loopback test servers. Clock, random source, and fetch are injectable for tests.
+- The transport sends the stored logical-call intent with `stream:false`, `json_schema` response format, exactly one provider route, and exactly one output-cap field. It revalidates the P23 split request bounds and canonical hash before dispatch.
+- Default deadline is 90 seconds; default response cap is 2 MiB. The raw response is stored as a `raw_response` artifact before parsing or validation. Oversized responses are truncated for evidence and classified uncertain.
+- API keys are never stored. Raw response text and diagnostics are redacted; request headers are not persisted.
+- HTTP 200 top-level and choice-level errors are inspected. Strict finish reason `stop` plus nonempty valid JSON is required for success.
+- Outcomes: `success`, `refused_unprocessed`, `failed_known`, `uncertain`, `paused_budget`, `paused_retry_after`, and `already_dispatching`.
+- Only certified 429/no-provider-503 refusals are retried, at most two additional attempts. Delays are 500 ms then 1000 ms plus seeded 0–250 ms jitter; valid Retry-After up to 30 s replaces the delay; longer waits pause. Timeouts, disconnects, generic 5xx, HTTP-200 error bodies, provider errors, refusals, malformed output, and auth/payment failures are never retried.
+- Refused-unprocessed reservations are released. Known failures and uncertain outcomes settle actual cost when present and retain unknown exposure otherwise. Prepared attempts remain resumable after budget pause; a dispatching attempt without a saved response is never silently resent.
+- Contending connections share one prepared attempt created inside an immediate transaction. Reused reservations are checked for account, call binding, run state, pause, kind, amount, and cap; nonbilling calls keep their cap exemption. A dispatch loser releases a reservation only when this invocation created it and the attempt is still unclaimed; it never releases the winner's in-flight reservation. Missing reservations map to `RESERVATION_REQUIRED`; genuine dispatch races map to `CONCURRENT_DISPATCH`.
+- A bounded read-only generation lookup updates missing actual cost/tokens and settles a matching reservation; it never regenerates content.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/openrouter.test.ts --reporter=verbose` | exit 0; 1 file / 26 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 25 files / 369 tests passed, build succeeded. |
+
+The focused suite uses a loopback fake server and covers success, prepared-attempt reservation reuse, contending shared-attempt creation, account-aware reuse rejection, reservation amount/kind policy, already-dispatching no-resend, nested malformed usage fields, API-key redaction inside content, persisted Retry-After, 429 then success, no-provider 503 with Retry-After, long Retry-After pause, 401/402/403, 500/502, HTTP-200 error body, provider rate error after generation ID, 429 with generation/usage, timeout, disconnect, content refusal, reasoning-only/length output, malformed body, invalid JSON content, missing cost, oversized response, three-attempt cap, invalid request shapes, generation reconciliation, reconciliation of known cost refusal, identical retry hashes, no hidden retries, and no credential in the database.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the 429/no-provider tests record `refused_unprocessed` and release the reservation, while the timeout/disconnect/5xx/200-error tests record `uncertain` and retain unknown exposure.
+3. Confirm no test makes more than three attempts or retries a non-allowlisted failure.
+4. Confirm the saved usable response is validated and the raw response artifact exists without the API key.
+5. Confirm `npm run check` passes with 25 files / 369 tests and no API key or real network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec -- vitest run tests/ai/openrouter.test.ts --reporter=verbose
+npm run check
+```
+
+Expected: the focused suite exits 0 with 26 passing tests covering the refusal/uncertain distinction, retry allowlist, Retry-After persistence, attempt cap, raw-response/redaction, strict finish reasons, request validation, prepared-reservation reuse, account-aware reuse, reservation amount/kind policy, shared prepared attempt, already-dispatching guard, defensive response parsing, and generation reconciliation; `npm run check` exits 0 with 25 files / 369 tests and a successful build.
+
+**Decision-reviewer:** the first pass found six material findings (two Medium, four Low) around reservation reuse, defensive response parsing, Retry-After persistence, reconciliation overwrite, partial-completion semantics, and unredacted content; all were fixed. A second pass confirmed those fixes and found two Low reuse-path issues (foreign-account reuse and non-atomic dispatch); both were fixed. A third pass found five further reuse-path issues (one Medium stranded reservation and four Low policy/error-mapping/test issues); all were fixed. A fourth pass confirmed those fixes and found three residual issues (Medium release ownership, Low sequential shared-attempt test, Low nonbilling cap exemption); all were fixed. A fifth pass reported no material findings and no regression.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 26-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** paid requests, live provider calls, provider fallback, JSON repair, model selection, automatic resume, reports, gallery, and any claim of exactly-once billing.

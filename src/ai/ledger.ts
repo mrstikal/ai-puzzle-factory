@@ -48,6 +48,7 @@ export type LedgerErrorCode =
   | "DUPLICATE_ATTEMPT"
   | "TOO_MANY_ATTEMPTS"
   | "INVALID_STATE"
+  | "RESERVATION_REQUIRED"
   | "REQUEST_TOO_LARGE"
   | "UNSUPPORTED_MEDIA"
   | "RUN_KIND_MISMATCH"
@@ -169,6 +170,7 @@ export const LogicalCallSchema = z
     model: z.string().min(1).max(200),
     provider: z.string().min(1).max(200),
     outputCapField: z.enum(["max_tokens", "max_completion_tokens"]).nullable(),
+    retryNotBefore: z.iso.datetime().nullable(),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
   })
@@ -311,6 +313,7 @@ interface LogicalCallRow {
   model: string;
   provider: string;
   output_cap_field: string | null;
+  retry_not_before: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -414,7 +417,7 @@ function stripBase64Images(value: unknown): unknown {
   return value;
 }
 
-function requestBody(value: unknown): { json: string; hash: string } {
+export function prepareRequestBody(value: unknown): { json: string; hash: string } {
   let json: string;
   let textJson: string;
   try {
@@ -469,6 +472,7 @@ function rowToLogicalCall(row: LogicalCallRow): LogicalCall {
       model: row.model,
       provider: row.provider,
       outputCapField: row.output_cap_field,
+      retryNotBefore: row.retry_not_before,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     },
@@ -613,7 +617,7 @@ function getLogicalCallRow(
 ): LogicalCallRow | undefined {
   return db
     .prepare(
-      "SELECT logical_call_id, run_id, slot_id, probe_key, role, run_kind, pool, state, request_hash, request_body_json, expected_schema_hash, model, provider, output_cap_field, created_at, updated_at FROM logical_calls WHERE logical_call_id = ?",
+      "SELECT logical_call_id, run_id, slot_id, probe_key, role, run_kind, pool, state, request_hash, request_body_json, expected_schema_hash, model, provider, output_cap_field, retry_not_before, created_at, updated_at FROM logical_calls WHERE logical_call_id = ?",
     )
     .get(logicalCallId) as LogicalCallRow | undefined;
 }
@@ -635,6 +639,30 @@ export function getLogicalCall(db: Database.Database, logicalCallId: string): Lo
     throw new LedgerError("NOT_FOUND", `logical call not found: ${logicalCallId}`);
   }
   return rowToLogicalCall(row);
+}
+
+export function setLogicalCallRetryNotBefore(
+  db: Database.Database,
+  logicalCallId: string,
+  retryNotBefore: string | null,
+  updatedAt = new Date().toISOString(),
+): LogicalCall {
+  const call = getLogicalCall(db, logicalCallId);
+  withTransaction(db, () => {
+    db.prepare(
+      "UPDATE logical_calls SET retry_not_before = ?, updated_at = ? WHERE logical_call_id = ?",
+    ).run(retryNotBefore, updatedAt, logicalCallId);
+    insertRequestEvent(db, {
+      logicalCallId,
+      attemptId: null,
+      eventType: "retry_not_before",
+      fromState: call.state,
+      toState: call.state,
+      payload: { retryNotBefore },
+      createdAt: updatedAt,
+    });
+  });
+  return getLogicalCall(db, logicalCallId);
 }
 
 export function getAttempt(db: Database.Database, attemptId: string): RequestAttempt {
@@ -680,7 +708,7 @@ export function createLogicalCall(
     });
   }
   const call = parsed.data;
-  const body = requestBody(call.requestBody);
+  const body = prepareRequestBody(call.requestBody);
   if (call.requestHash !== undefined && call.requestHash !== body.hash) {
     throw new LedgerError(
       "INVALID_INPUT",
@@ -844,26 +872,48 @@ export function createAttempt(
   return getAttempt(db, attemptId);
 }
 
+export function getOrCreatePreparedAttempt(
+  db: Database.Database,
+  logicalCallId: string,
+  createdAt = new Date().toISOString(),
+): RequestAttempt {
+  return db.transaction(() => {
+    const call = getLogicalCall(db, logicalCallId);
+    if (call.state !== "prepared" && call.state !== "refused_unprocessed") {
+      throw new LedgerError(
+        "INVALID_STATE",
+        `cannot prepare an attempt for a logical call in state ${call.state}`,
+      );
+    }
+    const existing = listAttempts(db, logicalCallId);
+    const prepared = existing.find((attempt) => attempt.state === "prepared");
+    if (prepared !== undefined) {
+      return prepared;
+    }
+    return createAttempt(db, { logicalCallId, createdAt });
+  }).immediate();
+}
+
 export function markAttemptDispatching(
   db: Database.Database,
   attemptId: string,
   startedAt = new Date().toISOString(),
 ): RequestAttempt {
-  const attempt = getAttempt(db, attemptId);
-  if (attempt.state !== "prepared") {
-    throw new LedgerError(
-      "INVALID_STATE",
-      `attempt ${attemptId} must be prepared before dispatch`,
-    );
-  }
-  const call = getLogicalCall(db, attempt.logicalCallId);
-  if (call.state !== "prepared") {
-    throw new LedgerError(
-      "INVALID_STATE",
-      `logical call ${call.logicalCallId} is not prepared`,
-    );
-  }
-  withTransaction(db, () => {
+  db.transaction(() => {
+    const attempt = getAttempt(db, attemptId);
+    if (attempt.state !== "prepared") {
+      throw new LedgerError(
+        "INVALID_STATE",
+        `attempt ${attemptId} must be prepared before dispatch`,
+      );
+    }
+    const call = getLogicalCall(db, attempt.logicalCallId);
+    if (call.state !== "prepared") {
+      throw new LedgerError(
+        "INVALID_STATE",
+        `logical call ${call.logicalCallId} is not prepared`,
+      );
+    }
     const reservation = db
       .prepare(
         "SELECT 1 AS present FROM budget_reservations WHERE attempt_id = ? AND state IN ('reserved', 'unknown') LIMIT 1",
@@ -871,14 +921,35 @@ export function markAttemptDispatching(
       .get(attemptId);
     if (reservation === undefined) {
       throw new LedgerError(
-        "INVALID_STATE",
+        "RESERVATION_REQUIRED",
         "attempt requires an active budget reservation before dispatch",
       );
     }
-    db.prepare(
-      "UPDATE request_attempts SET state = 'dispatching', started_at = ?, updated_at = ? WHERE attempt_id = ?",
-    ).run(startedAt, startedAt, attemptId);
-    updateCallState(db, call, "dispatching", startedAt);
+    const attemptUpdate = db
+      .prepare(
+        "UPDATE request_attempts SET state = 'dispatching', started_at = ?, updated_at = ? WHERE attempt_id = ? AND state = 'prepared'",
+      )
+      .run(startedAt, startedAt, attemptId);
+    if (attemptUpdate.changes !== 1) {
+      throw new LedgerError("INVALID_STATE", "attempt was dispatched by another caller");
+    }
+    const callUpdate = db
+      .prepare(
+        "UPDATE logical_calls SET state = 'dispatching', updated_at = ? WHERE logical_call_id = ? AND state = 'prepared'",
+      )
+      .run(startedAt, call.logicalCallId);
+    if (callUpdate.changes !== 1) {
+      throw new LedgerError("INVALID_STATE", "logical call was dispatched by another caller");
+    }
+    insertRequestEvent(db, {
+      logicalCallId: call.logicalCallId,
+      attemptId,
+      eventType: "call_state",
+      fromState: "prepared",
+      toState: "dispatching",
+      payload: {},
+      createdAt: startedAt,
+    });
     insertRequestEvent(db, {
       logicalCallId: call.logicalCallId,
       attemptId,
@@ -888,7 +959,7 @@ export function markAttemptDispatching(
       payload: {},
       createdAt: startedAt,
     });
-  });
+  }).immediate();
   return getAttempt(db, attemptId);
 }
 

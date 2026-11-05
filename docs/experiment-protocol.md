@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P01-P23 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P24 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -296,3 +296,44 @@ A refusal is certified unprocessed only for HTTP 429 or HTTP 503 with `no_eligib
 `npm exec -- vitest run tests/ai/budget.test.ts` covers unique slot/probe keys, prepared/dispatching crash dispositions, three-attempt cap, request body limits/hashes, exact decimal money, cross-process overlapping admission, explicit zero versus missing cost, actual overshoot, unknown retention/release, insufficient-budget pause, calibration/primary separation, zero-budget nonbilling, duplicate reservations, append-only triggers, and acknowledged cap changes. Full gate: `npm run check`.
 
 Out of scope: fetch, retry scheduling, live price estimation, automatic resume, provider fallback, and any claim of exactly-once billing.
+
+## 15. OpenRouter transport and conservative retry policy (P24)
+
+P24 is a locally tested transport, not a paid live call. The production host is fixed to `https://openrouter.ai/api/v1`; a custom base URL is accepted only for loopback fake servers. The clock, random source, and fetch implementation are injectable for tests.
+
+### Request and response bounds
+
+- The request is the stored logical-call body. It must be non-streaming (`stream: false`), use `json_schema` response format, name exactly one provider route with no fallbacks, and send exactly one of `max_tokens`/`max_completion_tokens`.
+- The stored request body is revalidated by the P23 split bounds: 64 KiB text excluding base64, 1 MiB decoded PNG, 2 MiB stored. Only PNG data URLs are accepted.
+- The default request deadline is 90 seconds. The default response cap is 2 MiB. Oversized responses are truncated for evidence and classified uncertain.
+- A supplied request hash must match the canonical body. Every retry reuses the same attempt bytes.
+
+### Persistence and redaction
+
+- The raw response is stored as a `raw_response` artifact before JSON parsing or content validation. Parsing extracts fields defensively so a malformed unrelated nested field does not discard a generation ID, content, or cost.
+- The API key is never stored. Raw response text and error messages are redacted before persistence or reporting; request headers are not stored.
+- HTTP status, generation ID, finish reason, usage tokens, actual cost, error classification, and raw-response artifact ID are written to the P23 attempt.
+
+### Outcome classes
+
+- `success`: HTTP 200, no top-level or choice error, finish reason `stop`, nonempty content, and valid JSON.
+- `refused_unprocessed`: HTTP 429 or HTTP 503 with no eligible provider, no generation ID, no usage, no actual cost, and no partial completion. The reservation is released and a retry may be allowed.
+- `failed_known`: auth/payment/forbidden responses, non-JSON or invalid-JSON content, refusal/content-filter, reasoning-only, length truncation, missing content, invalid finish reason, and malformed bodies. The actual charge is settled when present; otherwise the reservation remains unknown. No retry.
+- `uncertain`: timeouts, disconnects, generic 5xx, HTTP-200 error bodies, provider errors after a generation ID, a 429 with generation/usage/partial output, and oversized responses. The reservation remains unknown and no retry occurs.
+- `paused_budget`: no reservation was admitted; the prepared attempt may be resumed later.
+- `paused_retry_after`: a certified refusal returned Retry-After above 30 seconds; the refusal is recorded and the run must pause rather than shorten the wait.
+- `already_dispatching`: a dispatching attempt has no saved response and must not be silently resent.
+
+### Retry policy
+
+Only certified unprocessed refusals are retried, at most two additional attempts (three total). The first retry waits 500 ms plus 0–250 ms seeded jitter; the second waits 1000 ms plus jitter. A valid Retry-After up to 30 seconds replaces the computed delay; above 30 seconds the transport pauses. Timeouts, disconnects, generic 5xx, HTTP-200 error bodies, provider errors, refusals, malformed output, and auth/payment failures are never retried automatically.
+
+### Generation reconciliation
+
+A bounded read-only `GET /generation?id=...` lookup may update a missing actual cost and token usage for an attempt with a generation ID. It updates the P23 ledger and settles the matching reservation when one is still reserved/unknown. It never replays or regenerates content.
+
+### Tests and commands
+
+`npm exec -- vitest run tests/ai/openrouter.test.ts` uses a loopback fake server and covers 429/no-provider 503, short and long Retry-After, 401/402/403, 500/502, HTTP-200 error bodies, provider errors after generation IDs, 429 with generation/usage, timeouts, disconnects, content refusal, reasoning-only/length output, malformed and non-JSON content, missing cost, oversized responses, a saved usable response, identical retry hashes, the three-attempt cap, no hidden retries, invalid request shapes, generation reconciliation, and credential absence from the database. Full gate: `npm run check`.
+
+Out of scope: paid requests, provider fallback, JSON repair, model selection, automatic resume, and any live network evidence.
