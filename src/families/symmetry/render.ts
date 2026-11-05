@@ -1,4 +1,4 @@
-import type { ChoiceLabel } from "../../domain/answers.js";
+import type { ChoiceLabel, ChoiceSet } from "../../domain/answers.js";
 import { hashCanonicalJson } from "../../util/hash.js";
 import {
   SCENE_BACKGROUND,
@@ -502,12 +502,17 @@ function buildOption(
 function resolveChoices(
   spec: SymmetrySpec,
   choices: readonly SymmetryChoiceInput[] | undefined,
+  optionsSeed?: string,
 ): readonly SymmetryChoiceInput[] {
   if (choices !== undefined) {
     return choices;
   }
   const correct = completeSymmetry(spec);
-  const set = symmetryEngine.makeOptions(spec, correct, hashCanonicalJson(spec));
+  const set = symmetryEngine.makeOptions(
+    spec,
+    correct,
+    optionsSeed ?? hashCanonicalJson(spec),
+  );
   return set.choices.map((choice) => ({
     label: choice.label,
     answer: choice.value,
@@ -574,9 +579,10 @@ function validateChoices(
 export function buildSymmetryScene(
   spec: SymmetrySpec,
   choices?: readonly SymmetryChoiceInput[],
+  optionsSeed?: string,
 ): Scene {
   const parsed = SymmetrySpecSchema.parse(spec);
-  const resolved = resolveChoices(parsed, choices);
+  const resolved = resolveChoices(parsed, choices, optionsSeed);
   const normalized = validateChoices(parsed, resolved);
   const scene: Scene = {
     width: SCENE_SIZE,
@@ -923,8 +929,18 @@ export function assertSymmetryScene(
 export const symmetryRenderer = {
   family: "symmetry" as const,
   version: "symmetry-v1",
-  buildScene(spec: SymmetrySpec): Scene {
-    return buildSymmetryScene(spec);
+  buildScene(spec: SymmetrySpec, optionsSeed?: string): Scene {
+    return buildSymmetryScene(spec, undefined, optionsSeed);
+  },
+  assertScene(scene: Scene, spec: SymmetrySpec, choices: unknown): void {
+    assertSymmetryScene(
+      scene,
+      spec,
+      (choices as ChoiceSet<SymmetryAnswer>).choices.map((choice) => ({
+        label: choice.label,
+        answer: choice.value,
+      })),
+    );
   },
 };
 

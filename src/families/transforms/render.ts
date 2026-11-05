@@ -1,4 +1,4 @@
-import type { ChoiceLabel } from "../../domain/answers.js";
+import type { ChoiceLabel, ChoiceSet } from "../../domain/answers.js";
 import { hashCanonicalJson } from "../../util/hash.js";
 import {
   SCENE_BACKGROUND,
@@ -674,12 +674,17 @@ function buildOption(
 function resolveChoices(
   spec: TransformsSpec,
   choices: readonly TransformsChoiceInput[] | undefined,
+  optionsSeed?: string,
 ): readonly TransformsChoiceInput[] {
   if (choices !== undefined) {
     return choices;
   }
   const correct = solveTransforms(spec);
-  const set = transformsEngine.makeOptions(spec, correct, hashCanonicalJson(spec));
+  const set = transformsEngine.makeOptions(
+    spec,
+    correct,
+    optionsSeed ?? hashCanonicalJson(spec),
+  );
   return set.choices.map((choice) => ({
     label: choice.label,
     cells: choice.value,
@@ -743,9 +748,10 @@ function validateChoices(
 export function buildTransformsScene(
   spec: TransformsSpec,
   choices?: readonly TransformsChoiceInput[],
+  optionsSeed?: string,
 ): Scene {
   const parsed = TransformsSpecSchema.parse(spec);
-  const resolved = resolveChoices(parsed, choices);
+  const resolved = resolveChoices(parsed, choices, optionsSeed);
   const normalized = validateChoices(parsed, resolved);
   const source = sourceCellsFromGrid(parsed.source);
   const scene: Scene = {
@@ -1557,8 +1563,18 @@ export function assertTransformsScene(
 export const transformsRenderer = {
   family: "transforms" as const,
   version: "transforms-v1",
-  buildScene(spec: TransformsSpec): Scene {
-    return buildTransformsScene(spec);
+  buildScene(spec: TransformsSpec, optionsSeed?: string): Scene {
+    return buildTransformsScene(spec, undefined, optionsSeed);
+  },
+  assertScene(scene: Scene, spec: TransformsSpec, choices: unknown): void {
+    assertTransformsScene(
+      scene,
+      spec,
+      (choices as ChoiceSet<TransformAnswer>).choices.map((choice) => ({
+        label: choice.label,
+        cells: choice.value,
+      })),
+    );
   },
 };
 

@@ -1776,3 +1776,114 @@ Expected: the focused suite exits 0 with 9 passing tests; `npm run check` exits 
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 9-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** slot orchestration, duplicate barrier, experiment execution, paid calls, reports, and the gallery.
+
+## P33. Per-Slot Preparation and Durable Checkpoints — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase prepares one slot at a time through an injected transport. It makes no review, duplicate-barrier, approval, report, gallery, scheduling, or live paid call.
+
+**Files**
+
+- Runner: `src/runner/prepare-slot.ts`
+- Tests: `tests/runner/prepare.test.ts`
+- Renderer integration fix found by review: `src/families/registry.ts`, `src/families/matrix/render.ts`, `src/families/transforms/render.ts`, `src/families/paths/render.ts`, `src/families/symmetry/render.ts`, `src/families/counting/render.ts`, and fake-renderer fixtures in `tests/families/contracts.test.ts`
+- Documentation: this file
+
+**Observable behavior**
+
+- `prepareSlot` requires a planned slot in a full or smoke run and consumes the existing P20-P27 adapters/engines without family branches.
+- `spec_first` constructs one spec from the slot `spec` stream and commits `spec_ready` with the seed and construction method. `ai_spec` calls P26 once and reuses its committed `spec_ready`; a first invalid proposal is terminal, never repaired, retried as a new creative attempt, or replaced by `spec_first`.
+- Independent solving, option construction, and option verification use the slot `options` stream. The formal checkpoint stores the spec, solve result, A-D choices, all three derived seeds, a content-less fingerprint, render hashes, and the renderer version. SVG slots store the source SVG, the full 1024 PNG, and the 512 preview PNG as real artifacts; text slots store no render bytes.
+- The SVG scene is built with the same `options` seed as the stored choices and then checked by the family-level `assertScene` validator with the stored choice set before any hash or artifact is committed. The seedless renderer default remains `hashCanonicalJson(spec)` for previews and renderer tests.
+- P27 wording/public assembly runs once from `formal_checked` and commits `presentation_ready`; the runner verifies the persisted presentation, computes the content hash, and returns a complete fingerprint with spec, structure, content, and render hashes.
+- Every stage result, its artifacts, and the slot checkpoint are committed in one P03 transaction. A failure before a stage commit leaves the prior checkpoint intact; a failure after a commit leaves that durable checkpoint and then attempts one terminal checkpoint.
+- Early failure returns `early_failure`, commits a terminal stage with a non-approved P31-compatible verdict (`generation_error`, `rejected`, or `inconclusive`), preserves the first failure record, links attempt raw-response artifacts, and stores a JSON preparation-evidence artifact. A terminal insert failure rolls back the terminal stage and its evidence atomically.
+- Mock mode registers spec/wording scenarios by logical call from the runner, outside request DTOs, forces nonbilling admission, and keeps the real ledger path. No scenario/oracle/seed field is added to a request body. Mock success cost is known `0`.
+- Ready slots remain at `presentation_ready` with a null verdict; P33 never calls blind/alignment reviewers, runs the duplicate barrier, chooses a duplicate owner, or marks a candidate approved.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/runner/prepare.test.ts --reporter=verbose` | exit 0; 1 file / 5 tests passed. |
+| `npm exec -- vitest run tests/runner/prepare.test.ts tests/families/contracts.test.ts tests/families/registry.test.ts tests/render/matrix.test.ts tests/render/transforms.test.ts tests/render/paths.test.ts tests/render/symmetry.test.ts tests/render/counting.test.ts --reporter=verbose` | exit 0; 8 files / 76 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 34 files / 482 tests passed, build succeeded. |
+
+The focused suite prepares all 20 smoke slots (one per family/lane) through the mock transport and asserts exact stage payloads, 30 mock requests (10 spec + 20 wording), 30 validated attempts, zero cost, nonbilling settled reservations, 30 stage artifacts (10 source SVG, 10 full PNG, 10 preview PNG), real SVG/PNG bytes and dimensions, family scene validation against the stored choices, no reviewer/duplicate/approval stage, and no hidden retry/regeneration. Failure tests assert an ai_spec schema failure with one spec call and no wording call, a wording refusal with formal evidence retained and a diagnostic fingerprint, raw first-response artifacts, and atomic rollback of a blocked terminal checkpoint.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below. It creates `/tmp/p33-acceptance.sqlite` with one ready slot and two early failures.
+2. Inspect the ready slot with:
+   `sqlite3 /tmp/p33-acceptance.sqlite "select slot_id, stage, coalesce(verdict,'null'), checkpoint_version from slots where slot_id='text-ranking-01';"`
+   Expected: `text-ranking-01|presentation_ready|null|3`.
+3. Inspect the failure slots with:
+   `sqlite3 /tmp/p33-acceptance.sqlite "select slot_id, stage, coalesce(verdict,'null'), checkpoint_version from slots where slot_id in ('text-ranking-02','text-truth-01') order by slot_id;"`
+   Expected: both `terminal|generation_error`, checkpoint versions 1 and 3.
+4. Inspect the first evidence with:
+   `sqlite3 /tmp/p33-acceptance.sqlite "select slot_id, json_extract(payload_json,'$.failureStage'), json_extract(payload_json,'$.failures[0].code'), json_extract(payload_json,'$.logicalCalls[0].rawResponseArtifactIds[0]') from stage_results where stage='terminal' order by slot_id;"`
+   Expected: `text-ranking-02|spec_ready|SCHEMA_INVALID|2` and `text-truth-01|presentation_ready|API_ERROR|4`.
+5. Confirm no cohort action occurred:
+   `sqlite3 /tmp/p33-acceptance.sqlite "select count(*) from stage_results where stage in ('duplicate_checked','blind_reviewed','alignment_reviewed');"`
+   Expected: `0`.
+6. Confirm the ready slot is awaiting cohort checks, both failures retain their raw first response, and no candidate is approved.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cat > /tmp/p33-acceptance.mts <<'TS'
+import { rmSync } from "node:fs";
+import { createBudgetAccount } from "/home/alex/ai-puzzle-factory/src/ai/budget.ts";
+import { createMockTransport } from "/home/alex/ai-puzzle-factory/src/ai/mock.ts";
+import { FAMILY_SPEC_JSON_SCHEMAS, WORDING_JSON_SCHEMA, strictSchemaHash } from "/home/alex/ai-puzzle-factory/src/ai/schemas.ts";
+import { buildPlanManifest } from "/home/alex/ai-puzzle-factory/src/experiment/planner.ts";
+import { prepareSlot } from "/home/alex/ai-puzzle-factory/src/runner/prepare-slot.ts";
+import { migrate, openDatabase } from "/home/alex/ai-puzzle-factory/src/storage/database.ts";
+import { createRun, getSlot, getStageResult } from "/home/alex/ai-puzzle-factory/src/storage/repository.ts";
+
+const dbPath = "/tmp/p33-acceptance.sqlite";
+rmSync(dbPath, { force: true });
+const db = openDatabase(dbPath);
+migrate(db);
+const plan = buildPlanManifest({ runKind: "smoke" });
+const createdAt = "2026-11-05T00:00:00.000Z";
+const clock = { now: () => new Date(createdAt), sleep: async (): Promise<void> => {} };
+const route = (role: "spec" | "wording") => {
+  const responseFormat = role === "spec" ? FAMILY_SPEC_JSON_SCHEMAS.ranking : WORDING_JSON_SCHEMA;
+  return { role, model: "mock/model", providerTag: "mock", providerName: "Mock Provider", endpointTag: "mock", outputCapField: "max_tokens", maxOutputTokens: 8192, minPromptTokens: 16384, contextLength: 131072, maxPromptTokens: null, maxCompletionTokens: 16384, supportedParameters: ["structured_outputs", "max_tokens"], pricing: { prompt: "0", completion: "0" }, requiresImage: false, imageInputDeclared: false, visionProbeRequired: false, responseFormat, schemaHash: strictSchemaHash(responseFormat), settings: {} } as const;
+};
+const mock = createMockTransport({ db, clock, random: () => 0 });
+const runId = "123e4567-e89b-42d3-a456-426614174033";
+const accountId = "p33-acceptance";
+createRun(db, { runId, plan, evidenceKind: "mock", createdAt });
+createBudgetAccount(db, { accountId, runId, runKind: "smoke", maxCostUsd: "0", createdAt });
+const base = { db, runId, accountId, apiKey: "sk-p33-acceptance", transport: mock, routes: { spec: route("spec"), wording: route("wording") }, reservations: { spec: "0.01", wording: "0.01" }, clock };
+await prepareSlot({ ...base, slotId: "text-ranking-01" });
+const aiFailure = await prepareSlot({ ...base, slotId: "text-ranking-02", mockScenarioKinds: { spec: "schema_invalid" } });
+const wordingFailure = await prepareSlot({ ...base, slotId: "text-truth-01", mockScenarioKinds: { wording: "refusal" } });
+for (const slotId of ["text-ranking-01", "text-ranking-02", "text-truth-01"]) {
+  const slot = getSlot(db, runId, slotId);
+  console.log(slotId, slot.stage, slot.verdict ?? "null", slot.checkpointVersion);
+}
+for (const result of [aiFailure, wordingFailure]) {
+  const terminal = getStageResult(db, runId, result.slotId, "terminal");
+  const payload = terminal.payload as { failureStage: string; failures: Array<{ code: string }>; logicalCalls: Array<{ rawResponseArtifactIds: number[] }> };
+  console.log(result.slotId, result.status, result.terminalVerdict, payload.failureStage, payload.failures.map((failure) => failure.code).join(","), payload.logicalCalls.flatMap((call) => call.rawResponseArtifactIds).join(","));
+}
+console.log("cohort stages", db.prepare("SELECT COUNT(*) AS count FROM stage_results WHERE run_id = ? AND stage IN ('duplicate_checked','blind_reviewed','alignment_reviewed')").get(runId));
+db.close();
+console.log(dbPath);
+TS
+npx tsx /tmp/p33-acceptance.mts
+sqlite3 /tmp/p33-acceptance.sqlite "select slot_id, stage, coalesce(verdict,'null'), checkpoint_version from slots order by slot_id;"
+sqlite3 /tmp/p33-acceptance.sqlite "select slot_id, json_extract(payload_json,'$.failureStage'), json_extract(payload_json,'$.failures[0].code'), json_extract(payload_json,'$.logicalCalls[0].rawResponseArtifactIds[0]') from stage_results where stage='terminal' order by slot_id;"
+sqlite3 /tmp/p33-acceptance.sqlite "select count(*) from stage_results where stage in ('duplicate_checked','blind_reviewed','alignment_reviewed');"
+```
+
+Expected: the three slots print `presentation_ready null 3`, `terminal generation_error 1`, and `terminal generation_error 3`; the terminal rows show `spec_ready|SCHEMA_INVALID|2` and `presentation_ready|API_ERROR|4`; the cohort-stage count is `0`.
+
+**Decision-reviewer:** the first static pass found two confirmed defects in the SVG path: the renderer re-derived its own option set from `hashCanonicalJson(spec)` instead of the persisted slot-options choices (High), and the production path recorded `render: pass` without invoking the family-level scene validators (Medium). The fix extends the renderer contract with an optional options seed and a family `assertScene`, forwards the slot `options` seed through all five renderers, and validates the rendered scene against the stored choice set before hashing or committing. A second pass confirmed both findings resolved and found no new material defect or regression; it noted two non-material residuals (optional `choices` parameter, and a negative test that rejected at set level), both fixed by requiring `choices` and permuting two non-correct values so only the tile-to-choice binding can fail.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 5-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** the full smoke command, serial cohort barrier, blind/alignment reviews, concurrent workers, resume, reports, and the gallery.

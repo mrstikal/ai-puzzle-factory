@@ -1358,6 +1358,9 @@ describe("family registry", () => {
       buildScene(spec) {
         return { doubled: spec.value * 2 };
       },
+      assertScene() {
+        // The toy renderer has no family scene invariants to check.
+      },
     };
     registry.registerRenderer(renderer);
     expect(registry.listRendererFamilies()).toEqual(["matrix"]);
@@ -1373,6 +1376,7 @@ describe("family registry", () => {
       family: "matrix",
       version: "test-renderer-v1",
       buildScene: (spec: unknown) => spec,
+      assertScene: () => undefined,
     });
     expect(registry.hasEngine("matrix")).toBe(true);
     expect(registry.hasRenderer("matrix")).toBe(true);
@@ -1391,6 +1395,7 @@ describe("family registry", () => {
       family: "ranking" as SvgFamily,
       version: "test-renderer-v1",
       buildScene: (spec: unknown) => spec,
+      assertScene: () => undefined,
     };
     const rendererError = thrown(() => registry.registerRenderer(textRenderer));
     expectErrorCode(rendererError, "INVALID_REGISTRATION");
@@ -1423,6 +1428,7 @@ describe("family registry", () => {
         family,
         version: "test-renderer-v1",
         buildScene: (spec: unknown) => spec,
+        assertScene: () => undefined,
       });
     }
     expect(() => registry.assertComplete({ requireRenderers: true })).not.toThrow();

@@ -1,4 +1,4 @@
-import type { ChoiceLabel } from "../../domain/answers.js";
+import type { ChoiceLabel, ChoiceSet } from "../../domain/answers.js";
 import { hashCanonicalJson } from "../../util/hash.js";
 import {
   SCENE_BACKGROUND,
@@ -620,6 +620,7 @@ function buildOption(
 function resolveChoices(
   spec: PathsSpec,
   choices: readonly PathsChoiceInput[] | undefined,
+  optionsSeed?: string,
 ): readonly PathsChoiceInput[] {
   if (choices !== undefined) {
     return choices;
@@ -631,7 +632,11 @@ function resolveChoices(
       "path renderer could not recover the unique tree route",
     );
   }
-  const set = pathsEngine.makeOptions(spec, correct, hashCanonicalJson(spec));
+  const set = pathsEngine.makeOptions(
+    spec,
+    correct,
+    optionsSeed ?? hashCanonicalJson(spec),
+  );
   return set.choices.map((choice) => ({
     label: choice.label,
     route: choice.value,
@@ -704,9 +709,10 @@ function validateChoices(
 export function buildPathsScene(
   spec: PathsSpec,
   choices?: readonly PathsChoiceInput[],
+  optionsSeed?: string,
 ): Scene {
   const parsed = PathsSpecSchema.parse(spec);
-  const resolved = resolveChoices(parsed, choices);
+  const resolved = resolveChoices(parsed, choices, optionsSeed);
   const normalized = validateChoices(parsed, resolved);
   const scene: Scene = {
     width: SCENE_SIZE,
@@ -1296,8 +1302,18 @@ export function assertPathsScene(
 export const pathsRenderer = {
   family: "paths" as const,
   version: "paths-v1",
-  buildScene(spec: PathsSpec): Scene {
-    return buildPathsScene(spec);
+  buildScene(spec: PathsSpec, optionsSeed?: string): Scene {
+    return buildPathsScene(spec, undefined, optionsSeed);
+  },
+  assertScene(scene: Scene, spec: PathsSpec, choices: unknown): void {
+    assertPathsScene(
+      scene,
+      spec,
+      (choices as ChoiceSet<PathRoute>).choices.map((choice) => ({
+        label: choice.label,
+        route: choice.value,
+      })),
+    );
   },
 };
 

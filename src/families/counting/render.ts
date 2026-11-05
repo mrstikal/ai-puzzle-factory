@@ -1,4 +1,4 @@
-import type { ChoiceLabel } from "../../domain/answers.js";
+import type { ChoiceLabel, ChoiceSet } from "../../domain/answers.js";
 import { hashCanonicalJson } from "../../util/hash.js";
 import {
   SCENE_BACKGROUND,
@@ -584,6 +584,7 @@ function buildOption(
 function resolveChoices(
   spec: CountingSpec,
   choices: readonly CountingChoiceInput[] | undefined,
+  optionsSeed?: string,
 ): readonly CountingChoiceInput[] {
   if (choices !== undefined) {
     return choices;
@@ -596,7 +597,11 @@ function resolveChoices(
       "counting renderer requires a unique query answer",
     );
   }
-  const set = countingEngine.makeOptions(spec, correct, hashCanonicalJson(spec));
+  const set = countingEngine.makeOptions(
+    spec,
+    correct,
+    optionsSeed ?? hashCanonicalJson(spec),
+  );
   return set.choices.map((choice) => ({
     label: choice.label,
     answer: choice.value,
@@ -645,9 +650,10 @@ function validateChoices(
 export function buildCountingScene(
   spec: CountingSpec,
   choices?: readonly CountingChoiceInput[],
+  optionsSeed?: string,
 ): Scene {
   const parsed = CountingSpecSchema.parse(spec);
-  const resolved = resolveChoices(parsed, choices);
+  const resolved = resolveChoices(parsed, choices, optionsSeed);
   const normalized = validateChoices(parsed, resolved);
   const scene: Scene = {
     width: SCENE_SIZE,
@@ -1088,8 +1094,18 @@ export function assertCountingScene(
 export const countingRenderer = {
   family: "counting" as const,
   version: "counting-v1",
-  buildScene(spec: CountingSpec): Scene {
-    return buildCountingScene(spec);
+  buildScene(spec: CountingSpec, optionsSeed?: string): Scene {
+    return buildCountingScene(spec, undefined, optionsSeed);
+  },
+  assertScene(scene: Scene, spec: CountingSpec, choices: unknown): void {
+    assertCountingScene(
+      scene,
+      spec,
+      (choices as ChoiceSet<CountingAnswer>).choices.map((choice) => ({
+        label: choice.label,
+        answer: choice.value,
+      })),
+    );
   },
 };
 

@@ -269,6 +269,7 @@ function validateChoices(choices: readonly MatrixChoiceInput[]): void {
 function resolveChoices(
   spec: MatrixSpec,
   choices: readonly MatrixChoiceInput[] | undefined,
+  optionsSeed?: string,
 ): readonly MatrixChoiceInput[] {
   if (choices !== undefined) {
     return choices;
@@ -281,16 +282,21 @@ function resolveChoices(
       `matrix renderer requires one completion, received ${solutions.length}`,
     );
   }
-  const set = matrixEngine.makeOptions(spec, correct, hashCanonicalJson(spec));
+  const set = matrixEngine.makeOptions(
+    spec,
+    correct,
+    optionsSeed ?? hashCanonicalJson(spec),
+  );
   return set.choices.map((choice) => ({ label: choice.label, mask: choice.value }));
 }
 
 export function buildMatrixScene(
   spec: MatrixSpec,
   choices?: readonly MatrixChoiceInput[],
+  optionsSeed?: string,
 ): Scene {
   const parsed = MatrixSpecSchema.parse(spec);
-  const resolvedChoices = resolveChoices(parsed, choices);
+  const resolvedChoices = resolveChoices(parsed, choices, optionsSeed);
   validateChoices(resolvedChoices);
   const scene: Scene = {
     width: SCENE_SIZE,
@@ -598,8 +604,18 @@ export function assertMatrixScene(
 export const matrixRenderer = {
   family: "matrix" as const,
   version: "matrix-v1",
-  buildScene(spec: MatrixSpec): Scene {
-    return buildMatrixScene(spec);
+  buildScene(spec: MatrixSpec, optionsSeed?: string): Scene {
+    return buildMatrixScene(spec, undefined, optionsSeed);
+  },
+  assertScene(scene: Scene, spec: MatrixSpec, choices: unknown): void {
+    assertMatrixScene(
+      scene,
+      spec,
+      (choices as ChoiceSet<MatrixAnswer>).choices.map((choice) => ({
+        label: choice.label,
+        mask: choice.value,
+      })),
+    );
   },
 };
 

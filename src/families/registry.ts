@@ -25,7 +25,8 @@ import { countingRenderer } from "./counting/render.js";
 export interface RendererContract<Spec = unknown, Scene = unknown> {
   readonly family: SvgFamily;
   readonly version: string;
-  buildScene(spec: Spec): Scene;
+  buildScene(spec: Spec, optionsSeed?: string): Scene;
+  assertScene(scene: Scene, spec: Spec, choices: unknown): void;
 }
 
 export type AnyFamilyEngine = FamilyEngine<unknown, unknown>;
@@ -116,6 +117,12 @@ export class FamilyRegistry {
       throw new RegistryError(
         "INVALID_REGISTRATION",
         `renderer ${renderer.family} must expose buildScene`,
+      );
+    }
+    if (typeof renderer.assertScene !== "function") {
+      throw new RegistryError(
+        "INVALID_REGISTRATION",
+        `renderer ${renderer.family} must expose assertScene`,
       );
     }
     if (this.renderers.has(renderer.family)) {
