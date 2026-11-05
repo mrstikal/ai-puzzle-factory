@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P01-P26 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P27 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -426,3 +426,30 @@ The adapter enforces the requested structural target before the formal engine:
 `npm exec -- vitest run tests/ai/propose-spec.test.ts` covers valid and invalid responses for all ten families, wrong family, out-of-domain IDs, extra answer/options/prose, unsat/multiple solutions, refusal/truncation, one content proposal without hidden retry, all per-family difficulty bounds, route-role rejection, prompt/schema metadata stability, saved raw response/cost, and `spec_ready` provenance. Full gate: `npm run check`.
 
 Out of scope: wording, option generation, provider fallback, JSON repair, live experimentation, reports, and the gallery.
+
+## 18. AI wording, hint, and explanation adapter (P27)
+
+P27 writes public wording and reveal text for a formally checked slot. It uses one strict content proposal and never repairs or regenerates text.
+
+### Request and provenance
+
+- `src/ai/prompts/v1/wording.txt` is the versioned system prompt. Its first line declares `PUZZLE_WORDING_PROMPT_VERSION: v1`; the adapter refuses a mismatched header.
+- The request uses the P25 `puzzle_wording` strict schema, the resolved `wording` route, and text-only messages. The route must not require image input.
+- The payload supplies the validated spec, visible rules, local facts, merged rule/local/proof inventory, local fact IDs, proof, correct option, and all four option values/texts. The generator may see the key because it writes reveal-only hint/explanation text.
+- The adapter reads the slot's stored `formal_checked` stage evidence (`spec`, `solveResult`, `choices`), rejects caller artifacts that differ from it, and independently re-enumerates solutions before sending the request. The stored evidence, not caller assertions, is the source of truth.
+- The system prompt carries `prompt_version: v1`, `prompt_hash`, `schema_name: puzzle_wording`, `schema_version: v1`, and `schema_hash`. `promptHash` covers the exact `wording.txt` template hash plus the schema name/version/hash. `logical_calls.expected_schema_hash` stores the schema hash, and a `wording_metadata` request event stores the same metadata with family/modality/difficulty.
+- The adapter requires the slot to be `formal_checked`, makes exactly one wording logical call, and rejects a second call on the same slot. Transport may retry only P24-certified unprocessed failures; no second content prompt is sent.
+
+### Mechanical checks and persistence
+
+- The model response is parsed with the strict wording schema and wrapped as `source: "model"` without modifying any text.
+- P22 `assemblePresentation` runs the mechanical checks: wording schema, text clue coverage (exactly one entry per local fact, no duplicates/extras), explanation fact references against the merged inventory, SVG empty clue texts, option order/text distinctness, assets, and reveal separation.
+- Mechanical failure throws a typed `MECHANICAL_CHECK_FAILED` with the P22 code, leaves the slot `formal_checked`, writes no `presentation_ready`, and preserves the raw response artifact, attempt, and cost.
+- Success commits `presentation_ready` with the original wording, the assembled presentation (visible + reveal + checks), family/modality/difficulty, and prompt/schema provenance. Both text and SVG lanes use the same assembled presentation shape.
+- Semantic alignment remains `semantic_alignment_pending`. Swapped fact text, fact-ID-preserving negation drift, answer leakage into the question, and HTML/script-like strings are stored as plain text and are not falsely passed or rejected by a nonexistent English parser. SVG clue texts must be empty; any question-level scene transcription remains semantic-pending for P30.
+
+### Tests
+
+`npm exec -- vitest run tests/ai/write-wording.test.ts` covers all ten families, both lanes, text/SVG shapes, missing/duplicate facts, unsupported explanation references, SVG clue transcription, negation drift, answer leakage, HTML/script text, invalid wording schema, empty reasoning-only response, exactly one call per slot, second-call refusal, route/stage guards, and prompt/schema provenance. Full gate: `npm run check`.
+
+Out of scope: blind reviewers, repair loops, paid calls, and semantic alignment decisions.

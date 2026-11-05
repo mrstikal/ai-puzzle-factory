@@ -1433,3 +1433,60 @@ Expected: the focused suite exits 0 with 11 passing tests; `npm run check` exits
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 11-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** wording, option generation, provider fallback, JSON repair, live experimentation, reports, and the gallery.
+
+## P27. AI Wording, Hint, and Explanation Adapter — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds one strict wording call per eligible slot, original wording persistence, P22 mechanical assembly, and `presentation_ready` evidence. It makes no live provider call, paid request, blind review, alignment review, repair loop, or fallback wording generation.
+
+**Files**
+
+- Adapter: `src/ai/write-wording.ts`
+- Prompt asset: `src/ai/prompts/v1/wording.txt`
+- Tests: `tests/ai/write-wording.test.ts`
+- Documentation: `README.md`, `docs/experiment-protocol.md`, this file
+
+**Observable behavior**
+
+- The adapter requires a `formal_checked` slot, a resolved `wording` route with no image requirement, a validated spec/solve/choices, and presentation assets for SVG. It runs a P22 preflight with fixture wording before making any model request.
+- The request uses the P25 `puzzle_wording` strict schema and supplies the validated spec, visible rules, local/rule/proof fact inventory, local fact IDs, proof, correct option, and all option values/texts. The generator may see the key because it writes reveal-only hint/explanation text.
+- The adapter reads the slot's stored `formal_checked` stage evidence (`spec`, `solveResult`, `choices`), rejects caller artifacts that differ from it, and independently re-enumerates solutions before sending the request.
+- The system prompt carries `prompt_version: v1`, `prompt_hash`, `schema_name: puzzle_wording`, `schema_version: v1`, and `schema_hash`. A `wording_metadata` request event stores the same provenance with family/modality/difficulty; `logical_calls.expected_schema_hash` stores the schema hash.
+- Exactly one wording content proposal is accepted. No repair, truncation, templated substitution, second wording prompt, or programmatic wording fallback occurs.
+- Missing/duplicate clue facts, unsupported explanation fact IDs, SVG clue-text transcription, invalid option facts, and invalid assets fail P22 mechanical checks. The slot stays `formal_checked`, no `presentation_ready` is written, and the raw response, attempt, and cost remain queryable.
+- Swapped fact text, fact-ID-preserving negation drift, answer leakage into the question, and HTML/script-like strings are stored as plain text and remain `semantic_alignment_pending`; they are neither falsely passed nor rejected by a nonexistent English parser.
+- Success commits `presentation_ready` with the original wording, assembled visible/reveal presentation, family/modality/difficulty, and prompt/schema provenance. Text and SVG lanes use the same stored presentation shape.
+- A second call on the same slot is refused without a request.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/write-wording.test.ts --reporter=verbose` | exit 0; 1 file / 8 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 28 files / 422 tests passed, build succeeded and copied `wording.txt`. |
+
+The focused suite covers all ten families, both lanes, text/SVG stored shapes, missing/duplicate facts, unsupported explanation references, SVG clue transcription, negation drift, answer leakage, HTML/script text, invalid wording schema, empty reasoning-only response, exactly one call per slot, second-call refusal, route/stage guards, formal-evidence mismatch rejection, saved raw response/cost, and prompt/schema provenance. All responses come from the local fake; no real network or paid call was made.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the focused suite reports 8 passing tests, including the all-family/both-lane shape test, the mechanical/semantic wording cases, and the formal-evidence mismatch rejection.
+3. Confirm `npm run check` reports 28 files / 422 tests and a successful build.
+4. Confirm `dist/ai/prompts/v1/wording.txt` exists after the build.
+5. Confirm the focused test asserts that bad wording leaves the slot `formal_checked`, saves the raw response and cost, writes no `presentation_ready`, and that semantic drift/leakage remains `semantic_alignment_pending`.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec -- vitest run tests/ai/write-wording.test.ts --reporter=verbose
+npm run check
+ls -l dist/ai/prompts/v1/wording.txt
+```
+
+Expected: the focused suite exits 0 with 8 passing tests; `npm run check` exits 0 with 28 files / 422 tests and a successful build; the wording prompt exists under `dist/ai/prompts/v1/`. No live provider call or paid request is made.
+
+**Decision-reviewer:** the first pass found two confirmed defects: the wording request payload omitted the validated spec (Medium), and the adapter did not bind caller artifacts to the slot's stored `formal_checked` evidence or independently re-enumerate solutions (Low). The payload now includes the spec, and the adapter reads the stored `formal_checked` spec/solve/choices, rejects mismatching caller artifacts, and independently re-enumerates the solution before requesting wording. Regression tests parse the captured request payload and compare its `spec` to the stored evidence, and cover the formal-evidence mismatch. A second pass confirmed both findings resolved and found no new material defect or regression; it noted only non-material residuals (generic mismatch error code, the future P33 `formal_checked` payload key contract, and asset hashes remaining caller-supplied).
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 8-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** blind reviewers, alignment reviewers, repair loops, paid calls, reports, and the gallery.
