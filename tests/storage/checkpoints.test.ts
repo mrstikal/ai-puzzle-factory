@@ -124,7 +124,14 @@ describe("run and slot persistence", () => {
   it("is idempotent across repeated migrations", () => {
     migrate(db);
     migrate(db);
-    expect(countRows("schema_migrations")).toBe(1);
+    expect(countRows("schema_migrations")).toBe(2);
+    const versions = db
+      .prepare("SELECT version FROM schema_migrations ORDER BY version")
+      .all() as Array<{ version: string }>;
+    expect(versions.map((row) => row.version)).toEqual([
+      "0001_runs.sql",
+      "0002_requests.sql",
+    ]);
     expect(countRows("runs")).toBe(0);
   });
 

@@ -1106,7 +1106,7 @@ Expected: 11 focused tests pass; both preview commands exit 0 and print `family:
 
 | Command | Result |
 | --- | --- |
-| `npm exec vitest run tests/validation/duplicates.test.ts` | exit 0; 1 file / 17 tests passed. |
+| `npm exec vitest run tests/validation/duplicates.test.ts` | exit 0; 1 file / 18 tests passed. |
 | `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 22 files / 313 tests passed, build succeeded. |
 
 The focused suite covers content/spec/structure/render separation, relabelings, known redundant clues, nonredundant added clues, exact/spec/structural ownership across lanes, shuffled completion order, the mandatory counting one-edit pair and both flag directions, two-edit and zero-overlap negatives, different comparison scopes, identical canonical data with unequal hashes, distinct transform step sequences, visual exact-content PNG matching, exhaustive early-failure diagnostics, preserved terminal verdicts, cross-family visual exact diagnostics, incomplete-barrier refusal, immutable assessments, result-hash tampering, and zero replacements.
@@ -1127,7 +1127,7 @@ npm exec -- vitest run tests/validation/duplicates.test.ts --reporter=verbose
 npm run check
 ```
 
-Expected: the focused suite exits 0 with 17 passing tests and includes the shuffled-order, redundant-clue structural-duplicate, mandatory counting near-pair, transform-step, visual exact-content PNG, exhaustive early-failure, and incomplete-barrier cases; `npm run check` exits 0 with 22 files / 313 tests and a successful build.
+Expected: the focused suite exits 0 with 18 passing tests and includes the shuffled-order, redundant-clue structural-duplicate, mandatory counting near-pair, transform-step, visual exact-content PNG, exhaustive early-failure, and incomplete-barrier cases; `npm run check` exits 0 with 22 files / 313 tests and a successful build.
 
 **Decision-reviewer:** the first pass found three material findings (one medium, two low): a schema-valid structureless formal-passed fingerprint could surface as a raw ZodError; same-family visual exact-content grouping ignored the PNG hash; and group diagnostics omitted early-failure pairs against non-first members. All three were fixed with a canonical-structure input requirement plus typed `INVALID_FINGERPRINT` defense, a visual exact-content key that includes the PNG hash, and exhaustive diagnostic pair loops. A second pass verified the fixes and reported no material findings and no material regression.
 
@@ -1192,3 +1192,62 @@ Expected: the focused suite exits 0 with 12 passing tests covering all ten famil
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 12-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** model wording calls, prompt construction, raw-response persistence, semantic alignment review, blind/alignment DTOs, gallery, reports, and any claim that mechanical checks prove arbitrary English semantics.
+
+## P23. Request Ledger and Transactional Budget Admission — 2026-11-05
+
+**State:** implemented, offline-verified; awaiting user acceptance. This phase adds durable request accounting and budget admission without HTTP. Fetch, retry timing, live price estimation, provider calls, and automatic resume remain out of scope.
+
+**Files**
+
+- Migration: `src/storage/migrations/0002_requests.sql`
+- Logical calls, attempts, and request events: `src/ai/ledger.ts`
+- Decimal accounts, reservations, settlement, and summaries: `src/ai/budget.ts`
+- Tests: `tests/ai/budget.test.ts`
+- Updated migration expectation: `tests/storage/checkpoints.test.ts`
+- Dependency: pinned `decimal.js` 10.6.0 in `package.json`/`package-lock.json`
+- Documentation: `docs/experiment-protocol.md`, `README.md`, this file
+
+**Observable behavior**
+
+- `logical_calls` enforces one intent per `(run, slot, role)` or per probe/role with partial unique indexes for run-scoped and global calibration/preflight probes. Requests store canonical request body/hash (64 KiB text excluding base64, 1 MiB decoded PNG, 2 MiB stored), expected schema hash, role/model/provider, output-cap field, pool, and state.
+- `request_attempts` stores one to three attempts per call with request bytes/hash, HTTP status, response/generation IDs, raw-response artifact reference, finish reason, nullable prompt/completion/total/cached/reasoning tokens, price estimate, actual cost, cost status, error classification, partial-completion flag, UTC times, and elapsed milliseconds.
+- States are `prepared -> dispatching -> response_saved -> validated`, with terminal `refused_unprocessed`, `failed_known`, and `uncertain`. `dispatching` is persisted before fetch. Resume classifies prepared as sendable, dispatching without a response as `uncertain_no_resend`, and saved/validated responses as reusable.
+- Certified unprocessed refusals require HTTP 429 or 503 `no_eligible_provider`, no generation ID, no usage, no actual cost, and no partial completion. Other failures are never silently replayed.
+- Money uses canonical decimal strings via `decimal.js`; `0.1 + 0.2` is exactly `0.3`. Admission checks `known_actual + reserved + next_reservation <= maxCost` inside one transaction. Reservations are per attempt; nonbilling reservations must be zero.
+- Explicit `usage.cost = 0` settles as known zero. Missing actual cost keeps the reservation and increases `unknownExposureUsd`; unknown exposure remains visible in account and role/run-kind summaries and prevents false zero-cost reporting.
+- Actual cost above reserve records `overshoot` and blocks new admissions. Cap-crossing admission records `pause`, sets a run to `paused_budget`, and returns `INSUFFICIENT_BUDGET`; later nonbilling calls are the only exception. Certified unprocessed refusals release reservations.
+- Pools are separate for primary (full), smoke, calibration, and preflight. Calibration and main spending cannot share an account. Summary output groups known/reserved/unknown by role and run kind.
+- `budget_events` and `request_events` are append-only with update/delete abort triggers. Logical calls, attempts, reservations, and accounts cannot be deleted.
+- Cap increases require `acknowledged: true` plus an operator; the `cap_change` event stores old/new cap, time, operator, and acknowledgement. P23 does not automatically resume a paused run.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/budget.test.ts --reporter=verbose` | exit 0; 1 file / 18 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 24 files / 343 tests passed, build succeeded. |
+
+The focused suite covers unique slot/probe keys, run-kind mismatches, duplicate logical calls, prepared/dispatching crash dispositions, reservation-before-dispatch enforcement, three-attempt cap, text/PNG request bounds and hash mismatches, exact `0.1 + 0.2`, cross-process overlapping admission, explicit zero versus missing cost, unknown-kind exposure without double counting, actual overshoot and pause, unknown retention/release, insufficient-budget pause, calibration/primary separation, zero-budget nonbilling, duplicate reservations, append-only triggers, and acknowledged cap changes.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the overlapping-admission test admits only one `0.2` reservation against a `0.3` account; the child holds the write lock, the parent waits, and the parent cannot spend the same remaining budget.
+3. Confirm explicit zero settles as known `0` while a missing actual cost leaves `unknownExposureUsd = 0.2` and blocks the same remaining budget.
+4. Confirm `npm run check` passes with 24 files / 343 tests and no API key or network access.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec -- vitest run tests/ai/budget.test.ts --reporter=verbose
+npm run check
+```
+
+Expected: the focused suite exits 0 with 18 passing tests covering the boundary, overlapping admissions, decimal, zero/unknown, overshoot, unknown-retention, pause, calibration/main, nonbilling, append-only, cap-change, vision request bounds, run-kind, reservation-precondition, and typed busy-lock cases; `npm run check` exits 0 with 24 files / 343 tests and a successful build.
+
+**Decision-reviewer:** the first pass found five material findings: the 64 KiB request cap incorrectly included embedded base64 (High), dispatching lacked a reservation precondition (Medium), and unknown-kind exposure, run-kind consistency, and concurrent admission handling had Low defects. All five were fixed with split text/PNG/stored bounds and SQL checks, a dispatch reservation precondition, symmetric unknown-exposure accounting, stored run-kind comparison, an immediate admission transaction with typed `BUDGET_BUSY`, and a cross-process overlap test. A second pass confirmed those fixes and found two residual Low issues: summary unknown attribution for still-reserved unknown-kind rows, and a probabilistic overlap test. Both were fixed by attributing unknown exposure at admission and by making the child hold an immediate transaction across the parent admission. A third pass confirmed the summary fix and asked for a deterministic overlap test; the child-held transaction now guarantees the deferred implementation would fail. A fourth pass verified the test and reported no material findings and no regression.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 18-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** fetch, retries, live price estimation, provider calls, automatic resume, reports, gallery, and any claim of exactly-once billing.

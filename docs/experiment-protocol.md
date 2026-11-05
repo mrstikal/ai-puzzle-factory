@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P01-P22 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P23 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -259,3 +259,40 @@ The assembly result records mechanical checks as `pass` and always sets `semanti
 `npm exec -- vitest run tests/presentation/assemble.test.ts` covers all ten families, missing/extra/duplicate facts, unknown proof references, length bounds, wrong ordered choices, malformed choice sets, invalid specs, typed re-validation, HTML/script strings retained verbatim, missing SVG assets, slot mismatches, fixture determinism, proof references, and a same-ID contradiction that stays pending. Full gate: `npm run check`.
 
 Out of scope: model calls, prompt construction, raw-response persistence, semantic alignment review, and the HTML gallery.
+
+## 14. Request ledger and budget admission (P23)
+
+P23 is durable accounting without HTTP. It implements the section 8 logical-call/attempt state machines and transactional budget admission; fetch, retry timing, live price lookup, and automatic resume remain out of scope.
+
+### Ledger tables and keys
+
+- `logical_calls` stores one intent per `(run, slot, role)` or per probe key/role. Partial unique indexes enforce slot calls, run-scoped probes, and global calibration/preflight probes while allowing nullable slot/probe columns.
+- `request_attempts` stores one to three attempts per logical call, each with request hash/body, expected schema hash, role/model/provider, HTTP/generation/response IDs, raw-response artifact reference, finish reason, nullable token fields, price estimate, actual cost, cost status, error classification, partial-completion flag, UTC times, and monotonic elapsed latency.
+- `request_events` is append-only and records call/attempt creation, state transitions, validation, refusal, uncertainty, and usage reconciliation.
+- Request bodies are canonical JSON stored without credentials. Text JSON excluding embedded base64 is capped at 64 KiB; an embedded PNG data URL is capped at 1 MiB decoded; the stored body is capped at 2 MiB. A supplied request hash must match the canonical body; retries reuse the same bytes. Only PNG data URLs are accepted.
+
+### Logical-call and attempt states
+
+`prepared -> dispatching -> response_saved -> validated`, with terminal alternatives `refused_unprocessed`, `failed_known`, and `uncertain`. `dispatching` is persisted before fetch. A prepared call may be sent on resume; a dispatching call without a saved response is classified `uncertain_no_resend` and is never silently resent. Saved responses and validated outputs are reused.
+
+A refusal is certified unprocessed only for HTTP 429 or HTTP 503 with `no_eligible_provider`, no generation ID, no usage fields, no actual cost, and no partial completion. All other timeouts, disconnects, generic 5xx, HTTP-200 error bodies, provider errors, partial output, and malformed success bodies are not safely unprocessed. Attempt count is capped at three; retry timing belongs to P24.
+
+### Decimal money and admission
+
+- Money is stored and compared as canonical decimal strings via `decimal.js` 10.6.0. No floating-point arithmetic is used. `0.1 + 0.2` is exactly `0.3`.
+- Admission is one immediate SQLite write transaction: `known_actual + reserved + next_reservation <= maxCost`. Every potentially billed attempt needs an active reservation before dispatch; nonbilling reservations must be explicitly zero.
+- A zero-budget account admits no call unless the caller sets `nonBilling: true`. Pools are separate: primary (full), smoke, calibration, and preflight. Accounts are unique per run/pool or per global pool.
+- `usage.cost = 0` is a known zero when explicitly supplied; an absent actual cost is `unknown`, keeps the reservation, and increases `unknownExposureUsd`. Unknown exposure remains visible in account and role/run-kind summaries.
+- Actual cost above the reservation records an `overshoot` event and blocks new admissions. Any admission that would cross the cap records a `pause` event, sets a run to `paused_budget`, and returns `INSUFFICIENT_BUDGET`; later nonbilling calls are the only exception. An unknown reservation does not itself block later slots when the remaining reserved budget still fits.
+- Certified unprocessed refusals release their reservation and reduce any unknown exposure. Settling a reservation with an actual cost releases its reservation, adds the actual to known spending, and keeps overshoot evidence.
+- Raising a cap requires explicit acknowledgement plus an operator identity. The `cap_change` budget event stores old/new cap, time, operator, and acknowledgement. P23 does not automatically resume a paused run; automatic resume is out of scope.
+
+### Append-only evidence
+
+`budget_events` records account creation, admission/nonbilling admission, reservation creation/release/settlement, unknown exposure, overshoot, pause, and cap change. Update/delete triggers abort. Logical calls, attempts, reservations, and accounts cannot be deleted. Summary output groups known, reserved, and unknown exposure by role and run kind.
+
+### Tests and commands
+
+`npm exec -- vitest run tests/ai/budget.test.ts` covers unique slot/probe keys, prepared/dispatching crash dispositions, three-attempt cap, request body limits/hashes, exact decimal money, cross-process overlapping admission, explicit zero versus missing cost, actual overshoot, unknown retention/release, insufficient-budget pause, calibration/primary separation, zero-budget nonbilling, duplicate reservations, append-only triggers, and acknowledged cap changes. Full gate: `npm run check`.
+
+Out of scope: fetch, retry scheduling, live price estimation, automatic resume, provider fallback, and any claim of exactly-once billing.
