@@ -1604,3 +1604,61 @@ Expected: the focused suite exits 0 with 7 passing tests; `npm run check` exits 
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 7-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** generator vision, external image URLs, live route assumptions, paid calls, reports, and the gallery.
+
+## P30. Informed Alignment Reviewer — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds the stateless informed alignment reviewer for text and SVG. It makes no live provider call, paid request, stage commit, blind-review reuse, wording rewrite, adjudication, or primary-answer change.
+
+**Files**
+
+- Adapter: `src/ai/review-alignment.ts`
+- Prompt assets: `src/ai/prompts/v1/alignment-text.txt`, `src/ai/prompts/v1/alignment-vision.txt`
+- Tests: `tests/ai/review-alignment.test.ts`
+- Tooling: `eslint.config.mjs` ignores `.kilo/**` so Agent Manager worktrees do not break the root lint gate
+- Documentation: `README.md`, `docs/experiment-protocol.md`, this file
+
+**Observable behavior**
+
+- The adapter accepts `presentation_ready`, `duplicate_checked`, or `blind_reviewed`, requires stored `formal_checked` and `presentation_ready` stage results, binds them to the slot/family/modality, and rejects `alignment_reviewed` or later.
+- It verifies visible rules, options, correct label, and correct value against the formal spec/choices/solve result before requesting.
+- The payload contains DSL, proof, correct option/value, actual visible question/rules/clues/options, hint, explanation steps, merged rule/local/proof inventory, and the actual full PNG for SVG. Model-authored wording/hint/explanation are explicitly untrusted data.
+- No blind review, blind reasoning, blind request hash, previous checks, or prior conversation is included. The role is `alignment_text` or `alignment_vision`; cost is separate from blind solving.
+- Text uses a text-only route; SVG uses a route requiring image input and the actual 1024 PNG with media-type/hash/1 MiB/dimension checks and a repeated `assertPngNoTextMetadata`.
+- The response uses the P25 `puzzle_alignment_review` strict schema. Cited fact IDs are validated against the supplied inventory; unknown citations are rejected.
+- `deriveAlignmentOverall` enforces applicability and computes the authoritative overall: text image must be `not_applicable`, all other fields and SVG image must be pass/fail/uncertain. A model `overall: pass` with a failed field yields derived `fail` and `overallMismatch: true`; it cannot override the field.
+- `concerns` stores non-pass/non-N/A fields as model evidence; `deterministicEvidence` separately stores inventory fact IDs, proof, correct label/value, and option values. The report data identifies model allegations as model evidence, not formal proof.
+- Refusal, invalid JSON, invalid schema, unknown citations, and improper N/A retain raw response/attempt/cost where a call was made; no second content prompt is sent. No workflow stage is written.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/review-alignment.test.ts --reporter=verbose` | exit 0; 1 file / 11 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 31 files / 448 tests passed, build succeeded and copied both alignment prompts. |
+
+The focused suite covers text and SVG valid reviews, actual PNG input, model-authored contradiction retained as model evidence, changed visual option, SVG rules/observation mismatch with empty clueTexts, model overall pass with a failed field, improper N/A, uncertain status, unknown fact citations, refusal/invalid JSON/invalid schema, missing formal evidence, wrong routes, already-reviewed slots, blind request hash preservation, and prompt/schema provenance. All responses come from the local fake; no real network or paid call was made.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the focused suite reports 11 passing tests, including the contradiction/model-evidence case, `overall pass` with a failing field, and the blind-hash preservation test.
+3. Confirm `npm run check` reports 31 files / 448 tests and a successful build.
+4. Confirm `dist/ai/prompts/v1/alignment-text.txt` and `dist/ai/prompts/v1/alignment-vision.txt` exist after the build.
+5. Confirm the fake contradiction passes fact-ID coverage but fails informed alignment, and the result separates `modelEvidence`/`concerns` from `deterministicEvidence`.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec -- vitest run tests/ai/review-alignment.test.ts --reporter=verbose
+npm run check
+ls -l dist/ai/prompts/v1/alignment-text.txt dist/ai/prompts/v1/alignment-vision.txt
+```
+
+Expected: the focused suite exits 0 with 11 passing tests; `npm run check` exits 0 with 31 files / 448 tests and a successful build; both alignment prompts exist under `dist/ai/prompts/v1/`. No live provider call or paid request is made.
+
+**Decision-reviewer:** the first pass found one confirmed Low defect: the alignment-text prompt did not state the code-enforced mandate that the text image field must be `not_applicable`, so a schema-valid but nonconforming review could lose the whole paid review. The prompt and protocol now state the mandate explicitly, and the prompt metadata test asserts the wording. The reviewer also noted non-material residuals: the SVG test read the ledger copy rather than the captured fake request (now strengthened), the event timestamp uses request start time, and P34 owns the stage-ordering gate. A second pass confirmed the finding resolved and found no new material defect or regression.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 11-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** adjudication, rewriting the presentation, changing the primary answer, paid calls, reports, and the gallery.

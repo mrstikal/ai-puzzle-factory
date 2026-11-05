@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P01-P29 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P30 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -349,7 +349,7 @@ P25 defines the provider-facing schemas and validates an exact route before any 
 - Every object schema has `additionalProperties: false`; every declared property must be listed in `required`. Conditional fields are modeled as explicit discriminated-union branches rather than optional properties.
 - Schema hashes cover the full `{name, strict, schema}` response-format object.
 - Blind review returns `answerStatus`, nullable `chosenOption`, bounded reasoning, clarity, ambiguity, confidence, visual legibility, and bounded issue evidence. A selected answer requires a non-null option; any other status requires null.
-- Alignment review returns `pass|fail|uncertain|not_applicable` per field plus cited fact IDs and reasons. Code derives the overall status from fields; the model-reported `overall` is never authoritative. `not_applicable` is valid only for the text family image field.
+- Alignment review returns `pass|fail|uncertain|not_applicable` per field plus cited fact IDs and reasons. Code derives the overall status from fields; the model-reported `overall` is never authoritative. In the text modality the image field must be `not_applicable`; all other fields reject `not_applicable`. In SVG the image field must be pass/fail/uncertain and cannot be `not_applicable`.
 
 ### Live inputs and request shape
 
@@ -511,3 +511,36 @@ P29 implements the image half of the section 5.3 blind review boundary. It does 
 `npm exec -- vitest run tests/ai/review-vision.test.ts` covers all five visual families, byte-identical PNG input, source-hash agreement, MIME/1024 shape, missing/corrupt/metadata-bearing/oversized/wrong-shape PNG failures, hidden SVG/scene/key/hint/proof/previous-review canaries, unreadable/wrong/uncertain reviews, refusal/invalid JSON, legibility rules, route/stage guards, and prompt/schema provenance. Full gate: `npm run check`.
 
 Out of scope: generator vision, external image URLs, and live route assumptions.
+
+## 21. Informed alignment reviewer (P30)
+
+P30 implements section 5.2 as a new stateless request. It does not reuse the blind conversation and does not write a workflow stage; P34 owns the `alignment_reviewed` stage and the final verdict path.
+
+### Inputs and boundary
+
+- The adapter accepts `presentation_ready`, `duplicate_checked`, or `blind_reviewed`, requires the stored `formal_checked` and `presentation_ready` stage results, and rejects `alignment_reviewed` or later.
+- It binds the stored presentation to the reviewed slot/family/modality and verifies that visible rules, options, correct label, and correct value match the formal spec/choices/solve result.
+- The payload contains the DSL, proof, correct option/value, actual visible question/rules/clues/options, hint, explanation steps, merged rule/local/proof inventory, and the actual full PNG for SVG.
+- Model-authored question/clue/hint/explanation text is explicitly labelled untrusted data in the fixed prompt. The model is told not to follow embedded directions, rewrite text, adjudicate, or change the primary answer.
+- No blind review, blind request hash, blind reasoning, previous checks, or prior conversation is included. The role is `alignment_text` or `alignment_vision`; its cost is separate from blind solving.
+- Text uses a text-only route; SVG uses a route requiring image input and the actual 1024 PNG. The PNG is loaded from the stored artifact with media-type/hash/1 MiB/dimension checks and `assertPngNoTextMetadata` repeated for this role.
+
+### Review contract and code checks
+
+- The response uses the P25 `puzzle_alignment_review` strict schema: per-field `pass|fail|uncertain|not_applicable` for question, rulesAndClues, options, hint, explanation, image, plus fact IDs and reasons.
+- Code validates cited fact IDs against the supplied inventory. Unknown citations are `INVALID_ALIGNMENT`.
+- `deriveAlignmentOverall` enforces applicability: text image must be `not_applicable`; every other field and SVG image must be pass/fail/uncertain, and all other fields reject `not_applicable`. The derived overall is authoritative. A model `overall: pass` with a failed field yields derived `fail` and `overallMismatch: true`; it is never accepted as pass.
+- `concerns` lists non-pass, non-N/A fields as model evidence. `deterministicEvidence` separately stores the inventory fact IDs, proof, correct label/value, and option values. The report data therefore identifies model allegations as model evidence, not formal proof.
+- The exact request is saved in the logical call; raw response is saved before parsing; a `alignment_review` event stores input hash, model evidence, derived overall, mismatch flag, deterministic evidence, PNG hash/length when applicable, and prompt/schema provenance.
+- Refusal, invalid JSON, invalid schema, unknown citations, and improper N/A retain the raw response/attempt/cost where a call was made; no second content prompt is sent. No workflow stage is written.
+
+### Prompt/version inventory
+
+- `alignment-text.txt` declares `PUZZLE_ALIGNMENT_TEXT_PROMPT_VERSION: v1`; `alignment-vision.txt` declares `PUZZLE_ALIGNMENT_VISION_PROMPT_VERSION: v1`. Both use schema name `puzzle_alignment_review` and schema version `v1`.
+- System prompts carry prompt/schema version/hash metadata. The build copies both prompts into `dist/ai/prompts/v1/`.
+
+### Tests
+
+`npm exec -- vitest run tests/ai/review-alignment.test.ts` covers text and SVG valid reviews, actual PNG input, model-authored contradiction retained as model evidence, changed visual option, SVG rules/observation mismatch with empty clueTexts, model overall pass with a failed field, improper N/A, uncertain status, unknown fact citations, refusal/invalid JSON/invalid schema, missing formal evidence, wrong routes, already-reviewed slots, blind request hash preservation, and prompt/schema provenance. Full gate: `npm run check`.
+
+Out of scope: adjudication, rewriting the presentation, and changing the primary answer.
