@@ -72,6 +72,39 @@ export interface PngInfo {
   readonly nonBackgroundPixels: number;
 }
 
+const FORBIDDEN_PNG_TEXT_CHUNKS = new Set(["tEXt", "zTXt", "iTXt", "eXIf"]);
+
+export function assertPngNoTextMetadata(buffer: Buffer): void {
+  if (
+    buffer.length < PNG_SIGNATURE.length ||
+    !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+  ) {
+    throw new Error("buffer is not a PNG");
+  }
+  let offset = PNG_SIGNATURE.length;
+  let sawIend = false;
+  while (offset + 12 <= buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.toString("ascii", offset + 4, offset + 8);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    if (dataEnd + 4 > buffer.length) {
+      throw new Error("PNG chunk is truncated");
+    }
+    if (FORBIDDEN_PNG_TEXT_CHUNKS.has(type)) {
+      throw new Error(`PNG contains forbidden ancillary text chunk ${type}`);
+    }
+    offset = dataEnd + 4;
+    if (type === "IEND") {
+      sawIend = true;
+      break;
+    }
+  }
+  if (!sawIend) {
+    throw new Error("PNG has no IEND chunk");
+  }
+}
+
 export function readPng(buffer: Buffer): PNG {
   if (
     buffer.length < PNG_SIGNATURE.length ||

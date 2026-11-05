@@ -1546,3 +1546,61 @@ Expected: the focused suite exits 0 with 8 passing tests; `npm run check` exits 
 **Acceptance:** accepted by the user on 2026-11-05 after the focused 8-test suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** vision review, informed semantic review, paid calls, reports, and the gallery.
+
+## P29. Blind Vision Reviewer Using the Actual PNG — 2026-11-05
+
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds the actual-PNG blind vision review boundary. It makes no live provider call, paid request, stage commit, generator-vision call, external image URL, or content retry.
+
+**Files**
+
+- Adapter: `src/ai/review-vision.ts`
+- Prompt asset: `src/ai/prompts/v1/blind-vision.txt`
+- PNG safety helper: `src/render/png.ts` (`assertPngNoTextMetadata`)
+- Tests: `tests/ai/review-vision.test.ts`
+- Documentation: `README.md`, `docs/experiment-protocol.md`, this file
+
+**Observable behavior**
+
+- The adapter accepts `presentation_ready` or `duplicate_checked`, requires the stored `presentation_ready` assembled presentation, binds its slot/family/modality to the reviewed SVG slot, and rejects text slots before any request.
+- It loads the full 1024 PNG artifact by the stored `assets.pngHash`, verifies `image/png` media type, byte hash, 1 MiB limit, 1024x1024 dimensions, and absence of `tEXt`/`zTXt`/`iTXt`/`eXIf` PNG text metadata. The stored PNG bytes are sent unchanged.
+- The request uses the P25 `puzzle_blind_review` strict schema and a resolved `blind_vision` route that requires image input. The image is a Chat Completions `image_url` data URL containing the actual PNG.
+- The textual input is only the public question, visible rules, clue texts without fact IDs, and four A-D option labels/texts plus fixed role instructions. It never contains slot ID, family, modality, assets, PNG hash, raw SVG, scene graph, hidden scene IDs, spec/DSL, witness, solution, correct label/value, hint, explanation, proof, fact IDs, lane, or previous review.
+- The strict schema enforces status/choice consistency. Visual legibility must be `legible` or `unclear`; `not_applicable` is rejected. Unreadable, wrong-choice, and uncertain reviews are retained as evidence without claiming the correct answer proves visual correctness.
+- The request builder never sees the code key. After parsing, the adapter compares the selected option with the stored key outside the builder and records `choiceAgreement` (`agreed`/`disagreed`/`not_applicable`).
+- The exact request is saved in the logical call; the raw response is saved before parsing. A `blind_vision_review` event stores the input hash, PNG hash/byte length, parsed review, choice agreement, and prompt/schema provenance.
+- Missing, corrupt, metadata-bearing, oversized, or wrong-shape PNG assets fail before any request. Oversized bytes are rejected by the artifact storage limit; the adapter also retains a defensive size check.
+- No workflow stage is written; P34 commits `blind_reviewed` after text and vision reviews.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/review-vision.test.ts --reporter=verbose` | exit 0; 1 file / 7 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 30 files / 437 tests passed, build succeeded and copied `blind-vision.txt`. |
+
+The focused suite covers all five visual families, byte-identical PNG input, source-hash agreement, MIME/1024 shape, missing/corrupt/metadata-bearing/oversized/wrong-shape PNG failures, hidden SVG/scene/key/hint/proof/previous-review canaries, unreadable/wrong/uncertain reviews, refusal/invalid JSON, legibility rules, route/stage guards, and prompt/schema provenance. All responses come from the local fake; no real network or paid call was made.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the focused suite reports 7 passing tests, including the five-visual-family byte-identical PNG test and the PNG safety failures.
+3. Confirm `npm run check` reports 30 files / 437 tests and a successful build.
+4. Confirm `dist/ai/prompts/v1/blind-vision.txt` exists after the build.
+5. Confirm the captured fake request image decodes byte-for-byte to the saved full PNG and the textual input contains no raw SVG, scene graph, hidden layout, key, hint, proof, or image audit metadata.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+npm exec -- vitest run tests/ai/review-vision.test.ts --reporter=verbose
+npm run check
+ls -l dist/ai/prompts/v1/blind-vision.txt
+```
+
+Expected: the focused suite exits 0 with 7 passing tests; `npm run check` exits 0 with 30 files / 437 tests and a successful build; the blind-vision prompt exists under `dist/ai/prompts/v1/`. No live provider call or paid request is made.
+
+**Decision-reviewer:** the static review found no material defects. It confirmed the PNG metadata check covers `tEXt`/`zTXt`/`iTXt`/`eXIf`, the sent image is hash/shape-verified and byte-identical, the textual input is public-only, oversized PNGs are blocked at the artifact store, and no verdict claims visual correctness. It recorded non-material residuals only: `PNG_TOO_LARGE` is defense-in-depth because the artifact limit is equal, the captured-request assertion originally read the ledger copy (now strengthened to read the captured fake HTTP request directly), and P30 must repeat the PNG metadata check for its own image role.
+
+**Acceptance:** accepted by the user on 2026-11-05 after the focused 7-test suite, the exact non-UI script, and the full `npm run check` evidence.
+
+**Out of scope, unchanged:** generator vision, external image URLs, live route assumptions, paid calls, reports, and the gallery.

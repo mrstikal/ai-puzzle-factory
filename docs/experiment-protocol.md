@@ -1,6 +1,6 @@
 # Experiment Protocol
 
-Protocol version: **1.0.0**. Status: P01-P28 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
+Protocol version: **1.0.0**. Status: P01-P29 implemented and offline-verified; no live provider call, report, gallery, or live evidence exists yet.
 
 This document records the deterministic planning contract and the fixed experiment gates that later phases must consume. The normative source remains [AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md](../AI_PUZZLE_FACTORY_EXPERIMENT_PLAN.md); if this summary diverges from the plan, the plan wins.
 
@@ -485,3 +485,29 @@ P28 implements the text half of the section 5.3 blind review boundary. It does n
 `npm exec -- vitest run tests/ai/review-text.test.ts` covers all text families and both lanes, exact public payload deep-equality, hidden canaries for slot/lane/spec/key/hint/proof/previous review/fact IDs, every answer-status/null relation, wrong choice, uncertainty, text legibility, refusal, invalid JSON, no retry after disagreement, `duplicate_checked` acceptance, stored-slot mismatch rejection, route/stage guards, exact saved request/raw response, choice agreement, and prompt/schema provenance. Full gate: `npm run check`.
 
 Out of scope: vision review and informed semantic review.
+
+## 20. Blind vision reviewer (P29)
+
+P29 implements the image half of the section 5.3 blind review boundary. It does not write a workflow stage; P34 commits `blind_reviewed` after the text and vision reviews.
+
+### Input boundary
+
+- The adapter accepts `presentation_ready` or `duplicate_checked`, requires the stored `presentation_ready` assembled presentation, and requires its slot ID, family, and modality to match the reviewed SVG slot. Text slots are rejected before any request.
+- The public text payload is the same allowlist as P28: question, visible rules, clue texts without fact IDs, and four A-D option labels/texts. It never includes slot ID, family, modality, assets, spec/DSL, witness, solution, correct label/value, hidden layout, hint, explanation, proof, fact IDs, lane, or another review.
+- The adapter loads the full 1024 PNG artifact by the stored `assets.pngHash`, verifies the artifact media type is `image/png`, verifies the byte hash matches the stored source hash, enforces the 1 MiB artifact limit, and requires 1024x1024 dimensions.
+- `assertPngNoTextMetadata` rejects PNG ancillary text chunks `tEXt`, `zTXt`, `iTXt`, and `eXIf` before any request. The stored bytes are sent unchanged; the request image must be byte-identical to the saved full asset.
+- The image is sent as a Chat Completions `image_url` data URL (`data:image/png;base64,...`). No external URL, raw SVG, scene graph, hidden scene ID, DSL, solution, PNG hash, or image audit metadata is placed in the textual input.
+
+### Review contract and evidence
+
+- The request uses the P25 `puzzle_blind_review` schema and the resolved `blind_vision` route, which must require image input.
+- `selected` requires a non-null A-D choice; `no_unique_answer` and `cannot_determine` require null. Visual reviews must report `legible` or `unclear`; `not_applicable` is rejected. `unclear`/`cannot_determine` and wrong choices are retained as evidence, not treated as a claim that the correct answer proves visual correctness.
+- The request builder never sees the key. After parsing, the adapter compares the selected option with the stored presentation's code key and records `choiceAgreement` (`agreed`/`disagreed`/`not_applicable`) outside the builder.
+- The exact request is saved in `logical_calls.request_body_json`; the raw response is saved before parsing; `expected_schema_hash` stores the blind schema hash. A `blind_vision_review` event stores the input hash, PNG hash/byte length, parsed review, choice agreement, and prompt/schema provenance.
+- Refusal, invalid JSON, invalid review, and PNG safety failures retain the raw response/attempt/cost where a call was made, and no second content prompt is sent.
+
+### Tests
+
+`npm exec -- vitest run tests/ai/review-vision.test.ts` covers all five visual families, byte-identical PNG input, source-hash agreement, MIME/1024 shape, missing/corrupt/metadata-bearing/oversized/wrong-shape PNG failures, hidden SVG/scene/key/hint/proof/previous-review canaries, unreadable/wrong/uncertain reviews, refusal/invalid JSON, legibility rules, route/stage guards, and prompt/schema provenance. Full gate: `npm run check`.
+
+Out of scope: generator vision, external image URLs, and live route assumptions.
