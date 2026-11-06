@@ -1096,6 +1096,19 @@ describe("live probe authorization", () => {
       "blind_text",
       "blind_vision",
     ]);
+    const prefixed = buildLiveProbePlan({
+      allowPaid: true,
+      maxCostUsd: "0.50",
+      apiKey: "inference-key",
+      routes: routes(),
+      visionPngDataUrl: PNG_DATA_URL,
+      probeKeyPrefix: "preflight:test-id",
+    });
+    expect(prefixed.probes.map((probe) => probe.probeKey)).toEqual([
+      "preflight:test-id:spec",
+      "preflight:test-id:blind_text",
+      "preflight:test-id:blind_vision",
+    ]);
     const generator = plan.probes[0];
     const vision = plan.probes[2];
     if (generator === undefined || vision === undefined) {

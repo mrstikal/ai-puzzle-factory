@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { Decimal } from "decimal.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
 import { createBudgetAccount } from "../ai/budget.js";
 import { readLiveEnvironment, type LiveEnvironmentConfig } from "../ai/config.js";
+import { loadLocalEnv } from "../ai/local-env.js";
 import { createOpenRouterTransport } from "../ai/openrouter.js";
+import { Resvg } from "@resvg/resvg-js";
 import {
   PreflightError,
   buildLiveProbePlan,
@@ -60,10 +63,13 @@ function loadCatalog(path: string): unknown {
 }
 
 function formatReport(report: PreflightReport): string {
+  const live = report.mode === "live";
   const lines: string[] = [
-    "mode: offline",
-    "network: not used",
-    "inference_key: not required",
+    `mode: ${report.mode}`,
+    live
+      ? "network: catalog GET used; inference probes not dispatched"
+      : "network: not used",
+    live ? "inference_key: required" : "inference_key: not required",
     `catalog_source: ${report.catalog.source}`,
     `catalog_recorded_at: ${report.catalog.recordedAt}`,
     `catalog_models: ${report.catalog.modelCount}`,
@@ -102,12 +108,24 @@ function formatReport(report: PreflightReport): string {
     );
   }
   lines.push(`result: ${report.ok ? "ok" : "failed"}`);
-  lines.push("live_routes: not evaluated (P46)");
+  lines.push(
+    live ? "live_routes: evaluated" : "live_routes: not evaluated",
+  );
   return `${lines.join("\n")}\n`;
 }
 
-const LIVE_PNG_DATA_URL =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+function livePngDataUrl(): string {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">' +
+    '<rect width="64" height="64" fill="#f4f1ea"/>' +
+    '<rect x="6" y="6" width="24" height="24" fill="#d94b3d"/>' +
+    '<rect x="34" y="6" width="24" height="24" fill="#3d7bd9"/>' +
+    '<rect x="6" y="34" width="24" height="24" fill="#3da36b"/>' +
+    '<rect x="34" y="34" width="24" height="24" fill="#e0b23c"/>' +
+    "</svg>";
+  const png = new Resvg(svg).render().asPng();
+  return `data:image/png;base64,${png.toString("base64")}`;
+}
 
 function liveRoleRequests(config: LiveEnvironmentConfig): RolePreflightRequest[] {
   return [
@@ -184,7 +202,12 @@ async function runLive(options: PreflightOptions): Promise<number> {
     apiKey: config.apiKey,
   });
   const roles = liveRoleRequests(config);
-  const report = runPreflightOnCatalog(catalog, roles);
+  const preflightId = randomUUID();
+  const report = runPreflightOnCatalog(catalog, roles, {
+    mode: "live",
+    allowConditionalOverrides: true,
+    allowImageContextReserve: true,
+  });
   if (!report.ok) {
     process.stdout.write(formatReport(report));
     return 1;
@@ -197,22 +220,49 @@ async function runLive(options: PreflightOptions): Promise<number> {
     maxCostUsd: options.maxCost as string,
     apiKey: config.apiKey,
     routes,
-    visionPngDataUrl: LIVE_PNG_DATA_URL,
+    visionPngDataUrl: livePngDataUrl(),
+    probeKeyPrefix: `preflight:${preflightId}`,
+    probeMaxOutputTokensByRole: {
+      spec: 2048,
+      blind_text: 8192,
+      blind_vision: 8192,
+    },
   });
   const dbPath = resolve(options.db ?? "data/experiment.sqlite");
   const db = openDatabase(dbPath);
   try {
     migrate(db);
-    const preflightId = randomUUID();
-    const accountId = `preflight-${preflightId}`;
     const createdAt = new Date().toISOString();
-    createBudgetAccount(db, {
-      accountId,
-      runId: null,
-      runKind: "preflight",
-      maxCostUsd: options.maxCost as string,
-      createdAt,
-    });
+    const existingAccount = db
+      .prepare(
+        "SELECT account_id, max_cost_usd FROM budget_accounts WHERE run_kind = 'preflight' AND run_id IS NULL LIMIT 1",
+      )
+      .get() as { account_id: string; max_cost_usd: string } | undefined;
+    let accountId: string;
+    let effectiveCapUsd = options.maxCost as string;
+    if (existingAccount !== undefined) {
+      if (
+        !new Decimal(options.maxCost as string).eq(
+          new Decimal(existingAccount.max_cost_usd),
+        )
+      ) {
+        throw new PreflightError(
+          "PREFLIGHT_CAP_MISMATCH",
+          `existing preflight account cap ${existingAccount.max_cost_usd} does not match the requested ${options.maxCost}; use the same cap or a fresh database`,
+        );
+      }
+      accountId = existingAccount.account_id;
+      effectiveCapUsd = existingAccount.max_cost_usd;
+    } else {
+      accountId = `preflight-${preflightId}`;
+      createBudgetAccount(db, {
+        accountId,
+        runId: null,
+        runKind: "preflight",
+        maxCostUsd: effectiveCapUsd,
+        createdAt,
+      });
+    }
     const transport = createOpenRouterTransport();
     const results = await executeLiveProbePlan({
       db,
@@ -231,6 +281,7 @@ async function runLive(options: PreflightOptions): Promise<number> {
           version: 1,
           preflightId,
           createdAt,
+          authorizedCapUsd: effectiveCapUsd,
           confirmation,
           requestedModels: {
             generator: config.generator.model,
@@ -264,8 +315,7 @@ async function runLive(options: PreflightOptions): Promise<number> {
       (result) =>
         result.result.outcome === "success" &&
         result.schemaValid &&
-        (result.probeKey !== "preflight:blind_vision" ||
-          result.visionInterpreted),
+        (result.role !== "blind_vision" || result.visionInterpreted),
     );
     process.stdout.write(
       `${JSON.stringify(
@@ -273,6 +323,7 @@ async function runLive(options: PreflightOptions): Promise<number> {
           mode: "live",
           preflightId,
           artifactPath,
+          authorizedCapUsd: effectiveCapUsd,
           confirmation,
           probes: results.map((result) => ({
             probeKey: result.probeKey,
@@ -285,6 +336,7 @@ async function runLive(options: PreflightOptions): Promise<number> {
             visionInterpreted: result.visionInterpreted,
             actualCostUsd: result.result.actualCostUsd,
             costStatus: result.result.costStatus,
+            error: result.result.error,
           })),
           result: ok ? "ok" : "failed",
         },
@@ -317,11 +369,11 @@ export function createProgram(): Command {
   const program = new Command();
   program
     .name(PROGRAM_NAME)
-    .description("Validate OpenRouter route capabilities offline; never contacts a provider.")
+    .description("Validate Balanced OpenRouter routes offline or execute authorization-gated live probes.")
     .showHelpAfterError()
     .addHelpText("after", `\n${SCOPE_NOTE}`)
     .option("--offline", "validate recorded capability fixtures and strict schemas")
-    .option("--live", "authorization-gated live probe (reserved for P46)")
+    .option("--live", "authorization-gated Balanced live probe")
     .option("--catalog <path>", "recorded catalog fixture path")
     .option("--allow-paid", "acknowledge paid execution for --live")
     .option("--max-cost <usd>", "authorized maximum cost for --live")
@@ -367,6 +419,7 @@ export function createProgram(): Command {
 }
 
 export async function main(argv: readonly string[] = process.argv): Promise<number> {
+  loadLocalEnv();
   const program = createProgram().exitOverride();
   try {
     await program.parseAsync([...argv]);

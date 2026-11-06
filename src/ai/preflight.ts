@@ -80,7 +80,8 @@ export type PreflightFailureCode =
   | "CATALOG_NETWORK_ERROR"
   | "CATALOG_INVALID_RESPONSE"
   | "ROUTING_CONFIRMATION_INVALID"
-  | "ROUTING_CONFIRMATION_STALE";
+  | "ROUTING_CONFIRMATION_STALE"
+  | "PREFLIGHT_CAP_MISMATCH";
 
 export type PreflightErrorCode =
   | "INVALID_CATALOG"
@@ -95,7 +96,8 @@ export type PreflightErrorCode =
   | "CATALOG_NETWORK_ERROR"
   | "CATALOG_INVALID_RESPONSE"
   | "ROUTING_CONFIRMATION_INVALID"
-  | "ROUTING_CONFIRMATION_STALE";
+  | "ROUTING_CONFIRMATION_STALE"
+  | "PREFLIGHT_CAP_MISMATCH";
 
 export class PreflightError extends Error {
   readonly code: PreflightErrorCode;
@@ -282,8 +284,14 @@ export interface RolePreflightResult {
   readonly notes: readonly string[];
 }
 
+export interface RunPreflightOptions {
+  readonly mode?: "offline" | "live";
+  readonly allowConditionalOverrides?: boolean;
+  readonly allowImageContextReserve?: boolean;
+}
+
 export interface PreflightReport {
-  readonly mode: "offline";
+  readonly mode: "offline" | "live";
   readonly ok: boolean;
   readonly catalog: {
     readonly source: string;
@@ -315,20 +323,51 @@ function pricingValue(
 function validatePricing(
   role: RequestRole,
   endpoint: CatalogEndpoint,
+  pricing: Readonly<Record<string, unknown>>,
+  options: RunPreflightOptions,
   requiresImage: boolean,
   imagePricingReserveUsd: string | undefined,
   failures: PreflightFailure[],
   notes: string[],
 ): void {
-  if (Object.prototype.hasOwnProperty.call(endpoint.pricing, "overrides")) {
-    failures.push({
-      role,
-      code: "UNSUPPORTED_PRICING",
-      detail: `endpoint ${endpoint.tag} exposes conditional pricing overrides that cannot be estimated offline`,
-    });
+  const overrides = endpoint.pricing.overrides;
+  if (overrides !== undefined) {
+    if (options.allowConditionalOverrides !== true) {
+      failures.push({
+        role,
+        code: "UNSUPPORTED_PRICING",
+        detail: `endpoint ${endpoint.tag} exposes conditional pricing overrides that cannot be estimated offline`,
+      });
+    } else if (Array.isArray(overrides)) {
+      for (const override of overrides) {
+        if (override === null || typeof override !== "object") {
+          failures.push({
+            role,
+            code: "INVALID_PRICING",
+            detail: `endpoint ${endpoint.tag} has a malformed pricing override`,
+          });
+          continue;
+        }
+        for (const key of [
+          "prompt",
+          "completion",
+          "input_cache_read",
+          "input_cache_write",
+        ]) {
+          const value = (override as Record<string, unknown>)[key];
+          if (value !== undefined && (typeof value !== "string" || !USD_PATTERN.test(value))) {
+            failures.push({
+              role,
+              code: "INVALID_PRICING",
+              detail: `endpoint ${endpoint.tag} override.${key} is not a non-negative decimal USD string`,
+            });
+          }
+        }
+      }
+    }
   }
   for (const key of ["prompt", "completion"]) {
-    const value = pricingValue(endpoint.pricing, key);
+    const value = pricingValue(pricing, key);
     if (value === null) {
       failures.push({
         role,
@@ -345,12 +384,13 @@ function validatePricing(
       });
     }
   }
-  const imagePrice = pricingValue(endpoint.pricing, "image");
+  const imagePrice = pricingValue(pricing, "image");
   if (requiresImage) {
     if (imagePrice === null) {
       if (
-        imagePricingReserveUsd !== undefined &&
-        isPositiveUsd(imagePricingReserveUsd)
+        options.allowImageContextReserve === true ||
+        (imagePricingReserveUsd !== undefined &&
+          isPositiveUsd(imagePricingReserveUsd))
       ) {
         notes.push("image_pricing_conservative_reserve");
       } else {
@@ -388,13 +428,56 @@ function responseFormatForRole(role: RequestRole): StrictJsonSchema {
 interface EndpointAssessment {
   readonly endpoint: CatalogEndpoint;
   readonly outputCapField: OutputCapField;
+  readonly pricing: Readonly<Record<string, unknown>>;
   readonly failures: readonly PreflightFailure[];
   readonly notes: readonly string[];
+}
+
+function effectivePricing(
+  pricing: Readonly<Record<string, unknown>>,
+  allowConditionalOverrides: boolean,
+): Readonly<Record<string, unknown>> {
+  const effective: Record<string, unknown> = { ...pricing };
+  delete effective.overrides;
+  if (!allowConditionalOverrides) {
+    return effective;
+  }
+  const overrides = pricing.overrides;
+  if (!Array.isArray(overrides)) {
+    return effective;
+  }
+  for (const override of overrides) {
+    if (override === null || typeof override !== "object") {
+      continue;
+    }
+    for (const key of [
+      "prompt",
+      "completion",
+      "input_cache_read",
+      "input_cache_write",
+    ]) {
+      const value = (override as Record<string, unknown>)[key];
+      if (typeof value !== "string" || !USD_PATTERN.test(value)) {
+        continue;
+      }
+      const current = pricingValue(effective, key);
+      try {
+        effective[key] =
+          current === null || new Decimal(value).gt(new Decimal(current))
+            ? value
+            : current;
+      } catch {
+        effective[key] = value;
+      }
+    }
+  }
+  return effective;
 }
 
 function assessEndpoint(
   request: RolePreflightRequest,
   endpoint: CatalogEndpoint,
+  options: RunPreflightOptions,
   requiresImage: boolean,
   maxOutputTokens: number,
   minPromptTokens: number,
@@ -461,9 +544,15 @@ function assessEndpoint(
     });
   }
 
+  const pricing = effectivePricing(
+    endpoint.pricing,
+    options.allowConditionalOverrides === true,
+  );
   validatePricing(
     request.role,
     endpoint,
+    pricing,
+    options,
     requiresImage,
     request.imagePricingReserveUsd,
     failures,
@@ -486,7 +575,7 @@ function assessEndpoint(
     }
   }
 
-  return { endpoint, outputCapField, failures, notes };
+  return { endpoint, outputCapField, pricing, failures, notes };
 }
 
 function conservativePricing(
@@ -514,6 +603,7 @@ function conservativePricing(
 function validateRole(
   request: RolePreflightRequest,
   catalog: RecordedCatalog,
+  options: RunPreflightOptions,
 ): RolePreflightResult {
   const failures: PreflightFailure[] = [];
   const notes: string[] = [];
@@ -604,6 +694,7 @@ function validateRole(
     assessEndpoint(
       request,
       endpoint,
+      options,
       requiresImage,
       maxOutputTokens,
       minPromptTokens,
@@ -685,7 +776,7 @@ function validateRole(
           maxCompletionTokens,
           supportedParameters,
           pricing: conservativePricing(
-            selected.map((assessment) => assessment.endpoint.pricing),
+            selected.map((assessment) => assessment.pricing),
           ),
           requiresImage,
           imageInputDeclared: model.inputModalities.includes("image"),
@@ -763,8 +854,11 @@ export interface OfflinePreflightInput {
 export function runPreflightOnCatalog(
   catalog: RecordedCatalog,
   roleRequests: readonly RolePreflightRequest[],
+  options: RunPreflightOptions = {},
 ): PreflightReport {
-  const roles = roleRequests.map((role) => validateRole(role, catalog));
+  const roles = roleRequests.map((role) =>
+    validateRole(role, catalog, options),
+  );
   const failures = [
     ...roles.flatMap((role) => role.failures),
     ...validateRoleSeparation(roleRequests),
@@ -777,7 +871,7 @@ export function runPreflightOnCatalog(
     }
   }
   return {
-    mode: "offline",
+    mode: options.mode ?? "offline",
     ok: failures.length === 0,
     catalog: {
       source: catalog.source,
@@ -1093,6 +1187,9 @@ export interface LiveProbePlanInput {
   readonly apiKey: string;
   readonly routes: readonly ResolvedRoute[];
   readonly visionPngDataUrl: string | null;
+  readonly probeMaxOutputTokens?: number;
+  readonly probeMaxOutputTokensByRole?: Partial<Record<RequestRole, number>>;
+  readonly probeKeyPrefix?: string;
 }
 
 function routeForRole(
@@ -1123,7 +1220,8 @@ function probeMessages(
       },
       {
         role: "user",
-        content: "Return a minimal valid instance with no answer key.",
+        content:
+          "Return a minimal valid ranking instance with no answer key. Use exactly four items with integer indices 0, 1, 2, 3. Every clue relation must use two different indices in 0..3; never point an item at itself. A simple chain 0 before 1 before 2 before 3 is valid.",
       },
     ];
   }
@@ -1137,7 +1235,7 @@ function probeMessages(
       {
         role: "user",
         content:
-          "Question: Which order satisfies the clues? Choices: A, B, C, D. Return the strict review schema.",
+          "Question: Which order satisfies the clues? Choices: A, B, C, D. Return only the strict review JSON object and keep the reasoning field under 40 words.",
       },
     ];
   }
@@ -1159,7 +1257,7 @@ function probeMessages(
       content: [
         {
           type: "text",
-          text: "Question: Which labeled tile satisfies the visible rule? Choices: A, B, C, D. Return the strict review schema.",
+          text: "Question: Which labeled tile satisfies the visible rule? Choices: A, B, C, D. Return only the strict review JSON object and keep the reasoning field under 40 words.",
         },
         {
           type: "image_url",
@@ -1170,7 +1268,11 @@ function probeMessages(
   ];
 }
 
-export function conservativeReservationUsd(route: ResolvedRoute): string {
+export function conservativeReservationUsd(
+  route: ResolvedRoute,
+  promptTokens = route.minPromptTokens,
+  outputTokens = route.maxOutputTokens,
+): string {
   const price = (keys: readonly string[]): Decimal => {
     const values = keys
       .map((key) => route.pricing[key])
@@ -1180,8 +1282,8 @@ export function conservativeReservationUsd(route: ResolvedRoute): string {
       ? new Decimal(0)
       : values.reduce((max, value) => (value.gt(max) ? value : max));
   };
-  const promptTokens = new Decimal(route.maxPromptTokens ?? route.contextLength);
-  const outputTokens = new Decimal(route.maxOutputTokens);
+  const promptTokenCount = new Decimal(promptTokens);
+  const outputTokenCount = new Decimal(outputTokens);
   const promptPrice = price([
     "prompt",
     "input",
@@ -1199,17 +1301,36 @@ export function conservativeReservationUsd(route: ResolvedRoute): string {
         const declared = price(["image", "image_url"]);
         return declared.gt(0)
           ? declared
-          : promptPrice.times(new Decimal(route.contextLength));
+          : promptPrice.times(new Decimal(8192));
       })()
     : new Decimal(0);
   const requestPrice = price(["request"]);
   const total = promptPrice
-    .times(promptTokens)
-    .plus(completionPrice.times(outputTokens))
+    .times(promptTokenCount)
+    .plus(completionPrice.times(outputTokenCount))
     .plus(imagePrice)
     .plus(requestPrice)
     .times(2);
   return total.toFixed(12);
+}
+
+function estimatePromptTokens(
+  messages: readonly ChatMessage[],
+  requiresImage: boolean,
+): number {
+  let characters = 0;
+  for (const message of messages) {
+    if (typeof message.content === "string") {
+      characters += message.content.length;
+      continue;
+    }
+    for (const part of message.content) {
+      if (part.type === "text") {
+        characters += part.text.length;
+      }
+    }
+  }
+  return Math.max(1024, Math.ceil(characters / 4) + 512 + (requiresImage ? 1024 : 0));
 }
 
 export function buildLiveProbePlan(input: LiveProbePlanInput): LiveProbePlan {
@@ -1252,26 +1373,40 @@ export function buildLiveProbePlan(input: LiveProbePlanInput): LiveProbePlan {
       );
     }
     const responseFormat = route.responseFormat;
+    const messages = probeMessages(role, input.visionPngDataUrl);
+    const requestedProbeTokens =
+      input.probeMaxOutputTokensByRole?.[role] ??
+      input.probeMaxOutputTokens ??
+      route.maxOutputTokens;
+    const outputTokens = Math.min(
+      route.maxCompletionTokens,
+      requestedProbeTokens,
+    );
+    const promptTokens = estimatePromptTokens(messages, route.requiresImage);
     const built = buildChatRequest({
       role,
       model: route.model,
       outputCapField: route.outputCapField,
-      maxOutputTokens: route.maxOutputTokens,
-      messages: probeMessages(role, input.visionPngDataUrl),
+      maxOutputTokens: outputTokens,
+      messages,
       responseFormat,
       ...(Object.keys(route.settings).length > 0
         ? { settings: route.settings }
         : {}),
     });
     probes.push({
-      probeKey: `preflight:${role}`,
+      probeKey: `${input.probeKeyPrefix ?? "preflight"}:${role}`,
       role,
       model: route.model,
       routingPolicy: "balanced",
       compatibleEndpointTags: route.compatibleEndpointTags,
       outputCapField: route.outputCapField,
-      maxOutputTokens: route.maxOutputTokens,
-      reservationUsd: conservativeReservationUsd(route),
+      maxOutputTokens: outputTokens,
+      reservationUsd: conservativeReservationUsd(
+        route,
+        promptTokens,
+        outputTokens,
+      ),
       responseFormat,
       schemaHash: built.schemaHash,
       requiresImage: route.requiresImage,
@@ -1296,6 +1431,7 @@ export interface ExecuteLiveProbePlanInput {
 
 export interface LiveProbeExecutionResult {
   readonly probeKey: string;
+  readonly role: RequestRole;
   readonly logicalCallId: string;
   readonly result: OpenRouterCallResult;
   readonly schemaValid: boolean;
@@ -1379,6 +1515,7 @@ export async function executeLiveProbePlan(
     const validation = validateProbeContent(probe.role, result.parsedContent);
     results.push({
       probeKey: probe.probeKey,
+      role: probe.role,
       logicalCallId: call.logicalCallId,
       result,
       ...validation,

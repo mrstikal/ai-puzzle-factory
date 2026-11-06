@@ -2829,12 +2829,12 @@ The fresh copy completed with 47 files / 606 tests, the same full-run counts (`2
 
 ## P46. Authorized Live Model/Route Compatibility Probes — 2026-11-06
 
-**State:** `BLOCKED / LIVE-UNVERIFIED`. The plan v1.1 Balanced-routing correction is implemented and offline-verified, but no live probe, paid call, key use, or mock substitute occurred. P45 remains accepted; P46 is not accepted.
+**State:** `LIVE-VERIFIED / ACCEPTED BY USER ON 2026-11-06`. The plan v1.1 Balanced-routing correction is implemented, the three authorized live probes succeeded, and no provider ID was pinned. P45 remains accepted; P46 is accepted.
 
 **Files**
 
-- Routing/config: `src/ai/config.ts` (model-only live inputs, Balanced request policy, Nitro/Floor rejection), `src/ai/openrouter.ts` (strict Balanced provider object, observed model/provider identity, model-mismatch pause, replay-path enforcement)
-- Catalog/preflight: `src/ai/preflight.ts` (dynamic active-endpoint validation, model-level routes, `max_tokens` preference, conservative multi-provider pricing, Decimal reservation, probe schema/vision validation, no provider pinning), `src/cli/preflight.ts` (live path behind `--allow-paid`, `--max-cost`, and `--routing-confirmation`), `src/cli/report.ts` (reads `data/preflight/<id>/preflight.json` when `--run <preflight-id>` has no DB run)
+- Routing/config: `src/ai/config.ts` (model-only live inputs, Balanced request policy, Nitro/Floor rejection), `src/ai/openrouter.ts` (strict Balanced provider object, observed model/provider identity, model-mismatch pause, replay-path enforcement), `src/ai/local-env.ts` (loads `.env.local` then `.env` for CLI runs; skipped under Vitest)
+- Catalog/preflight: `src/ai/preflight.ts` (dynamic active-endpoint validation, model-level routes, `max_tokens` preference, conservative multi-provider pricing with live-only conditional-override handling, Decimal pricing-derived reservations, probe schema/vision validation, no provider pinning), `src/cli/preflight.ts` (live path behind `--allow-paid`, `--max-cost`, and `--routing-confirmation`; 64x64 PNG; role-specific probe caps; existing preflight account reuse), `src/cli/report.ts` (reads `data/preflight/<id>/preflight.json` when `--run <preflight-id>` has no DB run)
 - Ledger/storage: `src/ai/ledger.ts`, `src/storage/migrations/0005_balanced_routing.sql` (`routing_policy`, `observed_model`, `observed_provider`)
 - Domain/reporting/freeze: `src/domain/experiment.ts` (model-only roles, routing policy/confirmation schemas), `src/reporting/metrics.ts` (observed provider/model mix and identity coverage), `src/reporting/export.ts`/`html.ts`, `src/experiment/freeze.ts` (roles/policy bound into the frozen protocol)
 - Tests: `tests/ai/preflight.test.ts` (37), `tests/ai/openrouter.test.ts` (28), `tests/experiment/freeze.test.ts` (18), `tests/reporting/metrics.test.ts` (8), plus config/planner/ledger/export/html/runner updates
@@ -2842,19 +2842,27 @@ The fresh copy completed with 47 files / 606 tests, the same full-run counts (`2
 
 **Observable behavior**
 
-- No provider IDs or endpoint tags are required. `GENERATOR_MODEL`, `REVIEWER_MODEL`, and `VISION_REVIEWER_MODEL` are the only model inputs; `OPENROUTER_API_KEY` is the only secret input. Generator must differ from both reviewers; the vision reviewer may reuse the text reviewer.
+- No provider IDs or endpoint tags are required. `GENERATOR_MODEL`, `REVIEWER_MODEL`, and `VISION_REVIEWER_MODEL` are the only model inputs; `OPENROUTER_API_KEY` is the only secret input and is loaded from `.env.local` by the live CLI. Generator must differ from both reviewers; the vision reviewer may reuse the text reviewer.
 - Every request sends `provider:{allow_fallbacks:true,require_parameters:true}` with no `sort`, `order`, `only`, or `ignore`. Model slugs ending in `:nitro` or `:floor` are rejected.
-- Preflight examines every active catalog endpoint for the configured model, requires at least one compatible active endpoint, prefers `max_tokens` when available, otherwise `max_completion_tokens`, and uses conservative multi-provider pricing (maximum per field, Decimal strings, full-context fallback when image price is absent). Provider tags are diagnostics only.
-- Each transport attempt stores the requested routing policy/model and separately observed model/provider identity when exposed. A contradictory observed model marks the attempt failed, pauses the run with `paused_operator`, and blocks later admissions; the saved-response replay path applies the same check.
-- The live CLI requires a fresh operator confirmation JSON with `providerSort:"default_balanced"` and `byokConfigured:false`; future, stale, conflicting, BYOK, or missing confirmations block before any paid call. Live preflight validates each probe's parsed content against the role strict schema and requires the vision probe to report actual image legibility rather than `not_applicable`.
+- Preflight examines every active catalog endpoint for the configured model, requires at least one compatible active endpoint, prefers `max_tokens` when available, otherwise `max_completion_tokens`, and uses conservative multi-provider pricing (maximum per field, Decimal strings, full-context fallback when image price is absent). Live preflight may use conditional pricing overrides conservatively; offline preflight still rejects them. Provider tags are diagnostics only.
+- Each transport attempt stores the requested routing policy/model and separately observed model/provider identity. A contradictory observed model marks the attempt failed, pauses the run with `paused_operator`, and blocks later admissions; the saved-response replay path applies the same check.
+- The live CLI requires a fresh operator confirmation JSON with `providerSort:"default_balanced"` and `byokConfigured:false`; future, stale, conflicting, BYOK, or missing confirmations block before any paid call. Live preflight validates each probe's parsed content against the role strict schema and requires the vision probe to report actual image legibility rather than `not_applicable`. Repeated live preflights in one database use unique `preflight:<id>:<role>` probe keys and reuse the global preflight account only when the requested cap equals the stored cap; the artifact records the enforced cap. Once that global account records a pause event, P46 has no in-place reset: a later live preflight needs a fresh `--db` and manual cumulative-authorization tracking. Live stdout includes the probe error code/message. Offline preflight keeps strict pricing rejection and never enables the live-only override/image-reserve allowances.
 - `FrozenProtocol` now contains the role model IDs and Balanced/default-sort/no-BYOK policy and computes `routesHash` from them, so the persisted protocol binds the checked configuration.
-- `npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation <path>` was not executed because the live inputs are absent. No `data/preflight/` artifact, route snapshot, provider identity, cost, generation ID, or image interpretation exists. `npm run report -- --run <preflight-id>` is wired to read the preflight artifact when no DB run exists, but that path is also unexercised without a live preflight.
+- The final live preflight `1f717e0d-4a63-486b-b3a3-45f7d7338a2e` used `operator=Lexa`, cap USD 0.45 for the final retry (USD 0.50 total authorization recorded in `data/p46-authorization.json`), and succeeded 3/3:
+  - spec: `openai/gpt-6.1-sol` observed via `OpenAI`, HTTP 200, strict schema valid, USD 0.001852, generation `gen-1793992054-ZLa4FE6gg4aTs8OVzKuP`.
+  - blind_text: `z-ai/glm-5.3` observed via `Mistral`, HTTP 200, strict schema valid, USD 0.0187394, generation `gen-1793992059-bsVPBmJrmiF46KjZXACA`.
+  - blind_vision: `qwen/qwen3.8-max-0902` observed via `Alibaba`, HTTP 200, strict schema valid, `visualLegibility:"legible"`, USD 0.004552, generation `gen-1793992088-iGQIg1sFMdXHDkrLO4RC`. The response explicitly described the 64x64 PNG's 2x2 colored grid.
+- Final run actual cost USD 0.0251434; known spend across all retries USD 0.071628282, with bounded unknown exposure below the USD 0.50 cap. No paid call was made after the successful run.
+- `npm run report -- --run 1f717e0d-4a63-486b-b3a3-45f7d7338a2e` reads the preflight artifact and prints the observed identities and costs.
 - P45 was repeated after the routing correction: full mock remains 200/200 terminal, 148/18/34/0, 644 calls/attempts, barrier 145/18/34, and 4 full-mock tests passed.
 
 **Verification**
 
 | Command | Result |
 | --- | --- |
+| `npm run preflight -- --live --allow-paid --max-cost 0.45 --routing-confirmation data/p46-routing-confirmation.json --db /tmp/p46-preflight3.sqlite` | exit 0; 3/3 probes success, 3/3 strict schemas valid, vision interpreted, all costs known. |
+| `npm run report -- --run 1f717e0d-4a63-486b-b3a3-45f7d7338a2e` | exit 0; prints the live preflight artifact. |
+| Repeat `preflight --live --allow-paid --max-cost 0.45 --routing-confirmation ... --db /tmp/p46-preflight3.sqlite` | exit 1 as expected; unique `preflight:<id>:<role>` keys accepted, all three probes `paused_budget` with zero paid calls, proving cumulative cap enforcement. |
 | `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 47 files / 612 tests passed, build succeeded. |
 | `npm run test:browser` | exit 0; 6 Playwright Chromium tests passed. |
 | `npx vitest run tests/experiment/full-mock.test.ts` | exit 0; 4 tests passed after the routing revision. |
@@ -2862,37 +2870,11 @@ The fresh copy completed with 47 files / 606 tests, the same full-run counts (`2
 | `npx vitest run tests/ai/openrouter.test.ts` | exit 0; 28 tests passed. |
 | `npx vitest run tests/experiment/freeze.test.ts` | exit 0; 18 tests passed. |
 | `npx vitest run tests/reporting/metrics.test.ts` | exit 0; 8 tests passed. |
-| `npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation <path>` | NOT RUN; blocked by missing key/model inputs and operator confirmation. |
-| `npm run report -- --run <preflight-id>` | NOT RUN; no preflight run exists. |
 
-**Decision-reviewer:** the first routing-revision pass confirmed six defects: live preflight did not validate strict probe schemas or image interpretation; the paid preflight reserved a flat USD 0.01 instead of conservative pricing; freeze validated roles/policy but did not bind them into the persisted protocol; conservative pricing used binary floats and could emit exponent notation; confirmation freshness accepted future timestamps; observed model identity was recorded but never compared. All six were fixed and covered by tests. The second pass confirmed the fixes and found one Low residual: the model-mismatch transition recorded `reason:"ok"` in the request-event audit trail; fixed by passing the effective classification to the failed/uncertain transitions and asserting the event payload. The third pass found one Low residual: the resume replay path did not apply the mismatch check; fixed with the same comparison, forced failed outcome, `paused_operator` pause, effective classification, and a replay test. The fourth pass found no material findings.
+**Decision-reviewer:** the first routing-revision pass confirmed six defects: live preflight did not validate strict probe schemas or image interpretation; the paid preflight reserved a flat USD 0.01 instead of conservative pricing; freeze validated roles/policy but did not bind them into the persisted protocol; conservative pricing used binary floats and could emit exponent notation; confirmation freshness accepted future timestamps; observed model identity was recorded but never compared. All six were fixed and covered by tests. The second pass confirmed the fixes and found one Low residual: the model-mismatch transition recorded `reason:"ok"` in the request-event audit trail; fixed by passing the effective classification to the failed/uncertain transitions and asserting the event payload. The third pass found one Low residual: the resume replay path did not apply the mismatch check; fixed with the same comparison, forced failed outcome, `paused_operator` pause, effective classification, and a replay test. The fourth pass found no material findings. A final live-support review then found four Medium/Low issues: the reused preflight account cap, not `--max-cost`, was the enforced limit while the artifact recorded the requested value; repeated live preflights in one database still collided on the global probe-key index; the offline CLI accidentally enabled the live-only pricing allowances; and a failed live preflight printed the offline header. All four were fixed: exact-cap account reuse with `PREFLIGHT_CAP_MISMATCH` and enforced-cap artifacts, unique `preflight:<id>:<role>` keys, strict offline defaults, and a mode-aware live failure header. The verification pass confirmed those fixes and found two Low residuals: a dead vision-interpretation key comparison and no in-place recovery after a global preflight pause. The dead guard was fixed by matching on probe role, and the pause permanence was documented with the live error code/message surfaced on stdout.
 
-**Manual acceptance:** not applicable until a real key, the three model IDs, a fresh operator confirmation, and explicit P46 cap authorization are supplied locally. A missing input is a blocked/live-unverified gate, not a pass.
+**Manual acceptance:** inspect `data/preflight/1f717e0d-4a63-486b-b3a3-45f7d7338a2e/preflight.json` and confirm the three probe rows above, the observed providers, strict-schema validity, vision interpretation, generation IDs, and costs. No further live call is required.
 
-**Required local inputs (never paste the key into chat):**
+**Acceptance:** accepted by the user on 2026-11-06 after the three live probes succeeded 3/3 with valid strict schemas, vision interpretation, observed providers OpenAI/Mistral/Alibaba, and known final-run cost USD 0.0251434 (total known spend USD 0.071628282 under the USD 0.50 cap). No further live call is required.
 
-```bash
-export OPENROUTER_API_KEY='...'
-export GENERATOR_MODEL='...'
-export REVIEWER_MODEL='...'
-export VISION_REVIEWER_MODEL='...'
-cat > /tmp/p46-routing-confirmation.json <<'JSON'
-{
-  "operator": "<your name>",
-  "checkedAt": "<current ISO timestamp>",
-  "providerSort": "default_balanced",
-  "byokConfigured": false
-}
-JSON
-```
-
-Then run at most three logical probes:
-
-```bash
-npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation /tmp/p46-routing-confirmation.json
-npm run report -- --run <preflight-id>
-```
-
-**Acceptance:** not requested; P46 remains blocked/live-unverified.
-
-**Out of scope, unchanged:** calibration, all-family generation smoke, primary experiment, and any live claim without actual provider evidence.
+**Out of scope, unchanged:** calibration, all-family generation smoke, primary experiment, and any live claim beyond these three compatibility probes.
