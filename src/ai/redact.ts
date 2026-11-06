@@ -8,7 +8,7 @@ const SENSITIVE_KEYS = new Set([
   "x-api-key",
 ]);
 
-function isSensitiveKey(key: string): boolean {
+export function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEYS.has(key.toLowerCase());
 }
 

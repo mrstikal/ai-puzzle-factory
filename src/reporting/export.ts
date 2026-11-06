@@ -4,6 +4,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { getLogicalCall, listAttempts, type LogicalCall } from "../ai/ledger.js";
+import { REDACTED, isSensitiveKey } from "../ai/redact.js";
 import {
   FailureRecordSchema,
   type FailureCode,
@@ -32,7 +33,8 @@ export type ExportErrorCode =
   | "INVALID_RUN"
   | "UNSAFE_PATH"
   | "INVALID_FORMAT"
-  | "INVALID_EXPORT";
+  | "INVALID_EXPORT"
+  | "UNSAFE_ARTIFACT";
 
 export class ExportError extends Error {
   readonly code: ExportErrorCode;
@@ -42,6 +44,82 @@ export class ExportError extends Error {
     this.name = "ExportError";
     this.code = code;
   }
+}
+
+const CREDENTIAL_PATTERNS: readonly RegExp[] = [
+  /\bsk-or-v1-[A-Za-z0-9_-]{16,}\b/g,
+  /\bsk-[A-Za-z0-9_-]{20,}\b/g,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b/gi,
+  /\bOPENROUTER_API_KEY\s*=\s*[^\s"'`]+/g,
+];
+
+export function redactCredentialText(text: string): string {
+  let redacted = text;
+  for (const pattern of CREDENTIAL_PATTERNS) {
+    redacted = redacted.replace(pattern, REDACTED);
+  }
+  return redacted;
+}
+
+function containsCredentialShape(text: string): boolean {
+  for (const pattern of CREDENTIAL_PATTERNS) {
+    pattern.lastIndex = 0;
+    const matched = pattern.test(text);
+    pattern.lastIndex = 0;
+    if (matched) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function assertArtifactExportSafe(
+  kind: "svg" | "png" | string,
+  bytes: Buffer,
+): void {
+  if (containsCredentialShape(bytes.toString("latin1"))) {
+    throw new ExportError(
+      "UNSAFE_ARTIFACT",
+      `${kind} artifact contains credential-shaped text and cannot be exported`,
+    );
+  }
+}
+
+export function validateArtifactForExport(
+  db: Database.Database,
+  contentHash: string,
+  kind: "svg" | "png",
+): void {
+  try {
+    const artifact = getArtifact(db, contentHash, kind);
+    assertArtifactExportSafe(kind, artifact.bytes);
+  } catch (error) {
+    if (error instanceof StorageError && error.code === "NOT_FOUND") {
+      return;
+    }
+    throw error;
+  }
+}
+
+function redactCredentialStrings(value: unknown): unknown {
+  if (typeof value === "string") {
+    return redactCredentialText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(redactCredentialStrings);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => !isSensitiveKey(key))
+        .map(([key, item]) => [key, redactCredentialStrings(item)]),
+    );
+  }
+  return value;
+}
+
+export function sanitizeExportValue<T>(value: T): T {
+  return redactCredentialStrings(value) as T;
 }
 
 export const CandidateExportRowSchema = z.looseObject({
@@ -313,61 +391,63 @@ function buildCandidateRow(
   const pngHash = stringOrNull(render.pngHash);
   const svg = svgHash !== null && hasArtifact(db, svgHash, "svg");
   const png = pngHash !== null && hasArtifact(db, pngHash, "png");
-  return CandidateExportRowSchema.parse({
-    version: 1,
-    slotId: slot.slotId,
-    slotOrdinal: slot.slotOrdinal,
-    family: slot.family,
-    modality: slot.modality,
-    lane: slot.lane,
-    difficulty: slot.difficulty,
-    stage: slot.stage,
-    verdict: slot.verdict,
-    checkpointVersion: slot.checkpointVersion,
-    started: stages.size > 0 || hasCalls(db, runId, slot.slotId),
-    terminal: stages.has("terminal"),
-    formalPassed: stages.has("formal_checked"),
-    presentationCheckPassed: stages.has("presentation_ready"),
-    reviewed: stages.has("blind_reviewed"),
-    presentation,
-    fingerprint:
-      objectValue(formalPayload).fingerprint ??
-      objectValue(terminalPayload).fingerprint ??
-      null,
-    duplicateAssessment:
-      objectValue(stages.get("duplicate_checked")?.payload).assessment ?? null,
-    blindReview: stages.get("blind_reviewed")?.payload ?? null,
-    alignmentReview: stages.get("alignment_reviewed")?.payload ?? null,
-    terminalPayload,
-    failures,
-    primaryFailure: primaryFailureOf(terminalPayload, failures),
-    failureEvidence:
-      failures.length === 0
-        ? null
-        : failures
-            .map(
-              (failure) =>
-                `${failure.code}@${failure.stage}: ${failure.evidence ?? ""}`,
-            )
-            .join(" | "),
-    question: presentationQuestion(presentation),
-    hint: presentationHint(presentation),
-    explanation: presentationExplanation(presentation),
-    assets: { svg, png },
-    cost: costForSlot(db, runId, slot.slotId),
-    preparationActiveMs: activeTime(stages, [
-      "spec_ready",
-      "formal_checked",
-      "presentation_ready",
-    ]),
-    reviewActiveMs: activeTime(stages, [
-      "duplicate_checked",
-      "blind_reviewed",
-      "alignment_reviewed",
-      "terminal",
-    ]),
-    wallTimeMs: wallTime(stages),
-  });
+  return CandidateExportRowSchema.parse(
+    sanitizeExportValue({
+      version: 1,
+      slotId: slot.slotId,
+      slotOrdinal: slot.slotOrdinal,
+      family: slot.family,
+      modality: slot.modality,
+      lane: slot.lane,
+      difficulty: slot.difficulty,
+      stage: slot.stage,
+      verdict: slot.verdict,
+      checkpointVersion: slot.checkpointVersion,
+      started: stages.size > 0 || hasCalls(db, runId, slot.slotId),
+      terminal: stages.has("terminal"),
+      formalPassed: stages.has("formal_checked"),
+      presentationCheckPassed: stages.has("presentation_ready"),
+      reviewed: stages.has("blind_reviewed"),
+      presentation,
+      fingerprint:
+        objectValue(formalPayload).fingerprint ??
+        objectValue(terminalPayload).fingerprint ??
+        null,
+      duplicateAssessment:
+        objectValue(stages.get("duplicate_checked")?.payload).assessment ?? null,
+      blindReview: stages.get("blind_reviewed")?.payload ?? null,
+      alignmentReview: stages.get("alignment_reviewed")?.payload ?? null,
+      terminalPayload,
+      failures,
+      primaryFailure: primaryFailureOf(terminalPayload, failures),
+      failureEvidence:
+        failures.length === 0
+          ? null
+          : failures
+              .map(
+                (failure) =>
+                  `${failure.code}@${failure.stage}: ${failure.evidence ?? ""}`,
+              )
+              .join(" | "),
+      question: presentationQuestion(presentation),
+      hint: presentationHint(presentation),
+      explanation: presentationExplanation(presentation),
+      assets: { svg, png },
+      cost: costForSlot(db, runId, slot.slotId),
+      preparationActiveMs: activeTime(stages, [
+        "spec_ready",
+        "formal_checked",
+        "presentation_ready",
+      ]),
+      reviewActiveMs: activeTime(stages, [
+        "duplicate_checked",
+        "blind_reviewed",
+        "alignment_reviewed",
+        "terminal",
+      ]),
+      wallTimeMs: wallTime(stages),
+    }),
+  );
 }
 
 export function buildCandidateRows(
@@ -507,23 +587,25 @@ function buildRequestRow(
             },
     };
   });
-  return RequestExportRowSchema.parse({
-    version: 1,
-    logicalCallId: call.logicalCallId,
-    slotId: call.slotId,
-    role: call.role,
-    state: call.state,
-    requestHash: call.requestHash,
-    requestBody: call.requestBody,
-    expectedSchemaHash: call.expectedSchemaHash,
-    model: call.model,
-    provider: call.provider,
-    outputCapField: call.outputCapField,
-    createdAt: call.createdAt,
-    updatedAt: call.updatedAt,
-    retryNotBefore: call.retryNotBefore,
-    attempts,
-  });
+  return RequestExportRowSchema.parse(
+    sanitizeExportValue({
+      version: 1,
+      logicalCallId: call.logicalCallId,
+      slotId: call.slotId,
+      role: call.role,
+      state: call.state,
+      requestHash: call.requestHash,
+      requestBody: call.requestBody,
+      expectedSchemaHash: call.expectedSchemaHash,
+      model: call.model,
+      provider: call.provider,
+      outputCapField: call.outputCapField,
+      createdAt: call.createdAt,
+      updatedAt: call.updatedAt,
+      retryNotBefore: call.retryNotBefore,
+      attempts,
+    }),
+  );
 }
 
 function startsWithFormula(value: string): boolean {
@@ -690,7 +772,7 @@ export function exportRun(
   writeAtomicFile(
     manifestPath,
     `${JSON.stringify(
-      {
+      sanitizeExportValue({
         version: 1,
         run: {
           runId: run.runId,
@@ -703,7 +785,7 @@ export function exportRun(
           createdAt: run.createdAt,
         },
         manifest: run.manifest,
-      },
+      }),
       null,
       2,
     )}\n`,
@@ -733,6 +815,20 @@ export function exportRun(
     files.push(resultsPath);
   }
   if (format === "all") {
+    for (const row of candidateRows) {
+      const formal = objectValue(
+        stagesBySlot.get(row.slotId)?.get("formal_checked")?.payload,
+      );
+      const render = objectValue(formal.render);
+      const svgHash = stringOrNull(render.svgHash);
+      const pngHash = stringOrNull(render.pngHash);
+      if (svgHash !== null) {
+        validateArtifactForExport(db, svgHash, "svg");
+      }
+      if (pngHash !== null) {
+        validateArtifactForExport(db, pngHash, "png");
+      }
+    }
     const puzzleDirectory = join(directory, "puzzles");
     const imageDirectory = join(directory, "images");
     for (const row of candidateRows) {
@@ -748,6 +844,7 @@ export function exportRun(
       if (svgHash !== null) {
         try {
           const artifact = getArtifact(db, svgHash, "svg");
+          assertArtifactExportSafe("svg", artifact.bytes);
           const path = join(imageDirectory, `${row.slotId}.svg`);
           writeAtomicFile(path, artifact.bytes);
           files.push(path);
@@ -760,6 +857,7 @@ export function exportRun(
       if (pngHash !== null) {
         try {
           const artifact = getArtifact(db, pngHash, "png");
+          assertArtifactExportSafe("png", artifact.bytes);
           const path = join(imageDirectory, `${row.slotId}.png`);
           writeAtomicFile(path, artifact.bytes);
           files.push(path);

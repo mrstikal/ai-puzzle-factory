@@ -18,7 +18,9 @@ import {
 } from "../storage/repository.js";
 import {
   ExportError,
+  assertArtifactExportSafe,
   buildCandidateRows,
+  validateArtifactForExport,
   buildRequestRows,
   resolveRunDirectory,
   writeAtomicFile,
@@ -868,6 +870,7 @@ function copyArtifact(
 ): string | null {
   try {
     const artifact = getArtifact(db, contentHash, kind);
+    assertArtifactExportSafe(kind, artifact.bytes);
     writeAtomicFile(path, artifact.bytes);
     return path;
   } catch (error) {
@@ -906,22 +909,21 @@ export function writeHtmlReport(
     existing.push(stage);
     stagesBySlot.set(stage.slotId, existing);
   }
+  const imageSpecs = candidates.map((candidate) => ({
+    candidate,
+    hashes: imageHashes(candidate),
+  }));
+  for (const { hashes } of imageSpecs) {
+    if (hashes.svgHash !== null) {
+      validateArtifactForExport(db, hashes.svgHash, "svg");
+    }
+    if (hashes.pngHash !== null) {
+      validateArtifactForExport(db, hashes.pngHash, "png");
+    }
+  }
   mkdirSync(join(directory, "images"), { recursive: true });
   const imageFiles: string[] = [];
-  const cards = candidates.map((candidate) => {
-    const hashes = imageHashes(candidate);
-    const pngPath =
-      hashes.pngHash === null
-        ? null
-        : copyArtifact(
-            db,
-            hashes.pngHash,
-            "png",
-            join(directory, "images", `${candidate.slotId}.png`),
-          );
-    if (pngPath !== null) {
-      imageFiles.push(pngPath);
-    }
+  const cards = imageSpecs.map(({ candidate, hashes }) => {
     const svgPath =
       hashes.svgHash === null
         ? null
@@ -933,6 +935,18 @@ export function writeHtmlReport(
           );
     if (svgPath !== null) {
       imageFiles.push(svgPath);
+    }
+    const pngPath =
+      hashes.pngHash === null
+        ? null
+        : copyArtifact(
+            db,
+            hashes.pngHash,
+            "png",
+            join(directory, "images", `${candidate.slotId}.png`),
+          );
+    if (pngPath !== null) {
+      imageFiles.push(pngPath);
     }
     return buildCard(
       candidate,

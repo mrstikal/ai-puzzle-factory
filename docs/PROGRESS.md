@@ -2607,7 +2607,7 @@ Expected: `mode: preview`, `production_audit: false`, 20 core/preview slots, 20 
 - `decideFinal` evaluates the completed live 200-slot run, fixed 100 text/SVG denominators, canonical ten families and all `${family}/${lane}` cells, uniqueness/coverage, known-complete cost and USD 0.10 cost/approved, approved near-duplicate flags with required per-family and family/lane novelty/quality/missing-evidence disclosure, same-config live calibration with 10/10 denominators, completed human audit with independent total/approved inspectability denominators and cross-counter consistency, unresolved-defect/disagreement counts, routes, and the frozen protocol. Every predicate is emitted with `pass|fail|not_evaluable`, required and actual values.
 - Decision precedence: incomplete/non-live/missing-audit/unknown-cost/missing-frozen evidence → `revise`; otherwise strong failure (modality approval <50%, calibration sensitivity/specificity <50%, or repeatable correctness defect >=2 in one family) → `reject`; all predicates pass → `proceed`; other borderline/failed predicates → `revise`. Incomplete runs are never reported as definitive business rejection.
 - Near-duplicate approval shortfalls disclose novelty-only, additional-quality, and incomplete/failed-review categories separately without waiving the frozen approval floor. The audit is described as stratified/enriched, not an unbiased population estimate. Failed predicates and caveats are always emitted.
-- `npm run freeze -- --evidence <bundle.json> [--max-run-cost <usd>] [--db <path>] [--operator <name>]` validates a JSON bundle `{ "freeze": FreezeProtocolEvidence, "final"?: FinalDecisionEvidence }`, can append a successful frozen protocol to `protocol_freezes`, and prints the freeze result and optional decision. `--smoke`/`--calibration` IDs are future-facing; P43 refuses to invent live evidence and requires `--evidence` until P44/P48/P49 supply the real graph. No network or expenditure.
+- `npm run freeze -- --evidence <bundle.json> [--max-run-cost <usd>] [--db <path>] [--operator <name>]` validates a JSON bundle `{ "freeze": FreezeProtocolEvidence, "final"?: FinalDecisionEvidence }`, can append a successful frozen protocol to `protocol_freezes`, and prints the freeze result and optional decision. `--smoke`/`--calibration` IDs are future-facing; P43 refuses to invent live evidence and requires `--evidence`. P44 adds verified provenance; P48/P49 supply live calibration/smoke evidence. No network or expenditure.
 
 **Verification commands and results**
 
@@ -2645,3 +2645,84 @@ Expected: focused 18 tests pass; freeze help exits 0 and mentions `--evidence`; 
 **Acceptance:** accepted by the user on 2026-11-06 after the focused 18-test suite, full `npm run check` (44 files / 587 tests), freeze CLI help, and synthetic complete-pass/one-predicate-failure inspection. P43 remains a pure gate: no live evidence collection, expenditure approval, or primary execution.
 
 **Out of scope, unchanged:** actually approving live expenditure, collecting live preflight/calibration/smoke/provenance evidence (P44/P46/P48/P49), running the primary cohort, and changing measured outcomes.
+
+## P44. Source Provenance and Artifact Security Boundary — 2026-11-06
+
+**State:** implemented, offline-verified, artifact-checked, and accepted by the user on 2026-11-06. This phase archives and verifies the local implementation boundary and hardens exports; it does not collect live evidence, approve expenditure, run the primary cohort, or change measured outcomes.
+
+**Files**
+
+- Provenance: `src/experiment/provenance.ts` (allowlisted source/prompt/schema/config/font/license scan, SHA-256 manifest, strict schema bundle, runtime/Git metadata, safe archive read/write/verify, freeze provider)
+- Freeze integration: `src/cli/freeze.ts` (`--archive-provenance`, `--verify-provenance`, `--provenance`, `--source-root`, verified provider for `canFreezeProtocol`)
+- Export hardening: `src/reporting/export.ts` (sensitive-key removal and credential-shaped string redaction across HTML/CSV/JSONL/puzzle/manifest surfaces); `src/ai/redact.ts` exposes `isSensitiveKey`
+- Tests: `tests/experiment/provenance.test.ts`, `tests/security/artifacts.test.ts`
+- Documentation: `docs/reproduction.md`, `README.md`, this file
+- Ignored artifact location used for acceptance: `data/provenance/` (`data/` is already ignored; no commit or upload)
+
+**Observable behavior**
+
+- `npm run freeze -- --archive-provenance <dir>` scans an explicit allowlist: every regular file under `src/` except `src/ai/prompts/`, every prompt asset, every file under `scripts/`, the eight configuration/lockfile paths, the pinned DejaVu font and license, and a generated strict schema bundle for all ten families plus wording/blind/alignment. It writes `manifest.json`, canonical `schemas.json`, and byte-exact `files/` copies atomically. It does not require an evidence bundle or database.
+- The manifest records per-file path/category/SHA-256/byte length, `sourceHash`, role/family-keyed `promptHashes` (`spec:<family>`, `wording`, `blind_text`, `blind_vision`, `alignment_text`, `alignment_vision`), role/family-keyed `schemaHashes`, `configHash`, prompt/schema bundle hashes, font/license/lockfile hashes, `archiveHash`, `createdAt`, runtime metadata, and optional Git commit/dirty status. The full 23-entry strict schema bundle remains in `schemas.json`; `--archive-provenance` also prints the exact `configuration` projection required by a freeze bundle. `archiveHash` is content-only; runtime and Git are recorded metadata.
+- `npm run freeze -- --verify-provenance <dir>` re-hashes the current source tree and reports missing, modified, extra, symlinked, secret-canary, source/config/prompt/schema/font/license/lockfile, and archive-integrity failures. `--provenance <dir>` uses the verified archive as the freeze provider; any drift rejects the freeze before database persistence. Without `--provenance`, the CLI explicitly caveats that the bundle provenance was not source-verified.
+- The archive rejects `.env`/`.env.*`, `.git`, `node_modules`, `data`, `dist`, `coverage`, `test-results`, and `playwright-report` path segments; rejects symlinks in source or archive paths using a pre-open type gate plus `O_NOFOLLOW`/`O_NONBLOCK` and an opened-descriptor path check; validates relative POSIX archive paths against traversal; enumerates `files/` on read so extra unlisted files are rejected; and rejects caller-supplied secret canaries without echoing them. Role/family `promptHashes`, `schemaHashes`, and `schemas.json` always describe the running implementation; `--source-root` changes the file-inventory/verification tree, so a real archive should use the repository root. The CLI passes `OPENROUTER_API_KEY` as a canary when present. No environment dump, Git write, commit, network request, or model call occurs.
+- A dirty source tree is supported: `git.dirty=true` is recorded, and replay identity comes from the copied files/hashes rather than a clean commit. Existing archives with a different `archiveHash` are rejected instead of overwritten.
+- Exports drop sensitive object keys (`authorization`, `api_key`, `apikey`, `openrouter_api_key`, `x-api-key`) and redact `sk-or-v1-*`, `sk-*`, `Bearer *`, and `OPENROUTER_API_KEY=*` strings before writing HTML, CSV, JSONL, puzzle JSON, and manifest JSON. SVG/PNG artifacts are scanned for credential-shaped text and the export is refused with `UNSAFE_ARTIFACT` rather than copied; all report images are validated before any image write, so an unsafe SVG cannot leave a paired PNG behind. PNG pixels are not byte-inspectable; the SVG/source-text gate is the effective visual-content check. The public visible-presentation contract remains strict: a `reveal` key is rejected.
+- Local replay uses stored raw response artifacts through `replaySavedResponse`; content, parsed content, usage, and cost classification are identical across replays, no new attempt is created, and no provider call is made. This is stored-evidence replay, not a promise of identical future remote generations.
+- Export/report/replay are read-only with respect to primary run/slot/stage/artifact rows; the security test hashes those tables before and after export/report and asserts equality.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/experiment/provenance.test.ts` | exit 0; 8 tests passed. |
+| `npm exec -- vitest run tests/security/artifacts.test.ts` | exit 0; 6 tests passed. |
+| `npm exec -- vitest run tests/experiment/freeze.test.ts tests/reporting/export.test.ts tests/reporting/html.test.ts tests/security/artifacts.test.ts tests/experiment/provenance.test.ts` | exit 0; 5 files / 50 tests passed. |
+| `npm run lint` | exit 0. |
+| `npm run typecheck` | exit 0. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 46 files / 601 tests passed, build succeeded. |
+| `npm run test:browser` | exit 0; 6 Playwright Chromium tests passed. |
+| `npm run --silent freeze -- --archive-provenance data/provenance` | exit 0; 125 files, 7 prompt files, 15 prompt hashes, 23 schemas, 15 schema hashes, Git dirty snapshot recorded. |
+| `npm run --silent freeze -- --verify-provenance data/provenance` | exit 0; `ok:true`, zero failures, same `archiveHash`. |
+
+The focused suites cover deterministic allowlist/hash output and the role/family metadata contract; modified/missing/extra/symlink detection; `.env`/unlisted-file exclusion and secret-canary rejection; archive write/idempotence/tamper/path-traversal/symlink/extra-file rejection; missing prompt/config/font rejection; dirty and unavailable Git; verified freeze acceptance and code/hash drift rejection; path-keyed bundle rejection; archive conflict rejection; CLI archive/verify/use paths; credential redaction across HTML/CSV/JSONL/puzzle/manifest; credential-shaped image rejection and pre-write image ordering; hostile HTML/CSV escaping; SVG script/external-reference checks; closed reveal details; strict public visible-presentation parsing; replay identity; and unchanged primary evidence hashes.
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below.
+2. Confirm the archive command prints `"ok": true` with 64-hex `archiveHash`, `sourceHash`, and `configHash`, 125 files, 7 prompt files, 15 prompt hashes, 23 schemas, 15 schema hashes, and a Git object (dirty is acceptable).
+3. Inspect `data/provenance/manifest.json`; confirm `files` categories, `promptHashes`, `schemaHashes`, `fontHash`, `licenseHash`, `lockfileHash`, `runtime`, and `git`.
+4. Inspect `data/provenance/schemas.json` and `data/provenance/files/src/ai/prompts/v1/spec.txt`; confirm the schema bundle and byte-exact copies exist.
+5. Confirm `data/provenance/files/.env` does not exist and the manifest does not contain `OPENROUTER_API_KEY` or a secret value.
+6. Run the verify command; confirm `"ok": true` and an empty `failures` array. The focused provenance test is the exact proof for modifying, deleting, adding, or symlinking a file and for freeze drift rejection.
+7. Confirm `npm run check` reports 46 files / 601 tests and a successful build, and `npm run test:browser` reports 6 passed.
+8. Confirm no network, paid, Git-write, or live model operation occurred.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+npm exec -- vitest run tests/experiment/provenance.test.ts tests/security/artifacts.test.ts
+rm -rf data/provenance
+npm run --silent freeze -- --archive-provenance data/provenance > /tmp/p44-archive.json
+npm run --silent freeze -- --verify-provenance data/provenance > /tmp/p44-verify.json
+node -e "const s=require('/tmp/p44-archive.json'); console.log({ok:s.provenance.ok,archiveHash:s.provenance.summary.archiveHash,sourceHash:s.provenance.summary.sourceHash,configHash:s.provenance.summary.configHash,files:s.provenance.summary.fileCount,promptFiles:s.provenance.summary.promptFileCount,promptHashes:s.provenance.summary.promptHashCount,schemas:s.provenance.summary.schemaCount,schemaHashes:s.provenance.summary.schemaHashCount,git:s.provenance.summary.git});"
+node -e "const s=require('/tmp/p44-verify.json'); console.log({ok:s.provenance.ok,failures:s.provenance.failures,archiveHash:s.provenance.summary.archiveHash});"
+test -f data/provenance/manifest.json
+test -f data/provenance/schemas.json
+test -f data/provenance/files/src/ai/prompts/v1/spec.txt
+test -f data/provenance/files/assets/fonts/DejaVuSans.ttf
+test ! -e data/provenance/files/.env
+grep -q '"archiveHash"' data/provenance/manifest.json
+grep -q '"schemaBundleHash"' data/provenance/manifest.json
+npm run check
+npm run test:browser
+```
+
+Expected: focused tests pass; archive and verify print `"ok": true`; manifest has the required 64-hex hashes and role/family-keyed prompt/schema maps; prompt/font copies exist; no `.env`; full check ends with 46 files / 601 tests and a successful build; browser suite reports 6 passed. The focused provenance test is the exact non-UI proof for missing/modified/extra/symlink files, secret canaries, archive tampering/traversal, dirty snapshots, and code/hash drift rejection.
+
+**Decision-reviewer:** the first static pass found four findings. Medium: the real provenance provider returned prompt hashes keyed by prompt file path and schema hashes keyed by raw schema name, while the freeze bundle convention is role/family-keyed, so a genuine bundle could be rejected even after a clean archive verification; the P44 positive test copied its configuration from the same snapshot and could not detect the mismatch. Fixed by deriving `promptHashes`/`schemaHashes` from the production prompt metadata functions (`spec:<family>`, `wording`, `blind_text`, `blind_vision`, `alignment_text`, `alignment_vision`), adding `provenanceConfigurationFromSnapshot`, printing the exact `configuration` projection on archive/verify/use paths, documenting the bundle contract, asserting the maps against the metadata functions in the test, and adding a path-keyed/raw-schema-name negative case that expects `PROVENANCE_MISMATCH`. Low: exported SVG/PNG bytes bypassed credential redaction while documentation claimed coverage; fixed by adding `assertArtifactExportSafe`/`validateArtifactForExport`, refusing credential-shaped SVG/PNG artifacts with `UNSAFE_ARTIFACT`, and narrowing the documentation. Low: `readProvenanceArchive` verified only manifest-listed files; fixed by enumerating the archive `files/` tree and rejecting extra or missing entries, with a regression test. Low/Probable: symlink checks were lstat-then-read TOCTOU; fixed with a pre-open regular-file gate, `O_NOFOLLOW`/`O_NONBLOCK`, `fstat` and `/proc/self/fd` root containment, and descriptor-based reads. The second verification pass confirmed those four fixes and found three Low residuals. First, `writeHtmlReport` copied PNG before validating the paired SVG, so an unsafe SVG could leave a rasterized PNG on disk; fixed by validating every report image before any image write and copying SVG first, with a regression test that asserts the PNG is absent. Second, the new `readRegularFile` opened before checking the file type, so a FIFO at an allowlisted path could block; fixed with an lstat pre-open gate and `O_NONBLOCK`, and `readLockfileVersion` now uses the same reader. Third, `--source-root` file inventory could be paired with running-implementation prompt/schema hashes; documented that role/family hashes and `schemas.json` always describe the running implementation and that a real archive should use the repository root, and exposed the `configuration` projection on all CLI paths. The third verification pass found no material findings.
+
+**Acceptance:** accepted by the user on 2026-11-06 after the focused provenance/security suites (8 + 6 tests; 5 files / 50 focused tests), full `npm run check` (46 files / 601 tests), `npm run test:browser` (6 passed), archive/verify CLI inspection, and the three decision-reviewer passes. Final archive `archiveHash` is `6c5ee807e233b280e5ac8913e414676548b7f383a9d7d44aa54751af231f12c2`; verification returned `ok:true` with zero failures.
+
+**Out of scope, unchanged:** live preflight/calibration/smoke evidence collection (P46/P48/P49), frozen-protocol-plus-provenance packaging (P50), paid requests, primary execution, and any claim that a future remote generation is reproducible.
