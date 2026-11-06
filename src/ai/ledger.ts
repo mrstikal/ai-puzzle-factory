@@ -94,7 +94,7 @@ export const LogicalCallInputSchema = z
     requestHash: Sha256Schema.optional(),
     expectedSchemaHash: Sha256Schema,
     model: z.string().min(1).max(200),
-    provider: z.string().min(1).max(200),
+    routingPolicy: z.literal("balanced").optional(),
     outputCapField: z.enum(["max_tokens", "max_completion_tokens"]).nullable().optional(),
     createdAt: z.iso.datetime().optional(),
   })
@@ -169,7 +169,7 @@ export const LogicalCallSchema = z
     requestBody: requiredJsonSchema,
     expectedSchemaHash: Sha256Schema,
     model: z.string().min(1).max(200),
-    provider: z.string().min(1).max(200),
+    routingPolicy: z.literal("balanced"),
     outputCapField: z.enum(["max_tokens", "max_completion_tokens"]).nullable(),
     retryNotBefore: z.iso.datetime().nullable(),
     createdAt: z.iso.datetime(),
@@ -212,7 +212,9 @@ export const RequestAttemptSchema = z
     expectedSchemaHash: Sha256Schema,
     role: LedgerRoleSchema,
     model: z.string().min(1).max(200),
-    provider: z.string().min(1).max(200),
+    routingPolicy: z.literal("balanced"),
+    observedModel: z.string().min(1).max(200).nullable(),
+    observedProvider: z.string().min(1).max(200).nullable(),
     httpStatus: z.number().int().min(100).max(599).nullable(),
     responseId: z.string().min(1).max(200).nullable(),
     generationId: z.string().min(1).max(200).nullable(),
@@ -292,6 +294,8 @@ export const SaveAttemptResponseInputSchema = z
     reasoningTokens: z.number().int().nonnegative().nullable().optional(),
     priceEstimateUsd: UsdSchema.nullable().optional(),
     actualCostUsd: UsdSchema.nullable().optional(),
+    observedModel: z.string().min(1).max(200).nullable().optional(),
+    observedProvider: z.string().min(1).max(200).nullable().optional(),
     errorClassification: z.string().min(1).max(200).nullable().optional(),
     partialCompletion: z.boolean().optional(),
     updatedAt: z.iso.datetime().optional(),
@@ -312,7 +316,7 @@ interface LogicalCallRow {
   request_body_json: string;
   expected_schema_hash: string;
   model: string;
-  provider: string;
+  routing_policy: string;
   output_cap_field: string | null;
   retry_not_before: string | null;
   created_at: string;
@@ -329,7 +333,9 @@ interface RequestAttemptRow {
   expected_schema_hash: string;
   role: string;
   model: string;
-  provider: string;
+  routing_policy: string;
+  observed_model: string | null;
+  observed_provider: string | null;
   http_status: number | null;
   response_id: string | null;
   generation_id: string | null;
@@ -471,7 +477,7 @@ function rowToLogicalCall(row: LogicalCallRow): LogicalCall {
       requestBody: parseJson(row.request_body_json, "logical call request body"),
       expectedSchemaHash: row.expected_schema_hash,
       model: row.model,
-      provider: row.provider,
+      routingPolicy: row.routing_policy,
       outputCapField: row.output_cap_field,
       retryNotBefore: row.retry_not_before,
       createdAt: row.created_at,
@@ -494,7 +500,9 @@ function rowToAttempt(row: RequestAttemptRow): RequestAttempt {
       expectedSchemaHash: row.expected_schema_hash,
       role: row.role,
       model: row.model,
-      provider: row.provider,
+      routingPolicy: row.routing_policy,
+      observedModel: row.observed_model,
+      observedProvider: row.observed_provider,
       httpStatus: row.http_status,
       responseId: row.response_id,
       generationId: row.generation_id,
@@ -618,7 +626,7 @@ function getLogicalCallRow(
 ): LogicalCallRow | undefined {
   return db
     .prepare(
-      "SELECT logical_call_id, run_id, slot_id, probe_key, role, run_kind, pool, state, request_hash, request_body_json, expected_schema_hash, model, provider, output_cap_field, retry_not_before, created_at, updated_at FROM logical_calls WHERE logical_call_id = ?",
+      "SELECT logical_call_id, run_id, slot_id, probe_key, role, run_kind, pool, state, request_hash, request_body_json, expected_schema_hash, model, routing_policy, output_cap_field, retry_not_before, created_at, updated_at FROM logical_calls WHERE logical_call_id = ?",
     )
     .get(logicalCallId) as LogicalCallRow | undefined;
 }
@@ -629,7 +637,7 @@ function getAttemptRow(
 ): RequestAttemptRow | undefined {
   return db
     .prepare(
-      "SELECT attempt_id, logical_call_id, attempt_number, state, request_hash, request_body_json, expected_schema_hash, role, model, provider, http_status, response_id, generation_id, raw_response_artifact_id, finish_reason, prompt_tokens, completion_tokens, total_tokens, cached_read_tokens, cached_write_tokens, reasoning_tokens, price_estimate_usd, actual_cost_usd, cost_status, error_classification, partial_completion, started_at, finished_at, elapsed_ms, created_at, updated_at FROM request_attempts WHERE attempt_id = ?",
+      "SELECT attempt_id, logical_call_id, attempt_number, state, request_hash, request_body_json, expected_schema_hash, role, model, routing_policy, observed_model, observed_provider, http_status, response_id, generation_id, raw_response_artifact_id, finish_reason, prompt_tokens, completion_tokens, total_tokens, cached_read_tokens, cached_write_tokens, reasoning_tokens, price_estimate_usd, actual_cost_usd, cost_status, error_classification, partial_completion, started_at, finished_at, elapsed_ms, created_at, updated_at FROM request_attempts WHERE attempt_id = ?",
     )
     .get(attemptId) as RequestAttemptRow | undefined;
 }
@@ -680,7 +688,7 @@ export function listAttempts(
 ): RequestAttempt[] {
   const rows = db
     .prepare(
-      "SELECT attempt_id, logical_call_id, attempt_number, state, request_hash, request_body_json, expected_schema_hash, role, model, provider, http_status, response_id, generation_id, raw_response_artifact_id, finish_reason, prompt_tokens, completion_tokens, total_tokens, cached_read_tokens, cached_write_tokens, reasoning_tokens, price_estimate_usd, actual_cost_usd, cost_status, error_classification, partial_completion, started_at, finished_at, elapsed_ms, created_at, updated_at FROM request_attempts WHERE logical_call_id = ? ORDER BY attempt_number",
+      "SELECT attempt_id, logical_call_id, attempt_number, state, request_hash, request_body_json, expected_schema_hash, role, model, routing_policy, observed_model, observed_provider, http_status, response_id, generation_id, raw_response_artifact_id, finish_reason, prompt_tokens, completion_tokens, total_tokens, cached_read_tokens, cached_write_tokens, reasoning_tokens, price_estimate_usd, actual_cost_usd, cost_status, error_classification, partial_completion, started_at, finished_at, elapsed_ms, created_at, updated_at FROM request_attempts WHERE logical_call_id = ? ORDER BY attempt_number",
     )
     .all(logicalCallId) as RequestAttemptRow[];
   return rows.map(rowToAttempt);
@@ -782,7 +790,7 @@ export function createLogicalCall(
   try {
     withTransaction(db, () => {
       db.prepare(
-        "INSERT INTO logical_calls (logical_call_id, run_id, slot_id, probe_key, role, run_kind, pool, state, request_hash, request_body_json, expected_schema_hash, model, provider, output_cap_field, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO logical_calls (logical_call_id, run_id, slot_id, probe_key, role, run_kind, pool, state, request_hash, request_body_json, expected_schema_hash, model, provider, routing_policy, output_cap_field, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'balanced', ?, ?, ?, ?)",
       ).run(
         logicalCallId,
         runId,
@@ -796,7 +804,7 @@ export function createLogicalCall(
         body.json,
         call.expectedSchemaHash,
         call.model,
-        call.provider,
+        call.routingPolicy ?? "balanced",
         call.outputCapField ?? null,
         createdAt,
         createdAt,
@@ -866,8 +874,8 @@ export function getOrCreateLogicalCall(
   if (stored.model !== call.model) {
     mismatches.push("model");
   }
-  if (stored.provider !== call.provider) {
-    mismatches.push("provider");
+  if (stored.routingPolicy !== (call.routingPolicy ?? "balanced")) {
+    mismatches.push("routing policy");
   }
   if (stored.outputCapField !== (call.outputCapField ?? null)) {
     mismatches.push("output cap field");
@@ -923,7 +931,7 @@ export function createAttempt(
         updateCallState(db, call, "prepared", createdAt);
       }
       db.prepare(
-        "INSERT INTO request_attempts (attempt_id, logical_call_id, attempt_number, state, request_hash, request_body_json, expected_schema_hash, role, model, provider, http_status, response_id, generation_id, raw_response_artifact_id, finish_reason, prompt_tokens, completion_tokens, total_tokens, cached_read_tokens, cached_write_tokens, reasoning_tokens, price_estimate_usd, actual_cost_usd, cost_status, error_classification, partial_completion, started_at, finished_at, elapsed_ms, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'unknown', NULL, 0, NULL, NULL, NULL, ?, ?)",
+        "INSERT INTO request_attempts (attempt_id, logical_call_id, attempt_number, state, request_hash, request_body_json, expected_schema_hash, role, model, provider, routing_policy, observed_model, observed_provider, http_status, response_id, generation_id, raw_response_artifact_id, finish_reason, prompt_tokens, completion_tokens, total_tokens, cached_read_tokens, cached_write_tokens, reasoning_tokens, price_estimate_usd, actual_cost_usd, cost_status, error_classification, partial_completion, started_at, finished_at, elapsed_ms, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'balanced', ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'unknown', NULL, 0, NULL, NULL, NULL, ?, ?)",
       ).run(
         attemptId,
         call.logicalCallId,
@@ -934,7 +942,7 @@ export function createAttempt(
         call.expectedSchemaHash,
         call.role,
         call.model,
-        call.provider,
+        call.routingPolicy,
         createdAt,
         createdAt,
       );
@@ -1076,8 +1084,10 @@ export function saveAttemptResponse(
 
   withTransaction(db, () => {
     db.prepare(
-      "UPDATE request_attempts SET state = 'response_saved', http_status = ?, response_id = ?, generation_id = ?, raw_response_artifact_id = ?, finish_reason = ?, prompt_tokens = ?, completion_tokens = ?, total_tokens = ?, cached_read_tokens = ?, cached_write_tokens = ?, reasoning_tokens = ?, price_estimate_usd = ?, actual_cost_usd = ?, cost_status = ?, error_classification = ?, partial_completion = ?, finished_at = ?, elapsed_ms = ?, updated_at = ? WHERE attempt_id = ?",
+      "UPDATE request_attempts SET state = 'response_saved', observed_model = ?, observed_provider = ?, http_status = ?, response_id = ?, generation_id = ?, raw_response_artifact_id = ?, finish_reason = ?, prompt_tokens = ?, completion_tokens = ?, total_tokens = ?, cached_read_tokens = ?, cached_write_tokens = ?, reasoning_tokens = ?, price_estimate_usd = ?, actual_cost_usd = ?, cost_status = ?, error_classification = ?, partial_completion = ?, finished_at = ?, elapsed_ms = ?, updated_at = ? WHERE attempt_id = ?",
     ).run(
+      data.observedModel ?? null,
+      data.observedProvider ?? null,
       data.httpStatus,
       data.responseId ?? null,
       data.generationId ?? null,

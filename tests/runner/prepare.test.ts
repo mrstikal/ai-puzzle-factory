@@ -73,9 +73,9 @@ function route(role: "spec" | "wording"): ResolvedRoute {
   return {
     role,
     model: "mock/model",
-    providerTag: "mock",
-    providerName: "Mock Provider",
-    endpointTag: "mock",
+    routingPolicy: "balanced",
+    compatibleEndpointTags: ["mock"],
+    compatibleProviderNames: ["Mock Provider"],
     outputCapField: "max_tokens",
     maxOutputTokens: 8192,
     minPromptTokens: 16_384,

@@ -141,6 +141,8 @@ export interface OpenRouterAttemptResult {
   readonly generationId: string | null;
   readonly actualCostUsd: string | null;
   readonly costStatus: "known" | "unknown" | "not_applicable";
+  readonly observedModel: string | null;
+  readonly observedProvider: string | null;
 }
 
 export interface OpenRouterCallResult {
@@ -177,9 +179,8 @@ const ChatRequestSchema = z
           .refine((value) => value !== undefined, "json schema is required"),
       }),
     }),
-    provider: z.looseObject({
-      only: z.array(z.string().min(1).max(200)).length(1),
-      allow_fallbacks: z.literal(false),
+    provider: z.strictObject({
+      allow_fallbacks: z.literal(true),
       require_parameters: z.literal(true),
     }),
     max_tokens: z.number().int().positive().optional(),
@@ -240,6 +241,8 @@ interface ParsedResponse {
   readonly partialCompletion: boolean;
   readonly hasOutput: boolean;
   readonly noEligibleProvider: boolean;
+  readonly observedModel: string | null;
+  readonly observedProvider: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -407,6 +410,9 @@ function parseResponse(
   const topLevelError = record?.error !== undefined && record?.error !== null;
   const choiceError = choice?.error !== undefined && choice?.error !== null;
   const generationId = generationIdFrom(record);
+  const observedModel = asString(record?.model);
+  const observedProvider =
+    asString(record?.provider) ?? asString(record?.provider_name);
   const errorMessageRaw =
     errorText(record?.error) ?? errorText(choice?.error) ?? null;
   const errorMessage =
@@ -472,6 +478,8 @@ function parseResponse(
     partialCompletion,
     hasOutput,
     noEligibleProvider: noProvider,
+    observedModel,
+    observedProvider,
   };
 }
 
@@ -597,6 +605,8 @@ function attemptResult(
         : parsed?.actualCostUsd === null || parsed?.actualCostUsd === undefined
           ? "unknown"
           : "known",
+    observedModel: parsed?.observedModel ?? attempt.observedModel,
+    observedProvider: parsed?.observedProvider ?? attempt.observedProvider,
   };
 }
 
@@ -1003,7 +1013,14 @@ export function createOpenRouterTransport(
         input.apiKey,
         response.truncated,
       );
-      const outcome = classifyOutcome(response.status, parsed, response.truncated);
+      const modelMismatch =
+        parsed.observedModel !== null && parsed.observedModel !== call.model;
+      const effectiveErrorClassification = modelMismatch
+        ? "model_identity_mismatch"
+        : parsed.errorClassification;
+      const outcome = modelMismatch
+        ? "failed_known"
+        : classifyOutcome(response.status, parsed, response.truncated);
       const retryAfterSeconds = parseRetryAfter(
         response.headers["retry-after"] ?? null,
         finishedAt,
@@ -1023,10 +1040,19 @@ export function createOpenRouterTransport(
         cachedWriteTokens: parsed.usage.cachedWriteTokens,
         reasoningTokens: parsed.usage.reasoningTokens,
         actualCostUsd: parsed.actualCostUsd,
-        errorClassification: parsed.errorClassification,
+        observedModel: parsed.observedModel,
+        observedProvider: parsed.observedProvider,
+        errorClassification: effectiveErrorClassification,
         partialCompletion: parsed.partialCompletion,
         updatedAt: finishedAt.toISOString(),
       });
+      if (modelMismatch) {
+        input.db
+          .prepare(
+            "UPDATE runs SET control_state = 'paused_operator' WHERE run_id = ? AND control_state = 'running'",
+          )
+          .run(call.runId);
+      }
 
       await options.afterResponseSaved?.(attemptAfterSave.attemptId);
 
@@ -1056,14 +1082,14 @@ export function createOpenRouterTransport(
           markAttemptFailedKnown(
             input.db,
             attemptAfterSave.attemptId,
-            parsed.errorClassification,
+            effectiveErrorClassification,
             finishedAt.toISOString(),
           );
         } else {
           markAttemptUncertain(
             input.db,
             attemptAfterSave.attemptId,
-            parsed.errorClassification,
+            effectiveErrorClassification,
             finishedAt.toISOString(),
           );
         }
@@ -1076,10 +1102,14 @@ export function createOpenRouterTransport(
               code:
                 outcome === "refused_unprocessed"
                   ? "REFUSED_UNPROCESSED"
-                  : parsed.errorClassification.toUpperCase(),
-              message:
-                parsed.errorMessage ??
-                parsed.errorClassification.replaceAll("_", " "),
+                  : (effectiveErrorClassification ?? "provider_error").toUpperCase(),
+              message: modelMismatch
+                ? `observed model ${parsed.observedModel} differs from requested ${call.model}`
+                : parsed.errorMessage ??
+                  (effectiveErrorClassification ?? "provider_error").replaceAll(
+                    "_",
+                    " ",
+                  ),
             };
       const retryDecision =
         outcome === "refused_unprocessed"
@@ -1283,18 +1313,31 @@ export function replaySavedResponse(
     apiKey,
     false,
   );
+  const call = getLogicalCall(db, attempt.logicalCallId);
+  const modelMismatch =
+    parsed.observedModel !== null && parsed.observedModel !== call.model;
+  const effectiveErrorClassification = modelMismatch
+    ? "model_identity_mismatch"
+    : parsed.errorClassification;
   const outcome =
-    attempt.state === "validated"
-      ? "success"
-      : attempt.state === "failed_known"
-        ? "failed_known"
-        : attempt.state === "uncertain"
-          ? "uncertain"
-          : attempt.state === "refused_unprocessed"
-            ? "refused_unprocessed"
-            : parsed.jsonParsed
-              ? classifyOutcome(attempt.httpStatus ?? 0, parsed, false)
-              : "uncertain";
+    modelMismatch
+      ? "failed_known"
+      : attempt.state === "validated"
+        ? "success"
+        : attempt.state === "failed_known"
+          ? "failed_known"
+          : attempt.state === "uncertain"
+            ? "uncertain"
+            : attempt.state === "refused_unprocessed"
+              ? "refused_unprocessed"
+              : parsed.jsonParsed
+                ? classifyOutcome(attempt.httpStatus ?? 0, parsed, false)
+                : "uncertain";
+  if (modelMismatch) {
+    db.prepare(
+      "UPDATE runs SET control_state = 'paused_operator' WHERE run_id = ? AND control_state = 'running'",
+    ).run(call.runId);
+  }
 
   let current = attempt;
   if (attempt.state === "response_saved") {
@@ -1333,27 +1376,37 @@ export function replaySavedResponse(
         current = markAttemptFailedKnown(
           db,
           attempt.attemptId,
-          parsed.errorClassification,
+          effectiveErrorClassification,
           at,
         );
       } else {
         current = markAttemptUncertain(
           db,
           attempt.attemptId,
-          parsed.errorClassification,
+          effectiveErrorClassification,
           at,
         );
       }
     }
   }
 
+  if (modelMismatch) {
+    db.prepare(
+      "UPDATE request_attempts SET error_classification = ?, updated_at = ? WHERE attempt_id = ?",
+    ).run(effectiveErrorClassification, at, attempt.attemptId);
+    current = getAttempt(db, attempt.attemptId);
+  }
+
   const error =
     outcome === "success" || outcome === "refused_unprocessed"
       ? null
       : {
-          code: current.errorClassification ?? "RESUME_SAVED_FAILURE",
-          message:
-            outcome === "uncertain"
+          code: modelMismatch
+            ? "MODEL_IDENTITY_MISMATCH"
+            : current.errorClassification ?? "RESUME_SAVED_FAILURE",
+          message: modelMismatch
+            ? `observed model ${parsed.observedModel} differs from requested ${call.model}`
+            : outcome === "uncertain"
               ? "saved response replay is uncertain"
               : "saved response replay classified as failed",
         };

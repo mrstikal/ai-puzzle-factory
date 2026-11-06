@@ -339,7 +339,6 @@ export async function reviewText(
   const built = buildChatRequest({
     role: "blind_text",
     model: input.route.model,
-    providerTag: input.route.providerTag,
     outputCapField: input.route.outputCapField,
     maxOutputTokens: input.route.maxOutputTokens,
     messages,
@@ -355,7 +354,7 @@ export async function reviewText(
     requestBody: built.body,
     expectedSchemaHash: metadata.schemaHash,
     model: input.route.model,
-    provider: input.route.providerTag,
+    routingPolicy: "balanced",
     outputCapField: input.route.outputCapField,
     createdAt: startedAt.toISOString(),
   });

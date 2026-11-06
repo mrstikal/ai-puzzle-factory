@@ -114,6 +114,7 @@ function buildOptions(root: string): ProvenanceBuildOptions {
 
 function freezeEvidenceFor(
   provenance: FreezeProtocolEvidence["provenance"],
+  checkedAt: string = new Date(Date.now() - 60_000).toISOString(),
 ): FreezeProtocolEvidence {
   const plan = buildPlanManifest({ runKind: "full" });
   const config = {
@@ -123,6 +124,22 @@ function freezeEvidenceFor(
     routesHash: HASH_D,
     sourceHash: provenance.sourceHash,
     updatedAt: "2026-11-06T08:00:00.000Z",
+    roles: {
+      generator: "mock/generator",
+      textReviewer: "mock/text-reviewer",
+      visionReviewer: "mock/vision-reviewer",
+    },
+    routingPolicy: {
+      mode: "balanced" as const,
+      allowFallbacks: true as const,
+      requireParameters: true as const,
+    },
+    routingConfirmation: {
+      operator: "test-operator",
+      checkedAt,
+      providerSort: "default_balanced" as const,
+      byokConfigured: false as const,
+    },
   };
   return {
     protocolVersion: "1.0.0",
@@ -503,6 +520,7 @@ describe("source provenance", () => {
     expect(loaded.verification.ok).toBe(true);
     const evidence = freezeEvidenceFor(
       provenanceEvidenceFromSnapshot(loaded.snapshot),
+      "2026-11-06T11:55:00.000Z",
     );
     const accepted = canFreezeProtocol(evidence, loaded.provider, {
       now: () => new Date("2026-11-06T12:00:00.000Z"),

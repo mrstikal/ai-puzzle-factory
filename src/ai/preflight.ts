@@ -1,13 +1,18 @@
 import type Database from "better-sqlite3";
+import { Decimal } from "decimal.js";
 import { z } from "zod";
 import { REQUEST_ROLES, type RequestRole } from "../domain/experiment.js";
+import { WordingResponseSchema } from "../domain/presentation.js";
+import { FAMILY_SPEC_SCHEMAS } from "../domain/spec.js";
 import {
   createLogicalCall,
   prepareRequestBody,
 } from "./ledger.js";
 import {
   ALIGNMENT_REVIEW_JSON_SCHEMA,
+  ALIGNMENT_REVIEW_RESPONSE_SCHEMA,
   BLIND_REVIEW_JSON_SCHEMA,
+  BLIND_REVIEW_RESPONSE_SCHEMA,
   FAMILY_SPEC_JSON_SCHEMAS,
   STRICT_SCHEMA_NAME_PATTERN,
   WORDING_JSON_SCHEMA,
@@ -46,10 +51,7 @@ export const LIVE_PROBE_COUNT = LIVE_PROBE_ROLES.length;
 export type PreflightFailureCode =
   | "INVALID_CATALOG"
   | "MODEL_NOT_FOUND"
-  | "PROVIDER_TAG_NOT_FOUND"
-  | "PROVIDER_TAG_BASE_WILDCARD"
-  | "PROVIDER_TAG_AMBIGUOUS"
-  | "ENDPOINT_INACTIVE"
+  | "NO_ACTIVE_ENDPOINT"
   | "MISSING_MODEL_ARCHITECTURE"
   | "MISSING_TEXT_INPUT_MODALITY"
   | "MISSING_IMAGE_INPUT_MODALITY"
@@ -76,7 +78,9 @@ export type PreflightFailureCode =
   | "CATALOG_HTTP_ERROR"
   | "CATALOG_TIMEOUT"
   | "CATALOG_NETWORK_ERROR"
-  | "CATALOG_INVALID_RESPONSE";
+  | "CATALOG_INVALID_RESPONSE"
+  | "ROUTING_CONFIRMATION_INVALID"
+  | "ROUTING_CONFIRMATION_STALE";
 
 export type PreflightErrorCode =
   | "INVALID_CATALOG"
@@ -89,7 +93,9 @@ export type PreflightErrorCode =
   | "CATALOG_HTTP_ERROR"
   | "CATALOG_TIMEOUT"
   | "CATALOG_NETWORK_ERROR"
-  | "CATALOG_INVALID_RESPONSE";
+  | "CATALOG_INVALID_RESPONSE"
+  | "ROUTING_CONFIRMATION_INVALID"
+  | "ROUTING_CONFIRMATION_STALE";
 
 export class PreflightError extends Error {
   readonly code: PreflightErrorCode;
@@ -134,10 +140,10 @@ const CatalogModelSchema = z.looseObject({
   endpoints: z.array(CatalogEndpointSchema).optional(),
 });
 
-const OfflineFixtureRoleSchema = z.strictObject({
+const OfflineFixtureRoleSchema = z.looseObject({
   role: z.enum(REQUEST_ROLES),
   model: z.string().min(1).max(200),
-  provider: z.string().min(1).max(200),
+  provider: z.string().min(1).max(200).optional(),
 });
 
 const RecordedCatalogSchema = z.looseObject({
@@ -169,7 +175,6 @@ export interface CatalogModel {
 export interface OfflineFixtureRole {
   readonly role: RequestRole;
   readonly model: string;
-  readonly provider: string;
 }
 
 export interface RecordedCatalog {
@@ -232,7 +237,6 @@ export function parseRecordedCatalog(input: unknown): RecordedCatalog {
 export interface RolePreflightRequest {
   readonly role: RequestRole;
   readonly model: string;
-  readonly providerTag: string;
   readonly maxOutputTokens?: number;
   readonly minPromptTokens?: number;
   readonly settings?: AiRoleSettings;
@@ -243,9 +247,9 @@ export interface RolePreflightRequest {
 export interface ResolvedRoute {
   readonly role: RequestRole;
   readonly model: string;
-  readonly providerTag: string;
-  readonly providerName: string | null;
-  readonly endpointTag: string;
+  readonly routingPolicy: "balanced";
+  readonly compatibleEndpointTags: readonly string[];
+  readonly compatibleProviderNames: readonly string[];
   readonly outputCapField: OutputCapField;
   readonly maxOutputTokens: number;
   readonly minPromptTokens: number;
@@ -271,9 +275,9 @@ export interface PreflightFailure {
 export interface RolePreflightResult {
   readonly role: RequestRole;
   readonly model: string;
-  readonly providerTag: string;
   readonly ok: boolean;
   readonly resolved: ResolvedRoute | null;
+  readonly compatibleEndpointTags: readonly string[];
   readonly failures: readonly PreflightFailure[];
   readonly notes: readonly string[];
 }
@@ -381,106 +385,22 @@ function responseFormatForRole(role: RequestRole): StrictJsonSchema {
   }
 }
 
-function validateRole(
+interface EndpointAssessment {
+  readonly endpoint: CatalogEndpoint;
+  readonly outputCapField: OutputCapField;
+  readonly failures: readonly PreflightFailure[];
+  readonly notes: readonly string[];
+}
+
+function assessEndpoint(
   request: RolePreflightRequest,
-  catalog: RecordedCatalog,
-): RolePreflightResult {
+  endpoint: CatalogEndpoint,
+  requiresImage: boolean,
+  maxOutputTokens: number,
+  minPromptTokens: number,
+): EndpointAssessment {
   const failures: PreflightFailure[] = [];
   const notes: string[] = [];
-  const model = catalog.models.find((candidate) => candidate.id === request.model);
-  if (model === undefined) {
-    failures.push({
-      role: request.role,
-      code: "MODEL_NOT_FOUND",
-      detail: `model ${request.model} is not present in the recorded catalog`,
-    });
-    return {
-      role: request.role,
-      model: request.model,
-      providerTag: request.providerTag,
-      ok: false,
-      resolved: null,
-      failures,
-      notes,
-    };
-  }
-
-  const exact = model.endpoints.filter(
-    (endpoint) => endpoint.tag === request.providerTag,
-  );
-  if (exact.length > 1) {
-    failures.push({
-      role: request.role,
-      code: "PROVIDER_TAG_AMBIGUOUS",
-      detail: `endpoint tag ${request.providerTag} appears ${exact.length} times for model ${model.id}`,
-    });
-  } else if (exact.length === 0) {
-    const baseMatches = model.endpoints.filter((endpoint) =>
-      endpoint.tag.startsWith(`${request.providerTag}/`),
-    );
-    if (baseMatches.length > 0) {
-      failures.push({
-        role: request.role,
-        code: "PROVIDER_TAG_BASE_WILDCARD",
-        detail: `provider ${request.providerTag} is a base slug; configure one exact tag such as ${baseMatches.map((endpoint) => endpoint.tag).join(", ")}`,
-      });
-    } else {
-      failures.push({
-        role: request.role,
-        code: "PROVIDER_TAG_NOT_FOUND",
-        detail: `model ${model.id} has no endpoint tag ${request.providerTag}`,
-      });
-    }
-  }
-
-  const endpoint = exact[0];
-  if (endpoint === undefined) {
-    return {
-      role: request.role,
-      model: request.model,
-      providerTag: request.providerTag,
-      ok: false,
-      resolved: null,
-      failures,
-      notes,
-    };
-  }
-
-  if (endpoint.status !== 0) {
-    failures.push({
-      role: request.role,
-      code: "ENDPOINT_INACTIVE",
-      detail: `endpoint ${endpoint.tag} status is ${String(endpoint.status)}; only status 0 is active`,
-    });
-  }
-
-  if (model.inputModalities.length === 0) {
-    failures.push({
-      role: request.role,
-      code: "MISSING_MODEL_ARCHITECTURE",
-      detail: `model ${model.id} does not declare input modalities`,
-    });
-  } else if (!model.inputModalities.includes("text")) {
-    failures.push({
-      role: request.role,
-      code: "MISSING_TEXT_INPUT_MODALITY",
-      detail: `model ${model.id} architecture input modalities are ${model.inputModalities.join(", ")} and omit text`,
-    });
-  }
-
-  const requiresImage = requiresImageForRole(request.role);
-  if (requiresImage) {
-    if (!model.inputModalities.includes("image")) {
-      failures.push({
-        role: request.role,
-        code: "MISSING_IMAGE_INPUT_MODALITY",
-        detail: `model ${model.id} architecture input modalities are ${model.inputModalities.join(", ") || "missing"}; image input is not declared`,
-      });
-    } else {
-      notes.push("vision_probe_required");
-    }
-  }
-
   const supported = new Set(endpoint.supportedParameters);
   if (!supported.has("structured_outputs")) {
     failures.push({
@@ -490,7 +410,7 @@ function validateRole(
     });
   }
 
-  let outputCapField: OutputCapField | null = null;
+  let outputCapField: OutputCapField = "max_tokens";
   if (supported.has("max_tokens")) {
     outputCapField = "max_tokens";
   } else if (supported.has("max_completion_tokens")) {
@@ -502,14 +422,6 @@ function validateRole(
       detail: `endpoint ${endpoint.tag} advertises neither max_tokens nor max_completion_tokens`,
     });
   }
-
-  const maxOutputTokens =
-    request.maxOutputTokens ?? defaultMaxOutputTokensFor(request.role);
-  const minPromptTokens =
-    request.minPromptTokens ??
-    (requiresImage
-      ? DEFAULT_MIN_PROMPT_TOKENS.vision
-      : DEFAULT_MIN_PROMPT_TOKENS.text);
 
   if (endpoint.maxCompletionTokens === null) {
     failures.push({
@@ -574,6 +486,82 @@ function validateRole(
     }
   }
 
+  return { endpoint, outputCapField, failures, notes };
+}
+
+function conservativePricing(
+  pricing: readonly Readonly<Record<string, unknown>>[],
+): Readonly<Record<string, unknown>> {
+  const keys = new Set(pricing.flatMap((entry) => Object.keys(entry)));
+  const merged: Record<string, unknown> = {};
+  for (const key of [...keys].sort()) {
+    const values = pricing.map((entry) => entry[key]);
+    if (values.some((value) => value === undefined)) {
+      continue;
+    }
+    try {
+      const decimals = values.map((value) => new Decimal(value as string | number));
+      merged[key] = decimals
+        .reduce((max, value) => (value.gt(max) ? value : max))
+        .toFixed();
+    } catch {
+      merged[key] = values[0];
+    }
+  }
+  return merged;
+}
+
+function validateRole(
+  request: RolePreflightRequest,
+  catalog: RecordedCatalog,
+): RolePreflightResult {
+  const failures: PreflightFailure[] = [];
+  const notes: string[] = [];
+  const model = catalog.models.find((candidate) => candidate.id === request.model);
+  if (model === undefined) {
+    failures.push({
+      role: request.role,
+      code: "MODEL_NOT_FOUND",
+      detail: `model ${request.model} is not present in the recorded catalog`,
+    });
+    return {
+      role: request.role,
+      model: request.model,
+      ok: false,
+      resolved: null,
+      compatibleEndpointTags: [],
+      failures,
+      notes,
+    };
+  }
+
+  if (model.inputModalities.length === 0) {
+    failures.push({
+      role: request.role,
+      code: "MISSING_MODEL_ARCHITECTURE",
+      detail: `model ${model.id} does not declare input modalities`,
+    });
+  } else if (!model.inputModalities.includes("text")) {
+    failures.push({
+      role: request.role,
+      code: "MISSING_TEXT_INPUT_MODALITY",
+      detail: `model ${model.id} architecture input modalities are ${model.inputModalities.join(", ")} and omit text`,
+    });
+  }
+
+  const requiresImage = requiresImageForRole(request.role);
+  if (requiresImage) {
+    if (!model.inputModalities.includes("image")) {
+      failures.push({
+        role: request.role,
+        code: "MISSING_IMAGE_INPUT_MODALITY",
+        detail: `model ${model.id} architecture input modalities are ${model.inputModalities.join(", ") || "missing"}; image input is not declared`,
+      });
+    } else {
+      notes.push("vision_probe_required");
+    }
+  }
+
   const responseFormat = request.responseFormat ?? responseFormatForRole(request.role);
   let schemaHash: string;
   try {
@@ -596,37 +584,124 @@ function validateRole(
     schemaHash = "";
   }
 
+  const maxOutputTokens =
+    request.maxOutputTokens ?? defaultMaxOutputTokensFor(request.role);
+  const minPromptTokens =
+    request.minPromptTokens ??
+    (requiresImage
+      ? DEFAULT_MIN_PROMPT_TOKENS.vision
+      : DEFAULT_MIN_PROMPT_TOKENS.text);
+
+  const active = model.endpoints.filter((endpoint) => endpoint.status === 0);
+  if (active.length === 0) {
+    failures.push({
+      role: request.role,
+      code: "NO_ACTIVE_ENDPOINT",
+      detail: `model ${model.id} has no active endpoint (status 0)`,
+    });
+  }
+  const assessments = active.map((endpoint) =>
+    assessEndpoint(
+      request,
+      endpoint,
+      requiresImage,
+      maxOutputTokens,
+      minPromptTokens,
+    ),
+  );
+  const compatible = assessments.filter(
+    (assessment) => assessment.failures.length === 0,
+  );
+  if (compatible.length === 0) {
+    failures.push(...assessments.flatMap((assessment) => assessment.failures));
+    return {
+      role: request.role,
+      model: request.model,
+      ok: false,
+      resolved: null,
+      compatibleEndpointTags: [],
+      failures,
+      notes,
+    };
+  }
+
+  const outputCapField = compatible.some(
+    (assessment) => assessment.outputCapField === "max_tokens",
+  )
+    ? "max_tokens"
+    : "max_completion_tokens";
+  const selected = compatible.filter(
+    (assessment) => assessment.outputCapField === outputCapField,
+  );
+  const tags = selected.map((assessment) => assessment.endpoint.tag).sort();
+  const providerNames = [
+    ...new Set(
+      selected
+        .map((assessment) => assessment.endpoint.providerName)
+        .filter((name): name is string => name !== null),
+    ),
+  ].sort();
+  const supportedParameters = [
+    ...selected
+      .map((assessment) => new Set(assessment.endpoint.supportedParameters))
+      .reduce((intersection, next) => {
+        return new Set([...intersection].filter((value) => next.has(value)));
+      }),
+  ].sort();
+  const contextLength = Math.min(
+    ...selected.map((assessment) => assessment.endpoint.contextLength ?? 0),
+  );
+  const maxCompletionTokens = Math.min(
+    ...selected.map(
+      (assessment) => assessment.endpoint.maxCompletionTokens ?? 0,
+    ),
+  );
+  const maxPromptTokens = selected.some(
+    (assessment) => assessment.endpoint.maxPromptTokens === null,
+  )
+    ? null
+    : Math.min(
+        ...selected.map(
+          (assessment) => assessment.endpoint.maxPromptTokens ?? 0,
+        ),
+      );
+  notes.push("balanced_provider_fallback_enabled");
+  notes.push(`compatible_endpoint_count:${tags.length}`);
+  notes.push(...new Set(selected.flatMap((assessment) => assessment.notes)));
+
   const resolved: ResolvedRoute | null =
-    failures.length === 0 && outputCapField !== null
+    failures.length === 0
       ? {
           role: request.role,
           model: model.id,
-          providerTag: request.providerTag,
-          providerName: endpoint.providerName,
-          endpointTag: endpoint.tag,
+          routingPolicy: "balanced",
+          compatibleEndpointTags: tags,
+          compatibleProviderNames: providerNames,
           outputCapField,
           maxOutputTokens,
           minPromptTokens,
-          contextLength: endpoint.contextLength ?? 0,
-          maxPromptTokens: endpoint.maxPromptTokens,
-          maxCompletionTokens: endpoint.maxCompletionTokens ?? 0,
-          supportedParameters: endpoint.supportedParameters,
-          pricing: endpoint.pricing,
+          contextLength,
+          maxPromptTokens,
+          maxCompletionTokens,
+          supportedParameters,
+          pricing: conservativePricing(
+            selected.map((assessment) => assessment.endpoint.pricing),
+          ),
           requiresImage,
           imageInputDeclared: model.inputModalities.includes("image"),
           visionProbeRequired: requiresImage,
           responseFormat,
           schemaHash,
-          settings,
+          settings: request.settings ?? {},
         }
       : null;
 
   return {
     role: request.role,
     model: request.model,
-    providerTag: request.providerTag,
     ok: failures.length === 0,
     resolved,
+    compatibleEndpointTags: tags,
     failures,
     notes,
   };
@@ -677,7 +752,6 @@ export function fixtureRoleRequests(
   return catalog.offlineFixtureRoles.map((role) => ({
     role: role.role,
     model: role.model,
-    providerTag: role.provider,
   }));
 }
 
@@ -996,9 +1070,11 @@ export interface LiveProbePlanItem {
   readonly probeKey: string;
   readonly role: RequestRole;
   readonly model: string;
-  readonly providerTag: string;
+  readonly routingPolicy: "balanced";
+  readonly compatibleEndpointTags: readonly string[];
   readonly outputCapField: OutputCapField;
   readonly maxOutputTokens: number;
+  readonly reservationUsd: string;
   readonly responseFormat: StrictJsonSchema;
   readonly schemaHash: string;
   readonly requiresImage: boolean;
@@ -1094,6 +1170,48 @@ function probeMessages(
   ];
 }
 
+export function conservativeReservationUsd(route: ResolvedRoute): string {
+  const price = (keys: readonly string[]): Decimal => {
+    const values = keys
+      .map((key) => route.pricing[key])
+      .filter((value): value is string | number => value !== undefined)
+      .map((value) => new Decimal(value));
+    return values.length === 0
+      ? new Decimal(0)
+      : values.reduce((max, value) => (value.gt(max) ? value : max));
+  };
+  const promptTokens = new Decimal(route.maxPromptTokens ?? route.contextLength);
+  const outputTokens = new Decimal(route.maxOutputTokens);
+  const promptPrice = price([
+    "prompt",
+    "input",
+    "input_cache_read",
+    "input_cache_write",
+  ]);
+  const completionPrice = price([
+    "completion",
+    "output",
+    "internal_reasoning",
+    "reasoning",
+  ]);
+  const imagePrice = route.requiresImage
+    ? (() => {
+        const declared = price(["image", "image_url"]);
+        return declared.gt(0)
+          ? declared
+          : promptPrice.times(new Decimal(route.contextLength));
+      })()
+    : new Decimal(0);
+  const requestPrice = price(["request"]);
+  const total = promptPrice
+    .times(promptTokens)
+    .plus(completionPrice.times(outputTokens))
+    .plus(imagePrice)
+    .plus(requestPrice)
+    .times(2);
+  return total.toFixed(12);
+}
+
 export function buildLiveProbePlan(input: LiveProbePlanInput): LiveProbePlan {
   assertLiveProbeAuthorization({
     allowPaid: input.allowPaid,
@@ -1114,7 +1232,6 @@ export function buildLiveProbePlan(input: LiveProbePlanInput): LiveProbePlan {
     input.routes.map((route) => ({
       role: route.role,
       model: route.model,
-      providerTag: route.providerTag,
     })),
   );
   if (separation.length > 0) {
@@ -1138,7 +1255,6 @@ export function buildLiveProbePlan(input: LiveProbePlanInput): LiveProbePlan {
     const built = buildChatRequest({
       role,
       model: route.model,
-      providerTag: route.providerTag,
       outputCapField: route.outputCapField,
       maxOutputTokens: route.maxOutputTokens,
       messages: probeMessages(role, input.visionPngDataUrl),
@@ -1151,9 +1267,11 @@ export function buildLiveProbePlan(input: LiveProbePlanInput): LiveProbePlan {
       probeKey: `preflight:${role}`,
       role,
       model: route.model,
-      providerTag: route.providerTag,
+      routingPolicy: "balanced",
+      compatibleEndpointTags: route.compatibleEndpointTags,
       outputCapField: route.outputCapField,
       maxOutputTokens: route.maxOutputTokens,
+      reservationUsd: conservativeReservationUsd(route),
       responseFormat,
       schemaHash: built.schemaHash,
       requiresImage: route.requiresImage,
@@ -1172,7 +1290,6 @@ export interface ExecuteLiveProbePlanInput {
   readonly db: Database.Database;
   readonly accountId: string;
   readonly apiKey: string;
-  readonly reservationUsd: string;
   readonly plan: LiveProbePlan;
   readonly transport: ReturnType<typeof createOpenRouterTransport>;
 }
@@ -1181,6 +1298,53 @@ export interface LiveProbeExecutionResult {
   readonly probeKey: string;
   readonly logicalCallId: string;
   readonly result: OpenRouterCallResult;
+  readonly schemaValid: boolean;
+  readonly schemaError: string | null;
+  readonly visionInterpreted: boolean;
+}
+
+export function validateProbeContent(
+  role: RequestRole,
+  parsedContent: unknown,
+): { readonly schemaValid: boolean; readonly schemaError: string | null; readonly visionInterpreted: boolean } {
+  const schema =
+    role === "spec"
+      ? FAMILY_SPEC_SCHEMAS.ranking
+      : role === "wording"
+        ? WordingResponseSchema
+        : role === "blind_text" || role === "blind_vision"
+          ? BLIND_REVIEW_RESPONSE_SCHEMA
+          : ALIGNMENT_REVIEW_RESPONSE_SCHEMA;
+  const parsed = schema.safeParse(parsedContent);
+  if (!parsed.success) {
+    return {
+      schemaValid: false,
+      schemaError: parsed.error.message,
+      visionInterpreted: false,
+    };
+  }
+  if (!requiresImageForRole(role)) {
+    return { schemaValid: true, schemaError: null, visionInterpreted: false };
+  }
+  const data = parsed.data as Record<string, unknown>;
+  const visionInterpreted =
+    role === "blind_vision"
+      ? data.visualLegibility !== "not_applicable"
+      : (() => {
+          const image = data.image;
+          return (
+            image !== null &&
+            typeof image === "object" &&
+            (image as Record<string, unknown>).status !== "not_applicable"
+          );
+        })();
+  return {
+    schemaValid: visionInterpreted,
+    schemaError: visionInterpreted
+      ? null
+      : "vision response marked the image not_applicable",
+    visionInterpreted,
+  };
 }
 
 export async function executeLiveProbePlan(
@@ -1202,7 +1366,7 @@ export async function executeLiveProbePlan(
       requestHash: prepared.hash,
       expectedSchemaHash: probe.schemaHash,
       model: probe.model,
-      provider: probe.providerTag,
+      routingPolicy: "balanced",
       outputCapField: probe.outputCapField,
     });
     const result = await input.transport.executeCall({
@@ -1210,12 +1374,14 @@ export async function executeLiveProbePlan(
       accountId: input.accountId,
       logicalCallId: call.logicalCallId,
       apiKey: input.apiKey,
-      reservationUsd: input.reservationUsd,
+      reservationUsd: probe.reservationUsd,
     });
+    const validation = validateProbeContent(probe.role, result.parsedContent);
     results.push({
       probeKey: probe.probeKey,
       logicalCallId: call.logicalCallId,
       result,
+      ...validation,
     });
   }
   return results;

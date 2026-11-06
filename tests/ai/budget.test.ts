@@ -105,7 +105,7 @@ function makeCall(
     ...(input.requestHash === undefined ? {} : { requestHash: input.requestHash }),
     expectedSchemaHash: SCHEMA_HASH,
     model: "generator-model",
-    provider: "provider-tag",
+    routingPolicy: "balanced",
     createdAt: input.createdAt ?? at(0),
   });
 }

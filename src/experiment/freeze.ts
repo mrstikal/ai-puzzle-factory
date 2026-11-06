@@ -49,6 +49,22 @@ export interface FreezeProtocolEvidence {
     readonly routesHash: string;
     readonly sourceHash: string;
     readonly updatedAt: string;
+    readonly roles: {
+      readonly generator: string;
+      readonly textReviewer: string;
+      readonly visionReviewer: string;
+    };
+    readonly routingPolicy: {
+      readonly mode: "balanced";
+      readonly allowFallbacks: true;
+      readonly requireParameters: true;
+    };
+    readonly routingConfirmation: {
+      readonly operator: string;
+      readonly checkedAt: string;
+      readonly providerSort: "default_balanced";
+      readonly byokConfigured: false;
+    };
   };
   readonly preflight: {
     readonly evidenceKind: "live";
@@ -115,6 +131,14 @@ export interface FreezeFailure {
   readonly detail: string;
 }
 
+export interface FrozenRoutingPolicy {
+  readonly mode: "balanced";
+  readonly allowFallbacks: true;
+  readonly requireParameters: true;
+  readonly providerSort: "default_balanced";
+  readonly byokConfigured: false;
+}
+
 export interface FrozenProtocol {
   readonly version: typeof FREEZE_VERSION;
   readonly protocolVersion: string;
@@ -123,6 +147,12 @@ export interface FrozenProtocol {
   readonly configHash: string;
   readonly promptHashes: Readonly<Record<string, string>>;
   readonly schemaHashes: Readonly<Record<string, string>>;
+  readonly roles: {
+    readonly generator: string;
+    readonly textReviewer: string;
+    readonly visionReviewer: string;
+  };
+  readonly routingPolicy: FrozenRoutingPolicy;
   readonly routesHash: string;
   readonly sourceHash: string;
   readonly fixturePackHash: string;
@@ -224,6 +254,48 @@ export function canFreezeProtocol(
     Object.keys(config.schemaHashes).length === 0
   ) {
     fail("CONFIG_HASH", "prompt and schema hash sets must not be empty");
+  }
+  const roles = config.roles;
+  if (
+    roles === undefined ||
+    roles.generator === undefined ||
+    roles.textReviewer === undefined ||
+    roles.visionReviewer === undefined ||
+    roles.generator === roles.textReviewer ||
+    roles.generator === roles.visionReviewer
+  ) {
+    fail("ROLE_SEPARATION", "generator, text reviewer, and vision reviewer model IDs must be distinct");
+  }
+  const routingPolicy = config.routingPolicy;
+  if (
+    routingPolicy === undefined ||
+    routingPolicy.mode !== "balanced" ||
+    routingPolicy.allowFallbacks !== true ||
+    routingPolicy.requireParameters !== true
+  ) {
+    fail("ROUTING_POLICY", "freeze requires Balanced routing with fallback and required parameters");
+  }
+  const confirmation = config.routingConfirmation;
+  if (
+    confirmation === undefined ||
+    confirmation.providerSort !== "default_balanced" ||
+    confirmation.byokConfigured !== false ||
+    typeof confirmation.operator !== "string" ||
+    confirmation.operator.trim() === ""
+  ) {
+    fail(
+      "ROUTING_CONFIRMATION",
+      "operator must confirm default Balanced sort and no BYOK provider keys",
+    );
+  } else {
+    const confirmationAt = Date.parse(confirmation.checkedAt);
+    if (!Number.isFinite(confirmationAt)) {
+      fail("ROUTING_CONFIRMATION", "routing confirmation timestamp is invalid");
+    } else if (confirmationAt > clock.now().getTime()) {
+      fail("ROUTING_CONFIRMATION", "routing confirmation is in the future");
+    } else if (clock.now().getTime() - confirmationAt > 60 * 60 * 1000) {
+      fail("ROUTING_CONFIRMATION", "routing confirmation is stale");
+    }
   }
   if (!hash(evidence.preflight.configHash) || evidence.preflight.configHash !== config.configHash) {
     fail("PREFLIGHT_CONFIG_DRIFT", "preflight config hash differs from the frozen configuration");
@@ -373,6 +445,13 @@ export function canFreezeProtocol(
   if (failed.length > 0) {
     return { ok: false, failed, caveats, frozen: null };
   }
+  const frozenRoutingPolicy: FrozenRoutingPolicy = {
+    mode: "balanced",
+    allowFallbacks: true,
+    requireParameters: true,
+    providerSort: "default_balanced",
+    byokConfigured: false,
+  };
   const frozenWithoutHash = {
     version: FREEZE_VERSION,
     protocolVersion: evidence.protocolVersion,
@@ -381,7 +460,16 @@ export function canFreezeProtocol(
     configHash: config.configHash,
     promptHashes: config.promptHashes,
     schemaHashes: config.schemaHashes,
-    routesHash: config.routesHash,
+    roles: {
+      generator: config.roles.generator,
+      textReviewer: config.roles.textReviewer,
+      visionReviewer: config.roles.visionReviewer,
+    },
+    routingPolicy: frozenRoutingPolicy,
+    routesHash: hashCanonicalJson({
+      roles: config.roles,
+      routingPolicy: frozenRoutingPolicy,
+    }),
     sourceHash: config.sourceHash,
     fixturePackHash: pack.packHash,
     labelsHash: pack.labelsHash,

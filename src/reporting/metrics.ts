@@ -16,6 +16,7 @@ import {
   type WorkflowStage,
 } from "../domain/candidate.js";
 import {
+  REQUEST_ROLES,
   type Difficulty,
   type Family,
   type Lane,
@@ -92,6 +93,22 @@ export interface StratumMetrics {
   readonly approvalWilson95: WilsonInterval | null;
   readonly structuralUniqueness: number | null;
   readonly fingerprintCoverage: number | null;
+}
+
+export interface ProviderRoleMix {
+  readonly attempts: number;
+  readonly identityAttempts: number;
+  readonly missingIdentityAttempts: number;
+  readonly observedProviders: Readonly<Record<string, number>>;
+  readonly observedModels: Readonly<Record<string, number>>;
+}
+
+export interface ProviderMix {
+  readonly totalAttempts: number;
+  readonly identityAttempts: number;
+  readonly missingIdentityAttempts: number;
+  readonly identityCoverage: number | null;
+  readonly byRole: Readonly<Record<RequestRole, ProviderRoleMix>>;
 }
 
 export interface RunMetrics {
@@ -231,6 +248,7 @@ export interface RunMetrics {
     readonly textReview: UsageRole;
     readonly visionReview: UsageRole;
   };
+  readonly providerMix: ProviderMix;
   readonly latency: {
     readonly attemptsByRole: Readonly<Record<RequestRole, LatencyStats>>;
     readonly logicalCallsByRole: Readonly<Record<RequestRole, LatencyStats>>;
@@ -959,6 +977,63 @@ function buildSlotViews(
   });
 }
 
+function emptyProviderRoleMix(): ProviderRoleMix {
+  return {
+    attempts: 0,
+    identityAttempts: 0,
+    missingIdentityAttempts: 0,
+    observedProviders: {},
+    observedModels: {},
+  };
+}
+
+function computeProviderMix(
+  db: Database.Database,
+  runId: string,
+): ProviderMix {
+  const byRole = Object.fromEntries(
+    REQUEST_ROLES.map((role) => [role, emptyProviderRoleMix()]),
+  ) as Record<RequestRole, {
+    attempts: number;
+    identityAttempts: number;
+    missingIdentityAttempts: number;
+    observedProviders: Record<string, number>;
+    observedModels: Record<string, number>;
+  }>;
+  const rows = db
+    .prepare(
+      "SELECT lc.role, ra.observed_model, ra.observed_provider FROM logical_calls lc JOIN request_attempts ra ON ra.logical_call_id = lc.logical_call_id WHERE lc.run_id = ?",
+    )
+    .all(runId) as Array<{
+    role: RequestRole;
+    observed_model: string | null;
+    observed_provider: string | null;
+  }>;
+  let identityAttempts = 0;
+  for (const row of rows) {
+    const role = byRole[row.role];
+    role.attempts += 1;
+    const model = row.observed_model ?? "unknown";
+    const provider = row.observed_provider ?? "unknown";
+    role.observedModels[model] = (role.observedModels[model] ?? 0) + 1;
+    role.observedProviders[provider] =
+      (role.observedProviders[provider] ?? 0) + 1;
+    if (row.observed_model !== null && row.observed_provider !== null) {
+      role.identityAttempts += 1;
+      identityAttempts += 1;
+    } else {
+      role.missingIdentityAttempts += 1;
+    }
+  }
+  return {
+    totalAttempts: rows.length,
+    identityAttempts,
+    missingIdentityAttempts: rows.length - identityAttempts,
+    identityCoverage: ratio(identityAttempts, rows.length),
+    byRole,
+  };
+}
+
 export function computeRunMetrics(
   db: Database.Database,
   runId: string,
@@ -1684,6 +1759,7 @@ export function computeRunMetrics(
       textReview: textReviewUsage,
       visionReview: visionReviewUsage,
     },
+    providerMix: computeProviderMix(db, runId),
     latency: {
       attemptsByRole: attemptLatencyByRole,
       logicalCallsByRole: callLatencyByRole,

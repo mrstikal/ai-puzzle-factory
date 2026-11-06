@@ -74,7 +74,6 @@ function requestBody(role: RequestRole = "spec"): Record<string, unknown> {
   return buildChatRequest({
     role,
     model: "mock/model",
-    providerTag: "mock-provider",
     outputCapField: "max_tokens",
     maxOutputTokens: 128,
     messages: [{ role: "user", content: "public mock request" }],
@@ -98,7 +97,7 @@ function createMockCall(
     requestBody: requestBody(role),
     expectedSchemaHash: "a".repeat(64),
     model: "mock/model",
-    provider: "mock-provider",
+    routingPolicy: "balanced",
     outputCapField: "max_tokens",
     createdAt: CREATED_AT,
   });
@@ -454,9 +453,9 @@ describe("deterministic mock transport", () => {
     const route: ResolvedRoute = {
       role: "blind_text",
       model: "mock/model",
-      providerTag: "mock-provider",
-      providerName: "Mock Provider",
-      endpointTag: "mock-provider",
+      routingPolicy: "balanced",
+      compatibleEndpointTags: ["mock-provider"],
+      compatibleProviderNames: ["Mock Provider"],
       outputCapField: "max_tokens",
       maxOutputTokens: 4096,
       minPromptTokens: 16_384,

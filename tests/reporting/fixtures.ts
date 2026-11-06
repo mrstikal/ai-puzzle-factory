@@ -301,7 +301,7 @@ function addCall(
     },
     expectedSchemaHash: "a".repeat(64),
     model: "mock/model",
-    provider: "mock",
+    routingPolicy: "balanced",
     createdAt: iso(input.createdOffset),
   });
   const attempt = createAttempt(db, {
@@ -757,7 +757,7 @@ export function createUnbilledOnlyRun(db: Database.Database): PartialFixture {
     requestBody: { model: "mock/model", messages: [] },
     expectedSchemaHash: "a".repeat(64),
     model: "mock/model",
-    provider: "mock",
+    routingPolicy: "balanced",
     createdAt: iso(0),
   });
   const preparedAttempt = createAttempt(db, {
@@ -783,7 +783,7 @@ export function createUnbilledOnlyRun(db: Database.Database): PartialFixture {
     requestBody: { model: "mock/model", messages: [] },
     expectedSchemaHash: "a".repeat(64),
     model: "mock/model",
-    provider: "mock",
+    routingPolicy: "balanced",
     createdAt: iso(1000),
   });
   const refusedAttempt = createAttempt(db, {

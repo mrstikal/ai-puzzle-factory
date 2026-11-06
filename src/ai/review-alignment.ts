@@ -681,7 +681,6 @@ export async function reviewAlignment(
   const built = buildChatRequest({
     role: expectedRole,
     model: input.route.model,
-    providerTag: input.route.providerTag,
     outputCapField: input.route.outputCapField,
     maxOutputTokens: input.route.maxOutputTokens,
     messages,
@@ -697,7 +696,7 @@ export async function reviewAlignment(
     requestBody: built.body,
     expectedSchemaHash: metadata.schemaHash,
     model: input.route.model,
-    provider: input.route.providerTag,
+    routingPolicy: "balanced",
     outputCapField: input.route.outputCapField,
     createdAt: startedAt.toISOString(),
   });

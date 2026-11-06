@@ -1,15 +1,25 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
+import { createBudgetAccount } from "../ai/budget.js";
+import { readLiveEnvironment, type LiveEnvironmentConfig } from "../ai/config.js";
+import { createOpenRouterTransport } from "../ai/openrouter.js";
 import {
   PreflightError,
+  buildLiveProbePlan,
+  executeLiveProbePlan,
+  fetchCatalogForModels,
   fixtureRoleRequests,
   parseRecordedCatalog,
   runPreflightOnCatalog,
   type PreflightReport,
+  type RolePreflightRequest,
 } from "../ai/preflight.js";
 import { FAMILY_SPEC_JSON_SCHEMAS } from "../ai/schemas.js";
+import { RoutingConfirmationSchema } from "../domain/experiment.js";
+import { migrate, openDatabase } from "../storage/database.js";
 
 export const PROGRAM_NAME = "preflight";
 export const DEFAULT_CATALOG_PATH = "tests/fixtures/openrouter/catalog.json";
@@ -19,9 +29,11 @@ const SCOPE_NOTE = [
   "  --offline              validate recorded capability fixtures and strict schemas",
   "  --catalog <path>       recorded catalog fixture path",
   "  no network request, inference key, or paid call is made by --offline",
-  "  --live                 authorization-gated live probe; reserved for P46",
-  "  --allow-paid           required with --live; P25 does not execute paid probes",
-  "  --max-cost <usd>       required with --live; P25 does not execute paid probes",
+  "  --live                 Balanced live probe behind paid and routing-confirmation gates",
+  "  --allow-paid           required with --live",
+  "  --max-cost <usd>       required with --live",
+  "  --routing-confirmation <path>  operator account check JSON required with --live",
+  "  --db <path>            SQLite path for preflight ledger (default: data/experiment.sqlite)",
 ].join("\n");
 
 interface PreflightOptions {
@@ -30,6 +42,8 @@ interface PreflightOptions {
   readonly catalog?: string;
   readonly allowPaid?: boolean;
   readonly maxCost?: string;
+  readonly routingConfirmation?: string;
+  readonly db?: string;
 }
 
 function loadCatalog(path: string): unknown {
@@ -59,7 +73,7 @@ function formatReport(report: PreflightReport): string {
   for (const role of report.roles) {
     if (role.resolved === null) {
       lines.push(
-        `role ${role.role}: FAILED model=${role.model} provider=${role.providerTag}`,
+        `role ${role.role}: FAILED model=${role.model} compatible=${role.compatibleEndpointTags.join(",")}`,
       );
       continue;
     }
@@ -68,8 +82,7 @@ function formatReport(report: PreflightReport): string {
       [
         `role ${role.role}: ok`,
         `model=${resolved.model}`,
-        `provider=${resolved.providerTag}`,
-        `endpoint=${resolved.endpointTag}`,
+        `compatible=${resolved.compatibleEndpointTags.join(",")}`,
         `cap=${resolved.outputCapField}:${resolved.maxOutputTokens}`,
         `context=${resolved.contextLength}`,
         `prompt_reserve=${resolved.minPromptTokens}`,
@@ -91,6 +104,203 @@ function formatReport(report: PreflightReport): string {
   lines.push(`result: ${report.ok ? "ok" : "failed"}`);
   lines.push("live_routes: not evaluated (P46)");
   return `${lines.join("\n")}\n`;
+}
+
+const LIVE_PNG_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+function liveRoleRequests(config: LiveEnvironmentConfig): RolePreflightRequest[] {
+  return [
+    { role: "spec", model: config.generator.model },
+    { role: "wording", model: config.generator.model },
+    { role: "blind_text", model: config.reviewer.model },
+    { role: "alignment_text", model: config.reviewer.model },
+    { role: "blind_vision", model: config.visionReviewer.model },
+    { role: "alignment_vision", model: config.visionReviewer.model },
+  ];
+}
+
+function loadRoutingConfirmation(path: string): {
+  readonly operator: string;
+  readonly checkedAt: string;
+  readonly providerSort: "default_balanced";
+  readonly byokConfigured: false;
+} {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+  } catch (error) {
+    throw new PreflightError(
+      "ROUTING_CONFIRMATION_INVALID",
+      `cannot read routing confirmation ${path}`,
+      null,
+      { cause: error },
+    );
+  }
+  const parsed = RoutingConfirmationSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new PreflightError(
+      "ROUTING_CONFIRMATION_INVALID",
+      "routing confirmation must contain operator, checkedAt, default_balanced sort, and byokConfigured=false",
+      null,
+      { cause: parsed.error },
+    );
+  }
+  const checkedAt = Date.parse(parsed.data.checkedAt);
+  if (!Number.isFinite(checkedAt)) {
+    throw new PreflightError(
+      "ROUTING_CONFIRMATION_INVALID",
+      "routing confirmation checkedAt is invalid",
+    );
+  }
+  if (checkedAt > Date.now()) {
+    throw new PreflightError(
+      "ROUTING_CONFIRMATION_INVALID",
+      "routing confirmation checkedAt is in the future",
+    );
+  }
+  if (Date.now() - checkedAt > 15 * 60 * 1000) {
+    throw new PreflightError(
+      "ROUTING_CONFIRMATION_STALE",
+      "routing confirmation is older than 15 minutes",
+    );
+  }
+  return parsed.data;
+}
+
+async function runLive(options: PreflightOptions): Promise<number> {
+  const config = readLiveEnvironment(process.env);
+  if (options.routingConfirmation === undefined) {
+    programError("live preflight requires --routing-confirmation <path>");
+  }
+  const confirmation = loadRoutingConfirmation(options.routingConfirmation);
+  const modelIds = [
+    config.generator.model,
+    config.reviewer.model,
+    config.visionReviewer.model,
+  ];
+  const catalog = await fetchCatalogForModels({
+    modelIds,
+    apiKey: config.apiKey,
+  });
+  const roles = liveRoleRequests(config);
+  const report = runPreflightOnCatalog(catalog, roles);
+  if (!report.ok) {
+    process.stdout.write(formatReport(report));
+    return 1;
+  }
+  const routes = report.roles
+    .map((role) => role.resolved)
+    .filter((route): route is NonNullable<typeof route> => route !== null);
+  const plan = buildLiveProbePlan({
+    allowPaid: true,
+    maxCostUsd: options.maxCost as string,
+    apiKey: config.apiKey,
+    routes,
+    visionPngDataUrl: LIVE_PNG_DATA_URL,
+  });
+  const dbPath = resolve(options.db ?? "data/experiment.sqlite");
+  const db = openDatabase(dbPath);
+  try {
+    migrate(db);
+    const preflightId = randomUUID();
+    const accountId = `preflight-${preflightId}`;
+    const createdAt = new Date().toISOString();
+    createBudgetAccount(db, {
+      accountId,
+      runId: null,
+      runKind: "preflight",
+      maxCostUsd: options.maxCost as string,
+      createdAt,
+    });
+    const transport = createOpenRouterTransport();
+    const results = await executeLiveProbePlan({
+      db,
+      accountId,
+      apiKey: config.apiKey,
+      plan,
+      transport,
+    });
+    const artifactDirectory = resolve("data", "preflight", preflightId);
+    mkdirSync(artifactDirectory, { recursive: true });
+    const artifactPath = join(artifactDirectory, "preflight.json");
+    writeFileSync(
+      artifactPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          preflightId,
+          createdAt,
+          confirmation,
+          requestedModels: {
+            generator: config.generator.model,
+            reviewer: config.reviewer.model,
+            visionReviewer: config.visionReviewer.model,
+          },
+          routingPolicy: plan.probes[0]?.body.provider ?? null,
+          catalog: {
+            source: catalog.source,
+            recordedAt: catalog.recordedAt,
+            modelCount: catalog.models.length,
+          },
+          roles: report.roles,
+          probes: plan.probes.map((probe) => ({
+            probeKey: probe.probeKey,
+            role: probe.role,
+            model: probe.model,
+            compatibleEndpointTags: probe.compatibleEndpointTags,
+            outputCapField: probe.outputCapField,
+            reservationUsd: probe.reservationUsd,
+            schemaHash: probe.schemaHash,
+          })),
+          results,
+        },
+        null,
+        2,
+      )}
+`,
+    );
+    const ok = results.every(
+      (result) =>
+        result.result.outcome === "success" &&
+        result.schemaValid &&
+        (result.probeKey !== "preflight:blind_vision" ||
+          result.visionInterpreted),
+    );
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          mode: "live",
+          preflightId,
+          artifactPath,
+          confirmation,
+          probes: results.map((result) => ({
+            probeKey: result.probeKey,
+            outcome: result.result.outcome,
+            observedModel: result.result.attempts.at(-1)?.observedModel ?? null,
+            observedProvider:
+              result.result.attempts.at(-1)?.observedProvider ?? null,
+            schemaValid: result.schemaValid,
+            schemaError: result.schemaError,
+            visionInterpreted: result.visionInterpreted,
+            actualCostUsd: result.result.actualCostUsd,
+            costStatus: result.result.costStatus,
+          })),
+          result: ok ? "ok" : "failed",
+        },
+        null,
+        2,
+      )}
+`,
+    );
+    return ok ? 0 : 1;
+  } finally {
+    db.close();
+  }
+}
+
+function programError(message: string): never {
+  throw new PreflightError("INVALID_LIVE_PROBE_ROUTES", message);
 }
 
 function runOffline(options: PreflightOptions): number {
@@ -115,7 +325,9 @@ export function createProgram(): Command {
     .option("--catalog <path>", "recorded catalog fixture path")
     .option("--allow-paid", "acknowledge paid execution for --live")
     .option("--max-cost <usd>", "authorized maximum cost for --live")
-    .action((options: PreflightOptions) => {
+    .option("--routing-confirmation <path>", "operator account routing check JSON for --live")
+    .option("--db <path>", "SQLite path for preflight ledger")
+    .action(async (options: PreflightOptions) => {
       if (options.offline === true && options.live === true) {
         program.error("--offline and --live are mutually exclusive", { exitCode: 1 });
       }
@@ -123,10 +335,16 @@ export function createProgram(): Command {
         program.error("choose --offline or --live", { exitCode: 1 });
       }
       if (options.offline === true) {
-        if (options.allowPaid === true || options.maxCost !== undefined) {
-          program.error("--allow-paid and --max-cost are invalid with --offline", {
-            exitCode: 1,
-          });
+        if (
+          options.allowPaid === true ||
+          options.maxCost !== undefined ||
+          options.routingConfirmation !== undefined ||
+          options.db !== undefined
+        ) {
+          program.error(
+            "--allow-paid, --max-cost, --routing-confirmation, and --db are invalid with --offline",
+            { exitCode: 1 },
+          );
         }
         process.exitCode = runOffline(options);
         return;
@@ -137,10 +355,13 @@ export function createProgram(): Command {
       if (options.maxCost === undefined) {
         program.error("live preflight requires --max-cost <usd>", { exitCode: 1 });
       }
-      program.error(
-        "live preflight execution is reserved for P46; P25 exposes --offline only",
-        { exitCode: 1 },
-      );
+      if (options.routingConfirmation === undefined) {
+        program.error(
+          "live preflight requires --routing-confirmation <path>",
+          { exitCode: 1 },
+        );
+      }
+      process.exitCode = await runLive(options);
     });
   return program;
 }

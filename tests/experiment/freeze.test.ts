@@ -38,6 +38,22 @@ function freezeEvidence(): FreezeProtocolEvidence {
     routesHash: HASH_D,
     sourceHash: HASH_D,
     updatedAt: CONFIG_UPDATED,
+    roles: {
+      generator: "mock/generator",
+      textReviewer: "mock/text-reviewer",
+      visionReviewer: "mock/vision-reviewer",
+    },
+    routingPolicy: {
+      mode: "balanced" as const,
+      allowFallbacks: true as const,
+      requireParameters: true as const,
+    },
+    routingConfirmation: {
+      operator: "test-operator",
+      checkedAt: "2026-11-06T11:55:00.000Z",
+      providerSort: "default_balanced" as const,
+      byokConfigured: false as const,
+    },
   };
   return {
     protocolVersion: "1.0.0",
@@ -255,6 +271,20 @@ describe("protocol freeze", { timeout: 30_000 }, () => {
     expect(verifyFrozenProtocol(decision.frozen as FrozenProtocol)).toBe(true);
     expect(decision.frozen?.costPerApprovedThresholdUsd).toBe("0.10");
     expect(decision.frozen?.authorizedCapUsd).toBe("10.00");
+    expect(decision.frozen?.roles).toEqual({
+      generator: "mock/generator",
+      textReviewer: "mock/text-reviewer",
+      visionReviewer: "mock/vision-reviewer",
+    });
+    expect(decision.frozen?.routingPolicy).toEqual({
+      mode: "balanced",
+      allowFallbacks: true,
+      requireParameters: true,
+      providerSort: "default_balanced",
+      byokConfigured: false,
+    });
+    expect(decision.frozen?.routesHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(decision.frozen?.routesHash).not.toBe(HASH_D);
   });
 
   it("rejects mock, unverified, stale, drifted, underfunded, or incomplete freeze evidence", () => {
@@ -270,6 +300,13 @@ describe("protocol freeze", { timeout: 30_000 }, () => {
       ["CAP_TOO_SMALL", (evidence) => { (evidence as { authorizedCapUsd: string }).authorizedCapUsd = "1.00"; }],
       ["FORECAST_INVALID", (evidence) => { (evidence.preflight.forecast as { maxUsd: string }).maxUsd = "0"; }],
       ["PROVENANCE_MISMATCH", (evidence) => { (evidence.provenance as { sourceHash: string }).sourceHash = HASH_A; }],
+      ["ROLE_SEPARATION", (evidence) => { (evidence.configuration.roles as { textReviewer: string }).textReviewer = "mock/generator"; }],
+      ["ROUTING_POLICY", (evidence) => { (evidence.configuration.routingPolicy as { allowFallbacks: boolean }).allowFallbacks = false; }],
+      ["ROUTING_CONFIRMATION", (evidence) => { (evidence.configuration.routingConfirmation as { providerSort: string }).providerSort = "price"; }],
+      ["ROUTING_CONFIRMATION", (evidence) => { (evidence.configuration.routingConfirmation as { byokConfigured: boolean }).byokConfigured = true; }],
+      ["ROUTING_CONFIRMATION", (evidence) => { (evidence.configuration.routingConfirmation as { checkedAt: string }).checkedAt = "2026-11-06T10:00:00.000Z"; }],
+      ["ROUTING_CONFIRMATION", (evidence) => { (evidence.configuration.routingConfirmation as { checkedAt: string }).checkedAt = "2026-11-06T13:00:00.000Z"; }],
+      ["ROUTING_CONFIRMATION", (evidence) => { delete (evidence.configuration as { routingConfirmation?: unknown }).routingConfirmation; }],
       ["SMOKE_NOT_ACCEPTED", (evidence) => { (evidence.smoke as { accepted: boolean }).accepted = false; }],
       ["SMOKE_COVERAGE", (evidence) => { (evidence.smoke as { terminalSlots: number }).terminalSlots = 19; }],
       ["SMOKE_DRIFT", (evidence) => { (evidence.smoke as { planHash: string }).planHash = buildPlanManifest({ runKind: "full" }).planHash; }],

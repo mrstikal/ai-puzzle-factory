@@ -22,7 +22,9 @@ import {
 import {
   OpenRouterError,
   createOpenRouterTransport,
+  replaySavedResponse,
 } from "../../src/ai/openrouter.js";
+import { storeArtifact } from "../../src/storage/artifacts.js";
 import { decideRetry, parseRetryAfter } from "../../src/ai/retry.js";
 import {
   REDACTED,
@@ -34,7 +36,7 @@ import {
 } from "../../src/ai/redact.js";
 import { buildPlanManifest } from "../../src/experiment/planner.js";
 import { migrate, openDatabase } from "../../src/storage/database.js";
-import { createRun } from "../../src/storage/repository.js";
+import { createRun, getRun } from "../../src/storage/repository.js";
 import {
   createFakeOpenRouter,
   type FakeOpenRouter,
@@ -85,8 +87,7 @@ function makeRequest(overrides: Record<string, unknown> = {}): Record<string, un
       },
     },
     provider: {
-      only: ["test-provider"],
-      allow_fallbacks: false,
+      allow_fallbacks: true,
       require_parameters: true,
     },
     max_tokens: 1024,
@@ -136,7 +137,7 @@ function createCall(
     requestBody,
     expectedSchemaHash: SCHEMA_HASH,
     model: "test/model",
-    provider: "test-provider",
+    routingPolicy: "balanced",
     createdAt: CREATED_AT,
   });
 }
@@ -241,6 +242,61 @@ afterEach(async () => {
 });
 
 describe("OpenRouter transport", () => {
+  it("pauses admission when the observed model contradicts the requested model", async () => {
+    fake.enqueue({
+      status: 200,
+      body: successBody({ model: "other/model" }),
+    });
+    const { call, result } = await execute(0);
+    expect(result.outcome).toBe("failed_known");
+    expect(result.error?.code).toBe("MODEL_IDENTITY_MISMATCH");
+    expect(getRun(db, RUN_ID).controlState).toBe("paused_operator");
+    const attempt = listAttempts(db, call.logicalCallId)[0];
+    expect(attempt?.state).toBe("failed_known");
+    expect(attempt?.observedModel).toBe("other/model");
+    const event = db
+      .prepare(
+        "SELECT payload_json FROM request_events WHERE attempt_id = ? AND event_type = 'attempt_failed_known'",
+      )
+      .get(attempt?.attemptId) as { payload_json: string } | undefined;
+    expect(JSON.parse(event?.payload_json ?? "{}")).toMatchObject({
+      reason: "model_identity_mismatch",
+    });
+  });
+
+  it("replays a saved model mismatch as failed and pauses admission", () => {
+    const call = createCall(0);
+    const attempt = createAttempt(db, {
+      logicalCallId: call.logicalCallId,
+      createdAt: CREATED_AT,
+    });
+    const artifact = storeArtifact(
+      db,
+      {
+        kind: "raw_response",
+        mediaType: "application/json",
+        bytes: Buffer.from(
+          JSON.stringify(successBody({ model: "other/model" })),
+        ),
+        role: "response",
+      },
+      CREATED_AT,
+    );
+    db.prepare(
+      "UPDATE request_attempts SET state = 'response_saved', http_status = 200, raw_response_artifact_id = ?, finish_reason = 'stop', error_classification = 'ok', updated_at = ? WHERE attempt_id = ?",
+    ).run(artifact.artifactId, CREATED_AT, attempt.attemptId);
+    db.prepare(
+      "UPDATE logical_calls SET state = 'response_saved', updated_at = ? WHERE logical_call_id = ?",
+    ).run(CREATED_AT, call.logicalCallId);
+    const replay = replaySavedResponse(db, attempt.attemptId, API_KEY, CREATED_AT);
+    expect(replay.outcome).toBe("failed_known");
+    expect(replay.error?.code).toBe("MODEL_IDENTITY_MISMATCH");
+    expect(getRun(db, RUN_ID).controlState).toBe("paused_operator");
+    expect(getAttempt(db, attempt.attemptId).errorClassification).toBe(
+      "model_identity_mismatch",
+    );
+  });
+
   it("sends a non-streaming request, persists raw response, validates content, and redacts credentials", async () => {
     const clock = makeClock();
     fake.enqueue({ status: 200, body: successBody({ echo: API_KEY }) });
@@ -259,6 +315,8 @@ describe("OpenRouter transport", () => {
       httpStatus: 200,
       outcome: "success",
       costStatus: "known",
+      observedModel: "test/model",
+      observedProvider: "test-provider",
     });
     expect(getLogicalCall(db, call.logicalCallId).state).toBe("validated");
     const attempts = listAttempts(db, call.logicalCallId);
@@ -266,6 +324,9 @@ describe("OpenRouter transport", () => {
     expect(attempts[0]?.state).toBe("validated");
     expect(attempts[0]?.requestHash).toBe(call.requestHash);
     expect(attempts[0]?.partialCompletion).toBe(false);
+    expect(attempts[0]?.routingPolicy).toBe("balanced");
+    expect(attempts[0]?.observedModel).toBe("test/model");
+    expect(attempts[0]?.observedProvider).toBe("test-provider");
     const account = getBudgetAccount(db, "test-account");
     expect(account.knownActualUsd).toBe("0.001");
     expect(account.reservedUsd).toBe("0");

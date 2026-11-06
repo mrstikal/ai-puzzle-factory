@@ -396,7 +396,7 @@ async function executeCalibrationCall(input: {
     requestBody: input.requestBody,
     expectedSchemaHash: input.schemaHash,
     model: input.route.model,
-    provider: input.route.providerTag,
+    routingPolicy: "balanced",
     outputCapField: input.route.outputCapField,
     createdAt,
   });
@@ -458,7 +458,6 @@ async function runBlind(input: {
   const built = buildChatRequest({
     role,
     model: route.model,
-    providerTag: route.providerTag,
     outputCapField: route.outputCapField,
     maxOutputTokens: route.maxOutputTokens,
     messages,
@@ -528,7 +527,6 @@ async function runAlignment(input: {
   const built = buildChatRequest({
     role,
     model: route.model,
-    providerTag: route.providerTag,
     outputCapField: route.outputCapField,
     maxOutputTokens: route.maxOutputTokens,
     messages,

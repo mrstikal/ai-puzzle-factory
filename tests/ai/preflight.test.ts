@@ -1,4 +1,11 @@
-import { readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
@@ -20,12 +27,12 @@ import {
   type AlignmentFields,
   type StrictJsonSchema,
 } from "../../src/ai/schemas.js";
+import { constructRankingSpec } from "../../src/families/ranking/engine.js";
 import {
   AiConfigError,
-  OutputCapFieldSchema,
+  assertNoForbiddenRequestFields,
   buildChatRequest,
   readLiveEnvironment,
-  type AiRoleSettings,
   type LiveEnvironmentConfig,
 } from "../../src/ai/config.js";
 import {
@@ -36,7 +43,9 @@ import {
   fixtureRoleRequests,
   parseRecordedCatalog,
   runOfflinePreflight,
+  conservativeReservationUsd,
   runPreflightOnCatalog,
+  validateProbeContent,
   type PreflightFailureCode,
   type PreflightReport,
   type ResolvedRoute,
@@ -71,7 +80,6 @@ interface FixtureModel {
 interface FixtureRole {
   role: RequestRole;
   model: string;
-  provider: string;
 }
 
 interface FixtureCatalog {
@@ -118,11 +126,17 @@ function fixtureEndpoint(
   return endpoint;
 }
 
+function fixtureEndpoints(
+  catalog: FixtureCatalog,
+  modelId: string,
+): FixtureEndpoint[] {
+  return fixtureModel(catalog, modelId).endpoints ?? [];
+}
+
 function baseRoles(catalog: FixtureCatalog): RolePreflightRequest[] {
   return (catalog.offline_fixture_roles ?? []).map((role) => ({
     role: role.role,
     model: role.model,
-    providerTag: role.provider,
   }));
 }
 
@@ -264,11 +278,8 @@ function validEnvironment(): NodeJS.ProcessEnv {
   return {
     OPENROUTER_API_KEY: "test-inference-key",
     GENERATOR_MODEL: "fixture/generator-text",
-    GENERATOR_PROVIDER: "fixture-generator/turbo",
     REVIEWER_MODEL: "fixture/reviewer-text",
-    REVIEWER_PROVIDER: "fixture-reviewer/text",
     VISION_REVIEWER_MODEL: "fixture/reviewer-vision",
-    VISION_REVIEWER_PROVIDER: "fixture-vision",
   };
 }
 
@@ -434,7 +445,7 @@ describe("strict provider JSON schemas", () => {
 });
 
 describe("live configuration", () => {
-  it("requires an explicit inference key and model/provider values", () => {
+  it("requires an explicit inference key and model values without provider IDs", () => {
     const missingKey = captureError(() => readLiveEnvironment({}));
     expect(missingKey).toBeInstanceOf(AiConfigError);
     expect((missingKey as AiConfigError).code).toBe("MISSING_INFERENCE_KEY");
@@ -446,17 +457,15 @@ describe("live configuration", () => {
     expect((missingModel as AiConfigError).code).toBe("MISSING_MODEL");
     expect((missingModel as AiConfigError).field).toBe("GENERATOR_MODEL");
 
-    const providerEnv = validEnvironment();
-    providerEnv.REVIEWER_PROVIDER = " ";
-    const missingProvider = captureError(() => readLiveEnvironment(providerEnv));
-    expect(missingProvider).toBeInstanceOf(AiConfigError);
-    expect((missingProvider as AiConfigError).code).toBe("MISSING_PROVIDER");
-    expect((missingProvider as AiConfigError).field).toBe("REVIEWER_PROVIDER");
+    const config = readLiveEnvironment(validEnvironment());
+    expect(config.generator.model).toBe("fixture/generator-text");
+    expect(config.reviewer.model).toBe("fixture/reviewer-text");
+    expect(config.visionReviewer.model).toBe("fixture/reviewer-vision");
   });
 
-  it("rejects wildcard providers and role-separation violations", () => {
+  it("rejects wildcard models and role-separation violations", () => {
     const wildcard = validEnvironment();
-    wildcard.GENERATOR_PROVIDER = "fixture-generator/*";
+    wildcard.GENERATOR_MODEL = "fixture/*";
     const wildcardError = captureError(() => readLiveEnvironment(wildcard));
     expect(wildcardError).toBeInstanceOf(AiConfigError);
     expect((wildcardError as AiConfigError).code).toBe("INVALID_ENV_VALUE");
@@ -482,25 +491,23 @@ describe("live configuration", () => {
     );
   });
 
-  it("allows the vision reviewer to reuse the text reviewer and discloses correlations", () => {
+  it("allows the vision reviewer to reuse the text reviewer and discloses model correlations", () => {
     const env = validEnvironment();
     env.VISION_REVIEWER_MODEL = "fixture/reviewer-text";
-    env.VISION_REVIEWER_PROVIDER = "fixture-reviewer/text";
     const config: LiveEnvironmentConfig = readLiveEnvironment(env);
     expect(config.visionReviewer.model).toBe(config.reviewer.model);
     expect(config.correlations).toContain(
       "vision_reviewer_uses_text_reviewer_model",
     );
     expect(config.correlations).toContain(
-      "text_and_vision_reviewers_share_provider",
+      "text_and_vision_reviewers_share_model_author",
     );
   });
 
-  it("serializes exactly one output cap field and exact provider routing", () => {
+  it("serializes exactly one output cap field and Balanced provider routing", () => {
     const base = {
       role: "spec" as const,
       model: "fixture/generator-text",
-      providerTag: "fixture-generator/turbo",
       maxOutputTokens: 8192,
       messages: [{ role: "user" as const, content: "Return JSON." }],
       responseFormat: FAMILY_SPEC_JSON_SCHEMAS.ranking,
@@ -512,8 +519,7 @@ describe("live configuration", () => {
     expect(maxTokens.body.max_tokens).toBe(8192);
     expect(maxTokens.body).not.toHaveProperty("max_completion_tokens");
     expect(maxTokens.body.provider).toEqual({
-      only: ["fixture-generator/turbo"],
-      allow_fallbacks: false,
+      allow_fallbacks: true,
       require_parameters: true,
     });
     expect(maxTokens.body.stream).toBe(false);
@@ -529,87 +535,49 @@ describe("live configuration", () => {
     expect(completionTokens.body.max_completion_tokens).toBe(8192);
     expect(completionTokens.body).not.toHaveProperty("max_tokens");
 
-    const invalidCap = captureError(() =>
+    const nitro = captureError(() =>
       buildChatRequest({
         ...base,
-        outputCapField: "max_output_tokens" as unknown as "max_tokens",
-      }),
-    );
-    expect(invalidCap).toBeInstanceOf(AiConfigError);
-    expect((invalidCap as AiConfigError).code).toBe("INVALID_OUTPUT_CAP");
-
-    const missingCap = captureError(() =>
-      buildChatRequest({
-        ...base,
+        model: "fixture/generator-text:nitro",
         outputCapField: "max_tokens",
-        maxOutputTokens: 0,
       }),
     );
-    expect(missingCap).toBeInstanceOf(AiConfigError);
-    expect((missingCap as AiConfigError).code).toBe("INVALID_OUTPUT_CAP");
+    expect(nitro).toBeInstanceOf(AiConfigError);
+    expect((nitro as AiConfigError).code).toBe("INVALID_REQUEST");
+
+    const floor = captureError(() =>
+      buildChatRequest({
+        ...base,
+        model: "fixture/generator-text:floor",
+        outputCapField: "max_tokens",
+      }),
+    );
+    expect(floor).toBeInstanceOf(AiConfigError);
+    expect((floor as AiConfigError).code).toBe("INVALID_REQUEST");
   });
 
-  it("includes only explicitly configured supported settings", () => {
+  it("rejects provider selectors in a hand-built request", () => {
     const base = {
-      role: "wording" as const,
+      role: "spec" as const,
       model: "fixture/generator-text",
-      providerTag: "fixture-generator/turbo",
-      outputCapField: "max_tokens" as const,
       maxOutputTokens: 8192,
       messages: [{ role: "user" as const, content: "Return JSON." }],
-      responseFormat: WORDING_JSON_SCHEMA,
+      responseFormat: FAMILY_SPEC_JSON_SCHEMAS.ranking,
     };
-    const absent = buildChatRequest(base);
-    expect(absent.body).not.toHaveProperty("temperature");
-    expect(absent.body).not.toHaveProperty("seed");
-    expect(absent.body).not.toHaveProperty("reasoning");
-
-    const settings: AiRoleSettings = { temperature: 0.2, seed: 7, reasoning: true };
-    const present = buildChatRequest({ ...base, settings });
-    expect(present.body.temperature).toBe(0.2);
-    expect(present.body.seed).toBe(7);
-    expect(present.body.reasoning).toBe(true);
-    expect(OutputCapFieldSchema.parse("max_tokens")).toBe("max_tokens");
-  });
-
-  it("binds image parts to vision roles only", () => {
-    const textBase = {
-      role: "blind_text" as const,
-      model: "fixture/reviewer-text",
-      providerTag: "fixture-reviewer/text",
-      outputCapField: "max_tokens" as const,
-      maxOutputTokens: 4096,
-      responseFormat: BLIND_REVIEW_JSON_SCHEMA,
+    const built = buildChatRequest({ ...base, outputCapField: "max_tokens" });
+    const withSelector = {
+      ...built.body,
+      provider: {
+        allow_fallbacks: true,
+        require_parameters: true,
+        sort: "price",
+      },
     };
-    const visionWithoutImage = captureError(() =>
-      buildChatRequest({
-        ...textBase,
-        role: "blind_vision",
-        model: "fixture/reviewer-vision",
-        providerTag: "fixture-vision",
-        outputCapField: "max_completion_tokens",
-        messages: [{ role: "user", content: "No image here." }],
-      }),
+    const error = captureError(() =>
+      assertNoForbiddenRequestFields(withSelector),
     );
-    expect(visionWithoutImage).toBeInstanceOf(AiConfigError);
-    expect((visionWithoutImage as AiConfigError).code).toBe("INVALID_REQUEST");
-
-    const textWithImage = captureError(() =>
-      buildChatRequest({
-        ...textBase,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Unexpected image." },
-              { type: "image_url", image_url: { url: PNG_DATA_URL } },
-            ],
-          },
-        ],
-      }),
-    );
-    expect(textWithImage).toBeInstanceOf(AiConfigError);
-    expect((textWithImage as AiConfigError).code).toBe("INVALID_REQUEST");
+    expect(error).toBeInstanceOf(AiConfigError);
+    expect((error as AiConfigError).code).toBe("INVALID_REQUEST");
   });
 });
 
@@ -650,115 +618,211 @@ describe("offline preflight route validation", () => {
     expectFailure(report, "MODEL_NOT_FOUND", "spec");
   });
 
-  it("rejects a base provider slug when only variant tags exist", () => {
+  it("uses model-level Balanced routing without provider IDs", () => {
     const catalog = fixture();
-    const report = run(
-      catalog,
-      replaceRole(baseRoles(catalog), "spec", {
-        providerTag: "fixture-generator",
-      }),
-    );
-    expect(report.ok).toBe(false);
-    expectFailure(report, "PROVIDER_TAG_BASE_WILDCARD", "spec");
-  });
-
-  it("rejects duplicate exact provider tags", () => {
-    const catalog = fixture();
-    const model = fixtureModel(catalog, "fixture/generator-text");
-    const endpoint = fixtureEndpoint(
-      catalog,
-      "fixture/generator-text",
-      "fixture-generator/turbo",
-    );
-    model.endpoints?.push(clone(endpoint));
     const report = run(catalog);
-    expect(report.ok).toBe(false);
-    expectFailure(report, "PROVIDER_TAG_AMBIGUOUS", "spec");
+    expect(report.ok).toBe(true);
+    const spec = roleResult(report, "spec").resolved;
+    expect(spec?.routingPolicy).toBe("balanced");
+    expect(spec?.compatibleEndpointTags).toEqual([
+      "fixture-generator/turbo",
+    ]);
+    expect(spec?.outputCapField).toBe("max_tokens");
+    expect(roleResult(report, "spec").notes).toContain(
+      "balanced_provider_fallback_enabled",
+    );
+    const reservation = conservativeReservationUsd(
+      roleResult(report, "spec").resolved as NonNullable<
+        ReturnType<typeof roleResult>["resolved"]
+      >,
+    );
+    expect(reservation).toMatch(/^\d+\.\d+$/);
+    expect(Number(reservation)).toBeGreaterThan(0);
   });
 
-  it("rejects an inactive endpoint", () => {
-    const catalog = fixture();
+  it("accepts provider removal and addition without pinning", () => {
+    const removed = fixture();
     fixtureEndpoint(
-      catalog,
+      removed,
       "fixture/generator-text",
       "fixture-generator/turbo",
     ).status = 1;
-    const report = run(catalog);
-    expect(report.ok).toBe(false);
-    expectFailure(report, "ENDPOINT_INACTIVE", "spec");
-  });
+    const removedReport = run(removed);
+    expect(removedReport.ok).toBe(true);
+    const removedSpec = roleResult(removedReport, "spec").resolved;
+    expect(removedSpec?.compatibleEndpointTags).toEqual([
+      "fixture-generator/plus",
+    ]);
+    expect(removedSpec?.outputCapField).toBe("max_completion_tokens");
 
-  it("names missing structured-output and cap capabilities", () => {
-    const noStructured = fixture();
-    const structuredEndpoint = fixtureEndpoint(
-      noStructured,
+    const added = fixture();
+    const endpoint = fixtureEndpoint(
+      added,
       "fixture/generator-text",
       "fixture-generator/turbo",
     );
-    structuredEndpoint.supported_parameters = (
-      structuredEndpoint.supported_parameters ?? []
-    ).filter((parameter) => parameter !== "structured_outputs");
+    added.models
+      .find((model) => model.id === "fixture/generator-text")
+      ?.endpoints?.push({
+        ...clone(endpoint),
+        tag: "fixture-generator/new",
+        provider_name: "Fixture New",
+      });
+    const addedReport = run(added);
+    expect(addedReport.ok).toBe(true);
+    expect(roleResult(addedReport, "spec").resolved?.compatibleEndpointTags).toEqual(
+      ["fixture-generator/new", "fixture-generator/turbo"],
+    );
+  });
+
+  it("fails only when no active compatible endpoint remains", () => {
+    const inactive = fixture();
+    for (const endpoint of fixtureEndpoints(inactive, "fixture/generator-text")) {
+      endpoint.status = 1;
+    }
+    const inactiveReport = run(inactive);
+    expect(inactiveReport.ok).toBe(false);
+    expectFailure(inactiveReport, "NO_ACTIVE_ENDPOINT", "spec");
+
+    const noStructured = fixture();
+    for (const endpoint of fixtureEndpoints(
+      noStructured,
+      "fixture/generator-text",
+    )) {
+      endpoint.supported_parameters = (
+        endpoint.supported_parameters ?? []
+      ).filter((parameter) => parameter !== "structured_outputs");
+    }
     const structuredReport = run(noStructured);
     expect(structuredReport.ok).toBe(false);
     expectFailure(structuredReport, "MISSING_STRUCTURED_OUTPUTS", "spec");
-
-    const noCap = fixture();
-    const capEndpoint = fixtureEndpoint(
-      noCap,
-      "fixture/generator-text",
-      "fixture-generator/turbo",
-    );
-    capEndpoint.supported_parameters = (
-      capEndpoint.supported_parameters ?? []
-    ).filter(
-      (parameter) =>
-        parameter !== "max_tokens" && parameter !== "max_completion_tokens",
-    );
-    const capReport = run(noCap);
-    expect(capReport.ok).toBe(false);
-    expectFailure(capReport, "MISSING_OUTPUT_CAP_FIELD", "spec");
   });
 
-  it("rejects insufficient output, context, and prompt limits", () => {
+  it("names missing cap capability when every compatible endpoint lacks it", () => {
+    const catalog = fixture();
+    for (const endpoint of fixtureEndpoints(catalog, "fixture/generator-text")) {
+      endpoint.supported_parameters = (
+        endpoint.supported_parameters ?? []
+      ).filter(
+        (parameter) =>
+          parameter !== "max_tokens" && parameter !== "max_completion_tokens",
+      );
+    }
+    const report = run(catalog);
+    expect(report.ok).toBe(false);
+    expectFailure(report, "MISSING_OUTPUT_CAP_FIELD", "spec");
+  });
+
+  it("rejects insufficient output, context, and prompt limits when all endpoints fail", () => {
     const outputLimited = fixture();
-    fixtureEndpoint(
+    for (const endpoint of fixtureEndpoints(
       outputLimited,
       "fixture/generator-text",
-      "fixture-generator/turbo",
-    ).max_completion_tokens = 1024;
-    const outputReport = run(outputLimited);
-    expectFailure(outputReport, "OUTPUT_LIMIT_TOO_SMALL", "spec");
+    )) {
+      endpoint.max_completion_tokens = 1024;
+    }
+    expectFailure(run(outputLimited), "OUTPUT_LIMIT_TOO_SMALL", "spec");
 
     const missingOutputLimit = fixture();
-    fixtureEndpoint(
+    for (const endpoint of fixtureEndpoints(
       missingOutputLimit,
       "fixture/generator-text",
-      "fixture-generator/turbo",
-    ).max_completion_tokens = null;
-    const missingOutputReport = run(missingOutputLimit);
+    )) {
+      endpoint.max_completion_tokens = null;
+    }
     expectFailure(
-      missingOutputReport,
+      run(missingOutputLimit),
       "MISSING_MAX_COMPLETION_TOKENS",
       "spec",
     );
 
     const contextLimited = fixture();
-    fixtureEndpoint(
+    for (const endpoint of fixtureEndpoints(
       contextLimited,
       "fixture/generator-text",
-      "fixture-generator/turbo",
-    ).context_length = 8192;
-    const contextReport = run(contextLimited);
-    expectFailure(contextReport, "CONTEXT_LIMIT_TOO_SMALL", "spec");
+    )) {
+      endpoint.context_length = 8192;
+    }
+    expectFailure(run(contextLimited), "CONTEXT_LIMIT_TOO_SMALL", "spec");
 
     const promptLimited = fixture();
-    fixtureEndpoint(
+    for (const endpoint of fixtureEndpoints(
       promptLimited,
       "fixture/generator-text",
+    )) {
+      endpoint.max_prompt_tokens = 1024;
+    }
+    expectFailure(run(promptLimited), "PROMPT_LIMIT_TOO_SMALL", "spec");
+  });
+
+  it("uses conservative pricing across all compatible endpoints", () => {
+    const catalog = fixture();
+    const endpoint = fixtureEndpoint(
+      catalog,
+      "fixture/generator-text",
       "fixture-generator/turbo",
-    ).max_prompt_tokens = 1024;
-    const promptReport = run(promptLimited);
-    expectFailure(promptReport, "PROMPT_LIMIT_TOO_SMALL", "spec");
+    );
+    catalog.models
+      .find((model) => model.id === "fixture/generator-text")
+      ?.endpoints?.push({
+        ...clone(endpoint),
+        tag: "fixture-generator/premium",
+        provider_name: "Fixture Premium",
+        pricing: { ...endpoint.pricing, completion: "0.000099" },
+      });
+    const report = run(catalog);
+    expect(report.ok).toBe(true);
+    expect(roleResult(report, "spec").resolved?.compatibleEndpointTags).toEqual([
+      "fixture-generator/premium",
+      "fixture-generator/turbo",
+    ]);
+    expect(roleResult(report, "spec").resolved?.pricing.completion).toBe(
+      "0.000099",
+    );
+
+    const tiny = fixture();
+    const tinyEndpoint = fixtureEndpoint(
+      tiny,
+      "fixture/generator-text",
+      "fixture-generator/turbo",
+    );
+    if (tinyEndpoint.pricing !== undefined) {
+      tinyEndpoint.pricing.completion = "0.0000005";
+    }
+    const tinyReport = run(tiny);
+    expect(tinyReport.ok).toBe(true);
+    expect(roleResult(tinyReport, "spec").resolved?.pricing.completion).toBe(
+      "0.0000005",
+    );
+  });
+
+  it("rejects unknown, invalid, and unsupported pricing when all endpoints fail", () => {
+    const unknown = fixture();
+    for (const endpoint of fixtureEndpoints(unknown, "fixture/generator-text")) {
+      if (endpoint.pricing !== undefined) {
+        delete endpoint.pricing.completion;
+      }
+    }
+    expectFailure(run(unknown), "UNKNOWN_PRICING", "spec");
+
+    const invalid = fixture();
+    for (const endpoint of fixtureEndpoints(invalid, "fixture/generator-text")) {
+      if (endpoint.pricing !== undefined) {
+        endpoint.pricing.completion = "-0.1";
+      }
+    }
+    expectFailure(run(invalid), "INVALID_PRICING", "spec");
+
+    const overrides = fixture();
+    for (const endpoint of fixtureEndpoints(
+      overrides,
+      "fixture/generator-text",
+    )) {
+      if (endpoint.pricing !== undefined) {
+        endpoint.pricing.overrides = {};
+      }
+    }
+    expectFailure(run(overrides), "UNSUPPORTED_PRICING", "spec");
   });
 
   it("does not pass an image route from a multimodal-sounding name alone", () => {
@@ -772,47 +836,6 @@ describe("offline preflight route validation", () => {
     const report = run(catalog);
     expect(report.ok).toBe(false);
     expectFailure(report, "MISSING_IMAGE_INPUT_MODALITY", "blind_vision");
-  });
-
-  it("rejects unknown, invalid, and unsupported pricing", () => {
-    const unknown = fixture();
-    const unknownPricing = fixtureEndpoint(
-      unknown,
-      "fixture/generator-text",
-      "fixture-generator/turbo",
-    ).pricing;
-    if (unknownPricing === undefined) {
-      throw new Error("fixture pricing is missing");
-    }
-    delete unknownPricing.completion;
-    const unknownReport = run(unknown);
-    expectFailure(unknownReport, "UNKNOWN_PRICING", "spec");
-
-    const invalid = fixture();
-    const invalidPricing = fixtureEndpoint(
-      invalid,
-      "fixture/generator-text",
-      "fixture-generator/turbo",
-    ).pricing;
-    if (invalidPricing === undefined) {
-      throw new Error("fixture pricing is missing");
-    }
-    invalidPricing.completion = "-0.1";
-    const invalidReport = run(invalid);
-    expectFailure(invalidReport, "INVALID_PRICING", "spec");
-
-    const overrides = fixture();
-    const overridePricing = fixtureEndpoint(
-      overrides,
-      "fixture/generator-text",
-      "fixture-generator/turbo",
-    ).pricing;
-    if (overridePricing === undefined) {
-      throw new Error("fixture pricing is missing");
-    }
-    overridePricing.overrides = {};
-    const overrideReport = run(overrides);
-    expectFailure(overrideReport, "UNSUPPORTED_PRICING", "spec");
   });
 
   it("requires an image price or a documented conservative reserve", () => {
@@ -862,7 +885,6 @@ describe("offline preflight route validation", () => {
       catalog,
       replaceRole(baseRoles(catalog), "blind_text", {
         model: "fixture/generator-text",
-        providerTag: "fixture-generator/turbo",
       }),
     );
     expect(report.ok).toBe(false);
@@ -996,7 +1018,6 @@ describe("public catalog fetch", () => {
       {
         role: "spec",
         model: "fixture/generator-text",
-        providerTag: "fixture-generator/turbo",
       },
     ]);
     expect(report.ok).toBe(true);
@@ -1161,5 +1182,155 @@ describe("preflight CLI", () => {
       ]),
     ).toBe(1);
     stderr.mockRestore();
+  });
+});
+
+
+describe("preflight CLI live gate", () => {
+  it("requires paid authorization and a routing confirmation before any network", async () => {
+    const stderr: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderr.push(String(chunk));
+        return true;
+      });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      expect(await preflightMain(["node", "preflight", "--live"])).toBe(1);
+      expect(stderr.join("")).toContain("--allow-paid");
+      expect(
+        await preflightMain([
+          "node",
+          "preflight",
+          "--live",
+          "--allow-paid",
+          "--max-cost",
+          "0.50",
+        ]),
+      ).toBe(1);
+      expect(stderr.join("")).toContain("--routing-confirmation");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("blocks stale, conflicting, and BYOK confirmations before any network", async () => {
+    const previous = { ...process.env };
+    process.env.OPENROUTER_API_KEY = "test-inference-key";
+    process.env.GENERATOR_MODEL = "fixture/generator-text";
+    process.env.REVIEWER_MODEL = "fixture/reviewer-text";
+    process.env.VISION_REVIEWER_MODEL = "fixture/reviewer-vision";
+    const directory = mkdtempSync(join(tmpdir(), "puzzle-preflight-confirmation-"));
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      const writeConfirmation = (name: string, value: unknown): string => {
+        const path = join(directory, name);
+        writeFileSync(path, `${JSON.stringify(value)}\n`);
+        return path;
+      };
+      const base = {
+        operator: "operator",
+        checkedAt: new Date().toISOString(),
+        providerSort: "default_balanced",
+        byokConfigured: false,
+      };
+      const stale = writeConfirmation("stale.json", {
+        ...base,
+        checkedAt: "2020-01-01T00:00:00.000Z",
+      });
+      const conflicting = writeConfirmation("conflicting.json", {
+        ...base,
+        providerSort: "price",
+      });
+      const byok = writeConfirmation("byok.json", {
+        ...base,
+        byokConfigured: true,
+      });
+      const future = writeConfirmation("future.json", {
+        ...base,
+        checkedAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+
+      for (const [path, expected] of [
+        [stale, "older than 15 minutes"],
+        [conflicting, "routing confirmation must contain"],
+        [byok, "routing confirmation must contain"],
+        [future, "checkedAt is in the future"],
+      ] as const) {
+        const stderr: string[] = [];
+        const spy = vi
+          .spyOn(process.stderr, "write")
+          .mockImplementation((chunk: unknown) => {
+            stderr.push(String(chunk));
+            return true;
+          });
+        try {
+          const code = await preflightMain([
+            "node",
+            "preflight",
+            "--live",
+            "--allow-paid",
+            "--max-cost",
+            "0.50",
+            "--routing-confirmation",
+            path,
+          ]);
+          expect(code).toBe(1);
+          expect(stderr.join("")).toContain(expected);
+        } finally {
+          spy.mockRestore();
+        }
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      rmSync(directory, { recursive: true, force: true });
+      for (const key of Object.keys(process.env)) {
+        if (!(key in previous)) {
+          delete process.env[key];
+        }
+      }
+      for (const [key, value] of Object.entries(previous)) {
+        process.env[key] = value;
+      }
+    }
+  });
+});
+
+
+describe("live probe response validation", () => {
+  it("requires the role strict schema and a real vision interpretation", () => {
+    const validSpec = constructRankingSpec("a".repeat(64), 1).spec;
+    expect(validateProbeContent("spec", validSpec).schemaValid).toBe(true);
+    expect(validateProbeContent("spec", { family: "ranking" }).schemaValid).toBe(
+      false,
+    );
+
+    const blind = {
+      answerStatus: "cannot_determine",
+      chosenOption: null,
+      reasoning: "The image is too small to identify a tile.",
+      clarity: "unclear",
+      ambiguity: "present",
+      confidence: 0.2,
+      visualLegibility: "unclear",
+      issues: [],
+    };
+    expect(validateProbeContent("blind_vision", blind)).toMatchObject({
+      schemaValid: true,
+      visionInterpreted: true,
+    });
+    expect(
+      validateProbeContent("blind_vision", {
+        ...blind,
+        visualLegibility: "not_applicable",
+      }),
+    ).toMatchObject({
+      schemaValid: false,
+      visionInterpreted: false,
+    });
   });
 });

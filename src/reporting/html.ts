@@ -87,7 +87,7 @@ interface StageView {
 interface RequestSummary {
   readonly role: string;
   readonly model: string;
-  readonly provider: string;
+  readonly routingPolicy: string;
   readonly state: string;
   readonly requestHash: string;
   readonly attempts: readonly string[];
@@ -340,7 +340,7 @@ function requestSummaries(
     const summary: RequestSummary = {
       role: request.role,
       model: request.model,
-      provider: request.provider,
+      routingPolicy: request.routingPolicy,
       state: request.state,
       requestHash: request.requestHash,
       attempts: request.attempts.map(
@@ -539,7 +539,7 @@ function renderProvenance(card: HtmlReportCard): string {
             (request) =>
               `<li><code>${escapeHtml(request.role)}</code>: ${escapeHtml(
                 request.model,
-              )} via ${escapeHtml(request.provider)}; state ${escapeHtml(
+              )} via ${escapeHtml(request.routingPolicy)}; state ${escapeHtml(
                 request.state,
               )}; attempts ${escapeHtml(
                 request.attempts.join(", ") || "none",
@@ -774,6 +774,9 @@ function renderHeader(
   )}${summaryItem(
     "Cost status",
     metrics.cost.costStatus,
+  )}${summaryItem(
+    "Observed provider/model identity",
+    `${metrics.providerMix.identityAttempts}/${metrics.providerMix.totalAttempts}`,
   )}${summaryItem(
     "Unknown attempts",
     String(metrics.cost.unknownAttempts),

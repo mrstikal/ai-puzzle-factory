@@ -79,9 +79,9 @@ function alignmentRoute(
   return {
     role: modality === "svg" ? "alignment_vision" : "alignment_text",
     model: "test/model",
-    providerTag: "test-provider",
-    providerName: "Test Provider",
-    endpointTag: "test-provider",
+    routingPolicy: "balanced",
+    compatibleEndpointTags: ["test-provider"],
+    compatibleProviderNames: ["Test Provider"],
     outputCapField: "max_tokens",
     maxOutputTokens: 4096,
     minPromptTokens: modality === "svg" ? 32_768 : 16_384,
@@ -749,7 +749,7 @@ describe("informed alignment reviewer", () => {
       requestBody: { blindCanary: "BLIND_CANARY" },
       expectedSchemaHash: strictSchemaHash(BLIND_REVIEW_JSON_SCHEMA),
       model: "blind/model",
-      provider: "blind-provider",
+      routingPolicy: "balanced",
       outputCapField: "max_tokens",
       createdAt: CREATED_AT,
     });

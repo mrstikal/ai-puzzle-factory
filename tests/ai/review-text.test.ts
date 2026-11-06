@@ -64,9 +64,9 @@ function blindTextRoute(overrides: Partial<ResolvedRoute> = {}): ResolvedRoute {
   return {
     role: "blind_text",
     model: "test/model",
-    providerTag: "test-provider",
-    providerName: "Test Provider",
-    endpointTag: "test-provider",
+    routingPolicy: "balanced",
+    compatibleEndpointTags: ["test-provider"],
+    compatibleProviderNames: ["Test Provider"],
     outputCapField: "max_tokens",
     maxOutputTokens: 4096,
     minPromptTokens: 16_384,
@@ -342,7 +342,7 @@ describe("blind text reviewer", () => {
       const requestBody = asRequestBody(call.requestBody) as {
         messages: Array<{ content: string }>;
         response_format: { json_schema: { name: string; strict: boolean } };
-        provider: { only: string[]; allow_fallbacks: boolean; require_parameters: boolean };
+        provider: { allow_fallbacks: boolean; require_parameters: boolean };
         max_tokens: number;
       };
       expect(requestBody.response_format.json_schema.name).toBe(
@@ -350,8 +350,7 @@ describe("blind text reviewer", () => {
       );
       expect(requestBody.response_format.json_schema.strict).toBe(true);
       expect(requestBody.provider).toEqual({
-        only: ["test-provider"],
-        allow_fallbacks: false,
+        allow_fallbacks: true,
         require_parameters: true,
       });
       expect(requestBody.max_tokens).toBe(4096);

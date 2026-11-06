@@ -47,17 +47,18 @@ export const ROLE_TO_MODEL_ROLE: Readonly<Record<RequestRole, ModelRoleKind>> = 
 export const LIVE_ENV_KEYS = {
   apiKey: "OPENROUTER_API_KEY",
   generatorModel: "GENERATOR_MODEL",
-  generatorProvider: "GENERATOR_PROVIDER",
   reviewerModel: "REVIEWER_MODEL",
-  reviewerProvider: "REVIEWER_PROVIDER",
   visionReviewerModel: "VISION_REVIEWER_MODEL",
-  visionReviewerProvider: "VISION_REVIEWER_PROVIDER",
+} as const;
+
+export const BALANCED_ROUTING_POLICY = {
+  allow_fallbacks: true,
+  require_parameters: true,
 } as const;
 
 export type AiConfigErrorCode =
   | "MISSING_INFERENCE_KEY"
   | "MISSING_MODEL"
-  | "MISSING_PROVIDER"
   | "INVALID_ENV_VALUE"
   | "ROLE_SEPARATION_VIOLATION"
   | "UNSUPPORTED_SETTING"
@@ -83,7 +84,6 @@ export class AiConfigError extends Error {
 
 export interface LiveModelConfig {
   readonly model: string;
-  readonly provider: string;
 }
 
 export interface LiveEnvironmentConfig {
@@ -99,7 +99,7 @@ const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
 function requiredValue(
   env: NodeJS.ProcessEnv,
   key: string,
-  code: "MISSING_INFERENCE_KEY" | "MISSING_MODEL" | "MISSING_PROVIDER",
+  code: "MISSING_INFERENCE_KEY" | "MISSING_MODEL",
 ): string {
   const value = env[key];
   if (value === undefined || value.trim() === "") {
@@ -112,7 +112,7 @@ function identifier(value: string, field: string): string {
   if (!IDENTIFIER_PATTERN.test(value) || value.includes("*")) {
     throw new AiConfigError(
       "INVALID_ENV_VALUE",
-      `${field} must be an exact model/provider identifier without wildcards`,
+      `${field} must be an exact model identifier without wildcards`,
       field,
     );
   }
@@ -128,29 +128,17 @@ export function readLiveEnvironment(
       requiredValue(env, LIVE_ENV_KEYS.generatorModel, "MISSING_MODEL"),
       LIVE_ENV_KEYS.generatorModel,
     ),
-    provider: identifier(
-      requiredValue(env, LIVE_ENV_KEYS.generatorProvider, "MISSING_PROVIDER"),
-      LIVE_ENV_KEYS.generatorProvider,
-    ),
   };
   const reviewer: LiveModelConfig = {
     model: identifier(
       requiredValue(env, LIVE_ENV_KEYS.reviewerModel, "MISSING_MODEL"),
       LIVE_ENV_KEYS.reviewerModel,
     ),
-    provider: identifier(
-      requiredValue(env, LIVE_ENV_KEYS.reviewerProvider, "MISSING_PROVIDER"),
-      LIVE_ENV_KEYS.reviewerProvider,
-    ),
   };
   const visionReviewer: LiveModelConfig = {
     model: identifier(
       requiredValue(env, LIVE_ENV_KEYS.visionReviewerModel, "MISSING_MODEL"),
       LIVE_ENV_KEYS.visionReviewerModel,
-    ),
-    provider: identifier(
-      requiredValue(env, LIVE_ENV_KEYS.visionReviewerProvider, "MISSING_PROVIDER"),
-      LIVE_ENV_KEYS.visionReviewerProvider,
     ),
   };
 
@@ -173,14 +161,15 @@ export function readLiveEnvironment(
   if (visionReviewer.model === reviewer.model) {
     correlations.push("vision_reviewer_uses_text_reviewer_model");
   }
-  if (generator.provider === reviewer.provider) {
-    correlations.push("generator_and_text_reviewer_share_provider");
+  const authorOf = (model: string): string => model.split("/")[0] ?? model;
+  if (authorOf(generator.model) === authorOf(reviewer.model)) {
+    correlations.push("generator_and_text_reviewer_share_model_author");
   }
-  if (generator.provider === visionReviewer.provider) {
-    correlations.push("generator_and_vision_reviewer_share_provider");
+  if (authorOf(generator.model) === authorOf(visionReviewer.model)) {
+    correlations.push("generator_and_vision_reviewer_share_model_author");
   }
-  if (reviewer.provider === visionReviewer.provider) {
-    correlations.push("text_and_vision_reviewers_share_provider");
+  if (authorOf(reviewer.model) === authorOf(visionReviewer.model)) {
+    correlations.push("text_and_vision_reviewers_share_model_author");
   }
 
   return {
@@ -242,7 +231,6 @@ export interface ChatMessage {
 export interface BuildChatRequestInput {
   readonly role: RequestRole;
   readonly model: string;
-  readonly providerTag: string;
   readonly outputCapField: OutputCapField;
   readonly maxOutputTokens: number;
   readonly messages: readonly ChatMessage[];
@@ -261,6 +249,13 @@ function assertIdentifier(value: string, field: string): string {
     throw new AiConfigError(
       "INVALID_REQUEST",
       `${field} must be a non-empty exact identifier without wildcards`,
+      field,
+    );
+  }
+  if (value.endsWith(":nitro") || value.endsWith(":floor")) {
+    throw new AiConfigError(
+      "INVALID_REQUEST",
+      `${field} must use Balanced routing without a :nitro or :floor suffix`,
       field,
     );
   }
@@ -347,11 +342,33 @@ export function assertNoForbiddenRequestFields(
       );
     }
   }
+  const provider = body.provider;
+  if (provider === null || typeof provider !== "object" || Array.isArray(provider)) {
+    throw new AiConfigError(
+      "INVALID_REQUEST",
+      "provider must contain the Balanced routing policy",
+      "provider",
+    );
+  }
+  const record = provider as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (
+    keys.length !== 2 ||
+    keys[0] !== "allow_fallbacks" ||
+    keys[1] !== "require_parameters" ||
+    record.allow_fallbacks !== true ||
+    record.require_parameters !== true
+  ) {
+    throw new AiConfigError(
+      "INVALID_REQUEST",
+      "provider must be exactly {allow_fallbacks:true,require_parameters:true} with no sort/order/only/ignore selectors",
+      "provider",
+    );
+  }
 }
 
 export function buildChatRequest(input: BuildChatRequestInput): BuiltChatRequest {
   const model = assertIdentifier(input.model, "model");
-  const providerTag = assertIdentifier(input.providerTag, "providerTag");
   if (!REQUEST_ROLES.includes(input.role)) {
     throw new AiConfigError("INVALID_REQUEST", `unknown role ${String(input.role)}`);
   }
@@ -433,11 +450,7 @@ export function buildChatRequest(input: BuildChatRequestInput): BuiltChatRequest
         schema: input.responseFormat.schema,
       },
     },
-    provider: {
-      only: [providerTag],
-      allow_fallbacks: false,
-      require_parameters: true,
-    },
+    provider: { ...BALANCED_ROUTING_POLICY },
     [input.outputCapField]: input.maxOutputTokens,
   };
   if (settings?.temperature !== undefined) {

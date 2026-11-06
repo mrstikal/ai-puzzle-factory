@@ -546,7 +546,7 @@ describe("bounded concurrency and cancellation", () => {
         requestBody: { model: "mock/model", messages: [] },
         expectedSchemaHash: "a".repeat(64),
         model: "mock/model",
-        provider: "mock",
+        routingPolicy: "balanced",
         createdAt: CREATED_AT,
       });
       const second = createLogicalCall(db, {
@@ -557,7 +557,7 @@ describe("bounded concurrency and cancellation", () => {
         requestBody: { model: "mock/model", messages: [] },
         expectedSchemaHash: "a".repeat(64),
         model: "mock/model",
-        provider: "mock",
+        routingPolicy: "balanced",
         createdAt: CREATED_AT,
       });
       const firstAttempt = createAttempt(db, {

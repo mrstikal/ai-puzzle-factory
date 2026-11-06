@@ -442,10 +442,26 @@ export type Thresholds = z.infer<typeof ThresholdsSchema>;
 
 export const RoleConfigSchema = z.strictObject({
   model: z.string().min(1),
-  provider: z.string().min(1),
 });
 
 export type RoleConfig = z.infer<typeof RoleConfigSchema>;
+
+export const RoutingPolicySchema = z.strictObject({
+  mode: z.literal("balanced"),
+  allowFallbacks: z.literal(true),
+  requireParameters: z.literal(true),
+});
+
+export type RoutingPolicy = z.infer<typeof RoutingPolicySchema>;
+
+export const RoutingConfirmationSchema = z.strictObject({
+  operator: z.string().min(1).max(200),
+  checkedAt: z.iso.datetime(),
+  providerSort: z.literal("default_balanced"),
+  byokConfigured: z.literal(false),
+});
+
+export type RoutingConfirmation = z.infer<typeof RoutingConfirmationSchema>;
 
 export const OutputLimitsSchema = z.strictObject({
   spec: z.literal(8192),
@@ -463,6 +479,8 @@ export const RunManifestSchema = z
       textReviewer: RoleConfigSchema,
       visionReviewer: RoleConfigSchema,
     }),
+    routingPolicy: RoutingPolicySchema,
+    routingConfirmation: RoutingConfirmationSchema,
     outputLimits: OutputLimitsSchema,
     concurrency: z.union([z.literal(1), z.literal(2)]),
     budget: z.strictObject({

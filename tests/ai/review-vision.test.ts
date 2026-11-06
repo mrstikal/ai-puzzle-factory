@@ -90,9 +90,9 @@ function blindVisionRoute(overrides: Partial<ResolvedRoute> = {}): ResolvedRoute
   return {
     role: "blind_vision",
     model: "test/model",
-    providerTag: "test-provider",
-    providerName: "Test Provider",
-    endpointTag: "test-provider",
+    routingPolicy: "balanced",
+    compatibleEndpointTags: ["test-provider"],
+    compatibleProviderNames: ["Test Provider"],
     outputCapField: "max_tokens",
     maxOutputTokens: 4096,
     minPromptTokens: 32_768,

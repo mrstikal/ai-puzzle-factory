@@ -105,6 +105,8 @@ function uncertainResult(
     generationId: attempt.generationId,
     actualCostUsd: attempt.actualCostUsd,
     costStatus: attempt.costStatus,
+    observedModel: attempt.observedModel,
+    observedProvider: attempt.observedProvider,
   }));
   return {
     logicalCallId: call.logicalCallId,

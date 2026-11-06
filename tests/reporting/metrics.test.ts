@@ -672,3 +672,43 @@ describe("exact metrics edge cases", () => {
     expect(metrics.cost.actualCostUsd).toBeNull();
   });
 });
+
+
+describe("provider identity diagnostics", () => {
+  it("reports observed provider/model mix and missing identity coverage", () => {
+    createSyntheticRun(db);
+    const missing = computeRunMetrics(db, FIXTURE_RUN_ID);
+    expect(missing.providerMix.totalAttempts).toBe(missing.cost.attempts);
+    expect(missing.providerMix.totalAttempts).toBeGreaterThan(0);
+    expect(missing.providerMix.identityAttempts).toBe(0);
+    expect(missing.providerMix.missingIdentityAttempts).toBe(
+      missing.providerMix.totalAttempts,
+    );
+    expect(missing.providerMix.identityCoverage).toBe(0);
+    expect(
+      missing.providerMix.byRole.spec.observedProviders.unknown,
+    ).toBeGreaterThan(0);
+
+    const attempt = db
+      .prepare(
+        "SELECT attempt_id FROM request_attempts ORDER BY attempt_id LIMIT 1",
+      )
+      .get() as { attempt_id: string };
+    db.prepare(
+      "UPDATE request_attempts SET observed_model = ?, observed_provider = ? WHERE attempt_id = ?",
+    ).run("observed/model", "observed-provider", attempt.attempt_id);
+    const observed = computeRunMetrics(db, FIXTURE_RUN_ID);
+    expect(observed.providerMix.identityAttempts).toBe(1);
+    expect(observed.providerMix.missingIdentityAttempts).toBe(
+      observed.providerMix.totalAttempts - 1,
+    );
+    expect(observed.providerMix.identityCoverage).toBeCloseTo(
+      1 / observed.providerMix.totalAttempts,
+      6,
+    );
+    const byRole = Object.values(observed.providerMix.byRole).find(
+      (role) => role.observedProviders["observed-provider"] === 1,
+    );
+    expect(byRole?.observedModels["observed/model"]).toBe(1);
+  });
+});

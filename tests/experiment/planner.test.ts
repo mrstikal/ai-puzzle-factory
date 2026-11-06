@@ -108,9 +108,20 @@ function makeRunManifest(plan: PlanManifest): unknown {
     evidenceKind: "mock",
     runId: "123e4567-e89b-12d3-a456-426614174000",
     roles: {
-      generator: { model: "mock/generator", provider: "mock-provider" },
-      textReviewer: { model: "mock/text-reviewer", provider: "mock-provider" },
-      visionReviewer: { model: "mock/vision-reviewer", provider: "mock-provider" },
+      generator: { model: "mock/generator" },
+      textReviewer: { model: "mock/text-reviewer" },
+      visionReviewer: { model: "mock/vision-reviewer" },
+    },
+    routingPolicy: {
+      mode: "balanced",
+      allowFallbacks: true,
+      requireParameters: true,
+    },
+    routingConfirmation: {
+      operator: "test-operator",
+      checkedAt: "2026-11-06T00:00:00.000Z",
+      providerSort: "default_balanced",
+      byokConfigured: false,
     },
     outputLimits: { spec: 8192, wording: 8192, review: 4096 },
     concurrency: 2,
@@ -469,6 +480,24 @@ describe("strict schemas", () => {
     const mockWithoutConfig = clone(manifest) as { mockConfiguration: unknown };
     mockWithoutConfig.mockConfiguration = null;
     expect(RunManifestSchema.safeParse(mockWithoutConfig).success).toBe(false);
+
+    const providerPinned = clone(manifest) as {
+      roles: { generator: { model: string; provider?: string } };
+    };
+    providerPinned.roles.generator.provider = "fixture-provider";
+    expect(RunManifestSchema.safeParse(providerPinned).success).toBe(false);
+
+    const conflictingSort = clone(manifest) as {
+      routingConfirmation: { providerSort: string };
+    };
+    conflictingSort.routingConfirmation.providerSort = "price";
+    expect(RunManifestSchema.safeParse(conflictingSort).success).toBe(false);
+
+    const byok = clone(manifest) as {
+      routingConfirmation: { byokConfigured: boolean };
+    };
+    byok.routingConfirmation.byokConfigured = true;
+    expect(RunManifestSchema.safeParse(byok).success).toBe(false);
   });
 
   it("enforces terminal candidate verdicts and paired stage durations", () => {

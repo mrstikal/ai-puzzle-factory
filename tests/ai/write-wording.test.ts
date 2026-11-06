@@ -64,9 +64,9 @@ function wordingRoute(overrides: Partial<ResolvedRoute> = {}): ResolvedRoute {
   return {
     role: "wording",
     model: "test/model",
-    providerTag: "test-provider",
-    providerName: "Test Provider",
-    endpointTag: "test-provider",
+    routingPolicy: "balanced",
+    compatibleEndpointTags: ["test-provider"],
+    compatibleProviderNames: ["Test Provider"],
     outputCapField: "max_tokens",
     maxOutputTokens: 8192,
     minPromptTokens: 16_384,
@@ -332,14 +332,13 @@ describe("AI wording adapter", () => {
       const requestBody = call.requestBody as {
         messages: Array<{ role: string; content: string }>;
         response_format: { json_schema: { name: string; strict: boolean } };
-        provider: { only: string[]; allow_fallbacks: boolean; require_parameters: boolean };
+        provider: { allow_fallbacks: boolean; require_parameters: boolean };
         max_tokens: number;
       };
       expect(requestBody.response_format.json_schema.name).toBe("puzzle_wording");
       expect(requestBody.response_format.json_schema.strict).toBe(true);
       expect(requestBody.provider).toEqual({
-        only: ["test-provider"],
-        allow_fallbacks: false,
+        allow_fallbacks: true,
         require_parameters: true,
       });
       expect(requestBody.max_tokens).toBe(8192);

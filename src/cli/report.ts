@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
 import { writeHtmlReport } from "../reporting/html.js";
@@ -21,6 +23,21 @@ export function createReportProgram(): Command {
     .action((options: ReportOptions) => {
       if (options.run === undefined) {
         throw new CommanderError(1, "commander.missingArgument", "--run is required");
+      }
+      const preflightPath = resolve(
+        "data",
+        "preflight",
+        options.run,
+        "preflight.json",
+      );
+      if (existsSync(preflightPath)) {
+        const artifact = JSON.parse(
+          readFileSync(preflightPath, "utf8"),
+        ) as Record<string, unknown>;
+        process.stdout.write(
+          `${JSON.stringify({ mode: "preflight", artifactPath: preflightPath, ...artifact }, null, 2)}\n`,
+        );
+        return;
       }
       const db = openDatabase(options.db ?? "data/experiment.sqlite");
       try {

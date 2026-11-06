@@ -61,7 +61,7 @@ function addCredentialCall(): {
     },
     expectedSchemaHash: "a".repeat(64),
     model: "mock/model",
-    provider: "mock",
+    routingPolicy: "balanced",
     createdAt,
   });
   const attempt = createAttempt(db, {

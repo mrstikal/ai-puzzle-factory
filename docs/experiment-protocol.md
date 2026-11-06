@@ -340,7 +340,7 @@ Out of scope: paid requests, provider fallback, JSON repair, model selection, au
 
 ## 16. Strict role schemas and offline preflight (P25)
 
-P25 defines the provider-facing schemas and validates an exact route before any live call. It does not select a model, contact OpenRouter, or execute a paid probe.
+P25 defines the provider-facing schemas and validates Balanced model-level routing before any live call. It does not select a model, contact OpenRouter, or execute a paid probe.
 
 ### Strict JSON Schema
 
@@ -353,26 +353,28 @@ P25 defines the provider-facing schemas and validates an exact route before any 
 
 ### Live inputs and request shape
 
-- Required live inputs are `OPENROUTER_API_KEY`, `GENERATOR_MODEL`, `GENERATOR_PROVIDER`, `REVIEWER_MODEL`, `REVIEWER_PROVIDER`, `VISION_REVIEWER_MODEL`, and `VISION_REVIEWER_PROVIDER`. Every value is empty in `.env.example`; there is no default key or model.
-- The generator model must differ from both reviewer models. The vision reviewer may reuse the text reviewer, and shared model/provider correlations are reported.
-- The selected `outputCapField` is `max_tokens` when that exact endpoint advertises it, otherwise `max_completion_tokens`; otherwise the route is rejected. The serialized request contains exactly one cap field and never both or neither.
-- Text roles cannot carry image parts; vision roles require a PNG data URL. Settings are absent by default and must be advertised by the exact endpoint when configured.
+- Required live inputs are `OPENROUTER_API_KEY`, `GENERATOR_MODEL`, `REVIEWER_MODEL`, and `VISION_REVIEWER_MODEL`. No provider ID or endpoint tag is required. Every value is empty in `.env.example`; there is no default key or model.
+- The generator model must differ from both reviewer models. The vision reviewer may reuse the text reviewer, and shared model correlations are reported.
+- Routing is OpenRouter Balanced: `provider:{allow_fallbacks:true,require_parameters:true}` with no `sort`, `order`, `only`, or `ignore`. Model slugs must not use `:nitro` or `:floor`.
+- The selected `outputCapField` is `max_tokens` when at least one otherwise-compatible active endpoint advertises it, otherwise `max_completion_tokens`; otherwise the route is rejected. The serialized request contains exactly one cap field and never both or neither.
+- Text roles cannot carry image parts; vision roles require a PNG data URL. Settings are absent by default and must be advertised by every selected compatible endpoint when configured.
 - Request limits remain 90 seconds, 2 MiB response, 64 KiB input text excluding base64, and 1 MiB PNG.
 
 ### Catalog resolution and route validation
 
 - A recorded catalog fixture stores model-level `architecture.input_modalities`, endpoint `tag`, `provider_name`, `status`, context/output/prompt limits, `supported_parameters`, and pricing.
-- Resolution requires exact tag equality and one active entry (`status === 0`). A base slug that only prefixes variant tags, a missing tag, or duplicate exact tags is rejected.
-- `structured_outputs` and one cap field must be advertised by the entry. The requested cap must not exceed the entry's `max_completion_tokens`.
+- Resolution considers every active entry (`status === 0`) for the configured model. At least one compatible active endpoint is required; provider tags are diagnostics only and never routing inputs.
+- `structured_outputs` and one cap field must be advertised. The requested cap must not exceed the endpoint's `max_completion_tokens`.
 - The context must fit the output cap plus a conservative prompt reserve: 16,384 text tokens or 32,768 vision tokens. A declared `max_prompt_tokens` must also fit that reserve.
-- Prompt and completion prices must be present non-negative decimal USD strings. Conditional `overrides` are unsupported offline. A vision route requires an image price or an explicit conservative per-role reserve.
+- Prompt and completion prices must be present non-negative decimal USD strings. Conditional `overrides` are unsupported offline. A vision route requires an image price or an explicit conservative per-role reserve. Multi-provider pricing is conservative: the maximum compatible price per field is reserved.
 - Image support comes from the enclosing model's `input_modalities`; a multimodal-sounding model name is never evidence. The PNG probe remains mandatory before live vision use.
 - `GET /api/v1/models` and endpoint reads are public and use only the inference key when one is supplied. A 403 fails closed with no retry and no management credential.
 
 ### Paid gates
 
-- Live probe construction requires explicit `allowPaid`, a positive `maxCostUsd`, a nonempty inference key, three separated resolved routes, and an actual PNG for the vision probe.
-- The plan builds exactly three bounded probes: generator/spec, text reviewer/blind, and vision reviewer/blind. Execution creates `preflight` logical calls with `runKind: preflight` and a unique probe key.
+- Live probe construction requires explicit `allowPaid`, a positive `maxCostUsd`, a nonempty inference key, three separated resolved model routes, and an actual PNG for the vision probe.
+- Live entry points also require a fresh operator routing-settings confirmation: default Balanced provider sort and no BYOK provider keys. A missing, stale, conflicting, or BYOK confirmation blocks before any paid call. The confirmation records operator identity and timestamp; key values are never read or stored.
+- The plan builds exactly three bounded probes: generator/spec, text reviewer/blind, and vision reviewer/blind. Execution creates `preflight` logical calls with `runKind: preflight`, Balanced routing, and a unique probe key. Observed provider/model identity is recorded per attempt when exposed.
 - P25 exposes only `npm run preflight -- --offline`. The CLI rejects `--live` even with paid flags; P46 owns live execution and all-family smoke.
 
 ### Tests and commands

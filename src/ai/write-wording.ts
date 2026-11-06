@@ -533,7 +533,6 @@ export async function writeWording(
   const built = buildChatRequest({
     role: "wording",
     model: input.route.model,
-    providerTag: input.route.providerTag,
     outputCapField: input.route.outputCapField,
     maxOutputTokens: input.route.maxOutputTokens,
     messages,
@@ -549,7 +548,7 @@ export async function writeWording(
     requestBody: built.body,
     expectedSchemaHash: metadata.schemaHash,
     model: input.route.model,
-    provider: input.route.providerTag,
+    routingPolicy: "balanced",
     outputCapField: input.route.outputCapField,
     createdAt: startedAt.toISOString(),
   });
@@ -666,7 +665,7 @@ export async function writeWording(
         logicalCallId: call.logicalCallId,
         attemptIds,
         model: input.route.model,
-        provider: input.route.providerTag,
+        routingPolicy: "balanced",
         outputCapField: input.route.outputCapField,
         maxOutputTokens: input.route.maxOutputTokens,
         usage: result.usage,

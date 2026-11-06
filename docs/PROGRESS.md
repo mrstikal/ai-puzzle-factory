@@ -1314,7 +1314,7 @@ Expected: the focused suite exits 0 with 26 passing tests covering the refusal/u
 
 ## P25. Strict Role Schemas, Capabilities, and Offline Preflight — 2026-11-05
 
-**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds provider-facing strict schemas, explicit live-input validation, exact catalog route checks, and an offline preflight. It makes no paid call, live provider request, model selection, catalog archive, or live probe execution.
+**State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds provider-facing strict schemas, explicit live-input validation, exact catalog route checks, and an offline preflight. It makes no paid call, live provider request, model selection, catalog archive, or live probe execution. **Plan v1.1 revision (2026-11-06):** the exact-provider/fallback-off behavior described in this historical entry is superseded by Balanced model-level routing; see P46.
 
 **Files**
 
@@ -1850,7 +1850,7 @@ const createdAt = "2026-11-05T00:00:00.000Z";
 const clock = { now: () => new Date(createdAt), sleep: async (): Promise<void> => {} };
 const route = (role: "spec" | "wording") => {
   const responseFormat = role === "spec" ? FAMILY_SPEC_JSON_SCHEMAS.ranking : WORDING_JSON_SCHEMA;
-  return { role, model: "mock/model", providerTag: "mock", providerName: "Mock Provider", endpointTag: "mock", outputCapField: "max_tokens", maxOutputTokens: 8192, minPromptTokens: 16384, contextLength: 131072, maxPromptTokens: null, maxCompletionTokens: 16384, supportedParameters: ["structured_outputs", "max_tokens"], pricing: { prompt: "0", completion: "0" }, requiresImage: false, imageInputDeclared: false, visionProbeRequired: false, responseFormat, schemaHash: strictSchemaHash(responseFormat), settings: {} } as const;
+  return { role, model: "mock/model", routingPolicy: "balanced", compatibleEndpointTags: ["mock"], compatibleProviderNames: ["Mock Provider"], outputCapField: "max_tokens", maxOutputTokens: 8192, minPromptTokens: 16384, contextLength: 131072, maxPromptTokens: null, maxCompletionTokens: 16384, supportedParameters: ["structured_outputs", "max_tokens"], pricing: { prompt: "0", completion: "0" }, requiresImage: false, imageInputDeclared: false, visionProbeRequired: false, responseFormat, schemaHash: strictSchemaHash(responseFormat), settings: {} } as const;
 };
 const mock = createMockTransport({ db, clock, random: () => 0 });
 const runId = "123e4567-e89b-42d3-a456-426614174033";
@@ -2823,6 +2823,76 @@ The fresh copy completed with 47 files / 606 tests, the same full-run counts (`2
 
 **Decision-reviewer:** the first static pass confirmed one Low-severity CLI documentation defect: `--help` advertised `default: full` for cohort selection and `--mock` as executing the selected cohort, while the execution guard required an explicit `--full` or `--smoke`; an operator following the help could not start the advertised default. Fixed by scoping the default to `--dry-run` (`default: full for --dry-run`), stating `--mock execute an explicit --full or --smoke offline synthetic cohort`, aligning the `--full` option description, and pinning the phrase in `tests/bootstrap.test.ts`. The reviewer rejected three hypotheses: the pre-existing resume `--max-cost` equal-cap abort (not introduced by P45 and explicit/safe), the arithmetic one-constraint guard counting a redundant inequality (anchor equations leave a free variable, so the guard agrees with the exact solver), and canonicalization emitting an invalid one-relation core (the baseline uniqueness check remains and the new internal solver handles reduced subsets). The verification pass confirmed the help/execution contract is consistent and closed the finding with no residual material findings. Coverage note, not a defect: the full-run cancellation test cancels during preparation; smoke review-phase crash/resume tests remain the recovery proof for that phase.
 
-**Acceptance:** accepted by the user on 2026-11-06 after the focused full-mock/arithmetic suites, `npm run check` (47 files / 606 tests), `npm run test:browser` (6 passed), the CLI full run/report/export inspection, and the fresh-copy reproduction (47 files / 606 tests, same 200/200 and 148/18/34/0 counts, 6 browser tests). The synthetic report remains `MOCK DATA`; no business proceed was produced.
+**Acceptance:** accepted by the user on 2026-11-06 after the focused full-mock/arithmetic suites, `npm run check` (47 files / 606 tests), `npm run test:browser` (6 passed), the CLI full run/report/export inspection, and the fresh-copy reproduction (47 files / 606 tests, same 200/200 and 148/18/34/0 counts, 6 browser tests). The synthetic report remains `MOCK DATA`; no business proceed was produced. After the plan v1.1 Balanced-routing revision, P45 was repeated: `tests/experiment/full-mock.test.ts` 4 passed and `npm run check` 47 files / 612 tests passed; the full-run counts were unchanged.
 
 **Out of scope, unchanged:** paid compatibility, live preflight/calibration/smoke evidence (P46/P48/P49), frozen-protocol-plus-provenance packaging (P50), live full execution (P51), and any business proceed claim. Acceptance is offline-verified and live-unverified.
+
+## P46. Authorized Live Model/Route Compatibility Probes — 2026-11-06
+
+**State:** `BLOCKED / LIVE-UNVERIFIED`. The plan v1.1 Balanced-routing correction is implemented and offline-verified, but no live probe, paid call, key use, or mock substitute occurred. P45 remains accepted; P46 is not accepted.
+
+**Files**
+
+- Routing/config: `src/ai/config.ts` (model-only live inputs, Balanced request policy, Nitro/Floor rejection), `src/ai/openrouter.ts` (strict Balanced provider object, observed model/provider identity, model-mismatch pause, replay-path enforcement)
+- Catalog/preflight: `src/ai/preflight.ts` (dynamic active-endpoint validation, model-level routes, `max_tokens` preference, conservative multi-provider pricing, Decimal reservation, probe schema/vision validation, no provider pinning), `src/cli/preflight.ts` (live path behind `--allow-paid`, `--max-cost`, and `--routing-confirmation`), `src/cli/report.ts` (reads `data/preflight/<id>/preflight.json` when `--run <preflight-id>` has no DB run)
+- Ledger/storage: `src/ai/ledger.ts`, `src/storage/migrations/0005_balanced_routing.sql` (`routing_policy`, `observed_model`, `observed_provider`)
+- Domain/reporting/freeze: `src/domain/experiment.ts` (model-only roles, routing policy/confirmation schemas), `src/reporting/metrics.ts` (observed provider/model mix and identity coverage), `src/reporting/export.ts`/`html.ts`, `src/experiment/freeze.ts` (roles/policy bound into the frozen protocol)
+- Tests: `tests/ai/preflight.test.ts` (37), `tests/ai/openrouter.test.ts` (28), `tests/experiment/freeze.test.ts` (18), `tests/reporting/metrics.test.ts` (8), plus config/planner/ledger/export/html/runner updates
+- Docs/env: `docs/PROVIDER_SMOKE_TESTS.md`, `docs/experiment-protocol.md`, `.env.example`, `README.md`, this entry
+
+**Observable behavior**
+
+- No provider IDs or endpoint tags are required. `GENERATOR_MODEL`, `REVIEWER_MODEL`, and `VISION_REVIEWER_MODEL` are the only model inputs; `OPENROUTER_API_KEY` is the only secret input. Generator must differ from both reviewers; the vision reviewer may reuse the text reviewer.
+- Every request sends `provider:{allow_fallbacks:true,require_parameters:true}` with no `sort`, `order`, `only`, or `ignore`. Model slugs ending in `:nitro` or `:floor` are rejected.
+- Preflight examines every active catalog endpoint for the configured model, requires at least one compatible active endpoint, prefers `max_tokens` when available, otherwise `max_completion_tokens`, and uses conservative multi-provider pricing (maximum per field, Decimal strings, full-context fallback when image price is absent). Provider tags are diagnostics only.
+- Each transport attempt stores the requested routing policy/model and separately observed model/provider identity when exposed. A contradictory observed model marks the attempt failed, pauses the run with `paused_operator`, and blocks later admissions; the saved-response replay path applies the same check.
+- The live CLI requires a fresh operator confirmation JSON with `providerSort:"default_balanced"` and `byokConfigured:false`; future, stale, conflicting, BYOK, or missing confirmations block before any paid call. Live preflight validates each probe's parsed content against the role strict schema and requires the vision probe to report actual image legibility rather than `not_applicable`.
+- `FrozenProtocol` now contains the role model IDs and Balanced/default-sort/no-BYOK policy and computes `routesHash` from them, so the persisted protocol binds the checked configuration.
+- `npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation <path>` was not executed because the live inputs are absent. No `data/preflight/` artifact, route snapshot, provider identity, cost, generation ID, or image interpretation exists. `npm run report -- --run <preflight-id>` is wired to read the preflight artifact when no DB run exists, but that path is also unexercised without a live preflight.
+- P45 was repeated after the routing correction: full mock remains 200/200 terminal, 148/18/34/0, 644 calls/attempts, barrier 145/18/34, and 4 full-mock tests passed.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 47 files / 612 tests passed, build succeeded. |
+| `npm run test:browser` | exit 0; 6 Playwright Chromium tests passed. |
+| `npx vitest run tests/experiment/full-mock.test.ts` | exit 0; 4 tests passed after the routing revision. |
+| `npx vitest run tests/ai/preflight.test.ts` | exit 0; 37 tests passed. |
+| `npx vitest run tests/ai/openrouter.test.ts` | exit 0; 28 tests passed. |
+| `npx vitest run tests/experiment/freeze.test.ts` | exit 0; 18 tests passed. |
+| `npx vitest run tests/reporting/metrics.test.ts` | exit 0; 8 tests passed. |
+| `npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation <path>` | NOT RUN; blocked by missing key/model inputs and operator confirmation. |
+| `npm run report -- --run <preflight-id>` | NOT RUN; no preflight run exists. |
+
+**Decision-reviewer:** the first routing-revision pass confirmed six defects: live preflight did not validate strict probe schemas or image interpretation; the paid preflight reserved a flat USD 0.01 instead of conservative pricing; freeze validated roles/policy but did not bind them into the persisted protocol; conservative pricing used binary floats and could emit exponent notation; confirmation freshness accepted future timestamps; observed model identity was recorded but never compared. All six were fixed and covered by tests. The second pass confirmed the fixes and found one Low residual: the model-mismatch transition recorded `reason:"ok"` in the request-event audit trail; fixed by passing the effective classification to the failed/uncertain transitions and asserting the event payload. The third pass found one Low residual: the resume replay path did not apply the mismatch check; fixed with the same comparison, forced failed outcome, `paused_operator` pause, effective classification, and a replay test. The fourth pass found no material findings.
+
+**Manual acceptance:** not applicable until a real key, the three model IDs, a fresh operator confirmation, and explicit P46 cap authorization are supplied locally. A missing input is a blocked/live-unverified gate, not a pass.
+
+**Required local inputs (never paste the key into chat):**
+
+```bash
+export OPENROUTER_API_KEY='...'
+export GENERATOR_MODEL='...'
+export REVIEWER_MODEL='...'
+export VISION_REVIEWER_MODEL='...'
+cat > /tmp/p46-routing-confirmation.json <<'JSON'
+{
+  "operator": "<your name>",
+  "checkedAt": "<current ISO timestamp>",
+  "providerSort": "default_balanced",
+  "byokConfigured": false
+}
+JSON
+```
+
+Then run at most three logical probes:
+
+```bash
+npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation /tmp/p46-routing-confirmation.json
+npm run report -- --run <preflight-id>
+```
+
+**Acceptance:** not requested; P46 remains blocked/live-unverified.
+
+**Out of scope, unchanged:** calibration, all-family generation smoke, primary experiment, and any live claim without actual provider evidence.
