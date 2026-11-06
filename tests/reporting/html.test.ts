@@ -6,10 +6,13 @@ import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ExportError } from "../../src/reporting/export.js";
 import {
+  renderHtmlReport,
   writeHtmlReport,
+  type HtmlReportCard,
   type HtmlReportResult,
 } from "../../src/reporting/html.js";
-import { createRun } from "../../src/storage/repository.js";
+import { computeRunMetrics } from "../../src/reporting/metrics.js";
+import { createRun, getRun } from "../../src/storage/repository.js";
 import { migrate, openDatabase } from "../../src/storage/database.js";
 import {
   FIXTURE_RUN_ID,
@@ -311,6 +314,61 @@ describe("static offline HTML gallery", () => {
     } finally {
       liveDb.close();
     }
+  });
+
+  it("renders the defensive terminal-without-verdict status and filter option", () => {
+    const run = getRun(db, FIXTURE_RUN_ID);
+    const metrics = computeRunMetrics(db, FIXTURE_RUN_ID);
+    const card: HtmlReportCard = {
+      slotId: "text-ranking-01",
+      slotOrdinal: 1,
+      family: "ranking",
+      modality: "text",
+      lane: "spec_first",
+      difficulty: 1,
+      stage: "terminal",
+      verdict: null,
+      status: "terminal_without_verdict",
+      disagreement: false,
+      alignment: null,
+      question: null,
+      rules: [],
+      clues: [],
+      options: [],
+      correctLabel: null,
+      correctValue: null,
+      hint: null,
+      explanation: [],
+      proof: null,
+      blindReview: null,
+      alignmentReview: null,
+      duplicateAssessment: null,
+      fingerprint: null,
+      terminalPayload: null,
+      failures: [],
+      primaryFailure: null,
+      failureEvidence: null,
+      cost: {
+        knownActualUsd: "0",
+        actualCostUsd: null,
+        costStatus: "not_applicable",
+        unknownAttempts: 0,
+      },
+      assets: { png: null, svg: null },
+      provenance: { checkpointVersion: 1, stages: [], requests: [] },
+    };
+    const html = renderHtmlReport({
+      run,
+      metrics,
+      cards: [card],
+      style: ":root { color: black; }",
+      script: "(() => {})();",
+    });
+    expect(html).toContain('data-status="terminal_without_verdict"');
+    expect(html).toContain("badge-terminal_without_verdict");
+    expect(html).toContain(
+      '<option value="terminal_without_verdict">terminal_without_verdict</option>',
+    );
   });
 
   it("rejects invalid run ids and unknown runs", () => {

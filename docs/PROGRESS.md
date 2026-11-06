@@ -2311,3 +2311,62 @@ Expected: metrics `planned 20`, `started 20`, `terminal 20`, `approved 20`, `att
 **Acceptance:** accepted by the user on 2026-11-06 after the focused suite, the exact non-UI script, the full `npm run check` evidence, and the direct `file://` browser check.
 
 **Out of scope, unchanged:** automated Playwright/browser acceptance (P39), full/live runs, calibration scoring, audit labels, business success claims, and any paid provider request.
+
+## P39. Browser Acceptance for the Offline Gallery — 2026-11-06
+
+**State:** implemented, browser-verified, and accepted by the user on 2026-11-06. This phase adds an independent Playwright Chromium regression suite for the P38 static gallery. It adds no report features, hosting, server, or live model call.
+
+**Files**
+
+- Browser config: `playwright.config.ts`
+- Browser suite: `tests/browser/report.spec.ts`
+- Deterministic fixture generator: `tests/browser/generate-fixture.ts`
+- Fixture support: `tests/reporting/fixtures.ts` (`largeVisual` option for a 1024x1024 browser PNG and opt-in `includeIncomplete` slot; P38 fixture defaults unchanged); `tests/reporting/html.test.ts` (defensive `terminal_without_verdict` renderer/filter test)
+- Tooling: `package.json`, `package-lock.json` (`@playwright/test` pinned to `1.65.0`; `test:browser` script)
+- Type/lint hygiene: `tsconfig.json` includes `playwright.config.ts`; `.gitignore` excludes `test-results/`, `playwright-report/`, and `blob-report/`
+- Documentation: `README.md` and this file
+
+**Observable behavior**
+
+- `npm run test:browser` first runs `tsx tests/browser/generate-fixture.ts`, which creates a deterministic mock SQLite fixture under `data/browser-report/` and writes the real `report.html` plus local PNG/SVG files. It then runs Playwright against the generated file.
+- The suite opens the gallery directly through a `file://` URL in Chromium. No HTTP server, dev server, API key, `.env`, or live provider call is used.
+- It asserts the effective 1440x900 desktop and 360x800 mobile viewports and zero horizontal document overflow. It covers all 20 planned cards, mock/incomplete banners, visible failure evidence for generation-error and rejected slots, an `incomplete` card plus its Status-filter result, unstarted cards, 80 closed reveal sections on load, keyboard reveal/reveal-all/hide-all, keyboard modality selection plus all six select filters and reset, modal full-image zoom with Escape close and a rendered zoom box of at least 600x600 with a 1:1 aspect ratio, hostile `</script>`/attribute text rendered inert, parseable embedded JSON, a restrictive CSP with a matching script hash, zero external HTTP(S) requests, zero console/page errors, zero alert dialogs, and a visible relative 1024x1024 PNG under `img-src 'self'`.
+- The browser suite is separate from Vitest (`tests/browser/*.spec.ts` is not matched by the Vitest include) and is not part of `npm run check`.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec playwright install chromium` | Playwright `1.65.0`; Chromium `1254` (Chrome for Testing 158.0.8127.18) installed. |
+| `npm exec -- vitest run tests/reporting/html.test.ts` | exit 0; 12 tests passed. |
+| `npm run test:browser` | exit 0; 6 tests passed using 1 worker. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 40 files / 535 tests passed, build succeeded. |
+
+**Manual acceptance steps**
+
+1. Run the exact commands below and open the printed `report.html` through a direct `file://` URL in Chromium (desktop width). Do not use a JetBrains/VS Code live-preview server (`?_ijt=...`); it injects a reload script and may trigger Chrome DevTools workspace probes, both of which the restrictive CSP correctly blocks.
+2. Confirm no key/hint/explanation/proof/review content is visible before opening any reveal section.
+3. Exercise the six filters, reveal-all/hide-all, and image zoom; confirm the zoomed PNG is the local file and Escape closes the dialog.
+4. Confirm the generation-error and rejected cards keep their failure codes/evidence visible.
+5. Resize to 360px wide and confirm there is no horizontal scrolling and the controls remain usable.
+6. Confirm no browser console errors and no external network requests appear while the page is open.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+npm exec playwright install chromium
+npm run test:browser
+npm run check
+```
+
+Expected: Chromium installation succeeds (or reports the pinned browser already installed); `npm run test:browser` prints 6 passed; `npm run check` ends with 40 test files / 535 tests passed and a successful build. The generated gallery path is printed by the fixture generator and recorded in `data/browser-report/fixture.json` (ignored).
+
+**Browser console note:** a report loaded through a JetBrains live-preview server can show two CSP console messages that are not gallery defects. The IDE appends an inline reload script after the 1181-line report; its hash (`sha256-C9Pc...` in the observed case) differs from the gallery script hash in the CSP (`sha256-XK2...`). Chrome DevTools may also probe `http://localhost:<port>/.well-known/appspecific/com.chrome.devtools.json`, which `default-src 'none'` blocks. The gallery's own `file://` load has zero console/page errors in the P39 suite. Allowing either injected behavior would require weakening the CSP with `unsafe-inline` or a localhost `connect-src`, which is out of scope and contrary to P38/P39.
+
+**Decision-reviewer:** the first static pass found three Low acceptance-coverage findings: the desktop 1440x900 viewport was only configured, not asserted; the fixture could not produce an `incomplete` card (and `terminal_without_verdict` had no coverage); and zoom asserted only `naturalWidth`, not the rendered modal image size. Fixes: desktop/mobile tests now assert `page.viewportSize()`; the browser fixture includes a started non-terminal `text-matching-02` card and asserts its `incomplete` badge plus the Status filter, while the defensive `terminal_without_verdict` renderer/filter path is covered by a P38 unit test because the storage CHECK `(stage = 'terminal') = (verdict IS NOT NULL)` makes that state unreachable from a valid database; and the desktop zoom test now asserts the rendered `#zoom-image` box is at least 600x600 and square. The focused HTML suite is now 12 tests. A verification pass closed all three findings and found only a documentation-staleness residual, now corrected; no material residual findings remain.
+
+**Acceptance:** accepted by the user on 2026-11-06 after the browser suite, the exact non-UI script, the full `npm run check` evidence, and the direct `file://` desktop/mobile observation. The IDE live-preview console messages were diagnosed as injected JetBrains/DevTools resources blocked by the intended CSP, not gallery defects.
+
+**Out of scope, unchanged:** new report features, network hosting, live model calls, calibration scoring, audit labels, and business success claims.

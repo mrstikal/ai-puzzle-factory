@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { PNG } from "pngjs";
 import {
   admitRequest,
   createBudgetAccount,
@@ -367,6 +368,17 @@ function addCall(
   markAttemptValidated(db, attempt.attemptId, iso(input.finishedOffset));
 }
 
+function largePng(): Buffer {
+  const image = new PNG({ width: 1024, height: 1024 });
+  for (let index = 0; index < image.data.length; index += 4) {
+    image.data[index] = 255;
+    image.data[index + 1] = 255;
+    image.data[index + 2] = 255;
+    image.data[index + 3] = 255;
+  }
+  return PNG.sync.write(image);
+}
+
 export function createSyntheticRun(
   db: Database.Database,
   options: {
@@ -375,6 +387,8 @@ export function createSyntheticRun(
     readonly blindDisagreement?: boolean;
     readonly alignmentOutcome?: "pass" | "fail" | "uncertain";
     readonly evidenceKind?: "mock" | "live";
+    readonly largeVisual?: boolean;
+    readonly includeIncomplete?: boolean;
   } = {},
 ): SyntheticFixture {
   const plan = buildPlanManifest({ runKind: "smoke" });
@@ -625,7 +639,7 @@ export function createSyntheticRun(
       '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="#000"/></svg>',
       "utf8",
     );
-    const png = Buffer.from(
+    const png = options.largeVisual === true ? largePng() : Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
       "base64",
     );
@@ -693,6 +707,19 @@ export function createSyntheticRun(
       7210,
       5,
       "approved",
+    );
+  }
+
+  if (options.includeIncomplete === true) {
+    const incomplete = slot(plan, "text-matching-02");
+    insertStage(
+      db,
+      runId,
+      incomplete.slotId,
+      "spec_ready",
+      { version: 1, spec: {} },
+      8000,
+      10,
     );
   }
 

@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:browser": "tsx tests/browser/generate-fixture.ts && playwright test",
     "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "experiment": "tsx src/cli/experiment.ts",
     "preview": "tsx src/cli/preview.ts",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.65.0",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.19.2",
     "@types/pngjs": "6.0.5",
