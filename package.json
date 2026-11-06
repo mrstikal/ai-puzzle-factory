@@ -17,6 +17,7 @@
     "experiment": "tsx src/cli/experiment.ts",
     "preview": "tsx src/cli/preview.ts",
     "calibration": "tsx src/cli/calibration.ts",
+    "audit": "tsx src/cli/audit.ts",
     "preflight": "tsx src/cli/preflight.ts",
     "report": "tsx src/cli/report.ts",
     "export": "tsx src/cli/export.ts"

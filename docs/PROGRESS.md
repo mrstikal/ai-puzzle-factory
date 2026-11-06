@@ -2515,3 +2515,73 @@ Expected: oracle has 80 calls, 0 generations, 40 observations, `live false`, `pr
 **Acceptance:** accepted by the user on 2026-11-06 after the focused 14-test suite, full `npm run check` (42 files / 559 tests), exact mock/verify script, oracle/agree/reject gate inspection, and label-hash validation. Mock/test-only evidence remains non-live; human label certification remains P47.
 
 **Out of scope, unchanged:** live calibration qualification, paid/live reviewer calls, human label certification (P47), freeze issuance, and business success claims.
+
+## P42. Deterministic Human-Audit Sample and Append-Only Imports — 2026-11-06
+
+**State:** implemented, offline-verified, artifact-checked, and accepted by the user on 2026-11-06. This phase prepares the deterministic primary human-audit sample and imports genuine human observations as append-only evidence. It does not decide proceed/revise/reject, generate candidates, or fabricate human labels.
+
+**Files**
+
+- Migration: `src/storage/migrations/0003_human_labels.sql` (`human_labels` with per-slot revisions, sample/slot/label hashes, append-only UPDATE/DELETE triggers, and a slots foreign key)
+- Sampling: `src/audit/sample.ts` (family then family/lane loops, two reserved approvals per family, priority fill, hash tie-breaks, shortfalls, category additions, denominators, preview mode)
+- Labels/gallery/import: `src/audit/labels.ts` (21-column pending CSV, label enums, import validation, append-only insert, summary, read-only public gallery, local image copies)
+- CLI: `src/cli/audit.ts`; `package.json` adds `npm run audit`
+- Tests: `tests/audit/sample.test.ts`
+- Documentation: `docs/human-audit.md`, `README.md`, this file
+- Existing test update: `tests/storage/checkpoints.test.ts` now expects the fourth migration
+
+**Observable behavior**
+
+- `npm run audit -- --run <run-id> --prepare` reads a committed run and builds a deterministic sample. A full run writes `audit/sample.json`, `audit/labels.csv`, `audit/gallery.html`, `audit/images/`, and an initial `audit/summary.json`; a smoke run writes only `audit/preview.json`, `audit/preview-labels.csv`, `audit/preview-gallery.html`, and images, with `production:false`/`preview:true` and an explicit message. Smoke production audit is refused.
+- The selector follows section 9.3: four core slots per family (two per lane when available), two reserved approvals per family (one per lane when both approve, otherwise two from the sole approving lane), then per-cell priority review concern, non-approved presentation, remaining approval, no-presentation failure. Ties use `sha256(rootSeed:slotId)` plus slot ID. Production sampling requires `controlState=completed`; fewer than two family approvals or fewer than two lane terminal slots produce explicit shortfalls without cross-family/lane substitution; one-lane-only approvals are disclosed. Up to one representative per globally available unsampled major verdict is appended, with at most four additions and 44 total.
+- The manifest records core entries, category additions, shortfalls, family approval-lane counts, categories, total/approved sample denominators, and a stable `sampleHash`. Missing presentations remain sampled and marked not inspectable.
+- The pending CSV has 21 columns covering sample/slot hashes, sample metadata, correctness, clarity, hint/explanation support, image readability, novelty, enjoyment, perceived difficulty, explicit solve time, notes, auditor, and auditor time. The per-slot automatic verdict is deliberately omitted from the public CSV and sample entries; only aggregate category/approval counts remain. No label or solving time is inferred. Pending rows leave all human fields empty.
+- The read-only gallery shows only the public presentation (question, rules, clues, options, local PNG/SVG); it does not show the automatic verdict, reveal key, proof, hint, explanation, or mutation/answer metadata. It is directly inspectable offline.
+- `npm run audit -- --run <run-id> --import <labels.csv>` recomputes the deterministic sample from the database and rejects a stale/tampered manifest before validating the exact sampled slot set, slot hashes, metadata, one auditor identity/time, complete label enums, noninspectable rules, text/SVG image rules, and non-future time. It inserts all rows in one transaction with the next per-slot revision. `human_labels` triggers reject UPDATE/DELETE; a later import creates revision 2+ rather than editing prior evidence. Primary runs/slots/stages/artifacts/events/verdicts are untouched.
+- `audit/summary.json` reports total sampled/labelled/inspectable and approved sampled/labelled/inspectable denominators independently, plus label rows, max revision, and auditors.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/audit/sample.test.ts` | exit 0; 10 tests passed. |
+| `npm run audit -- --run 6732cab0-3f25-4183-acd9-4253cc9ada9f --prepare` | exit 0; smoke preview: 20 core, 0 additions, 20 approved sampled, no production `sample.json`; 20-card preview gallery, 21-line pending CSV, 20 local images. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 43 files / 569 tests passed, build succeeded. |
+| Migration idempotence | repeated `migrate` records four versions and does not duplicate them. |
+
+The focused suite covers core40/four per family/two per lane, 20 reserved approvals, deterministic hash-tie ordering, one-lane-only approvals, insufficient family approvals, insufficient lane terminal slots, missing categories/max44, noninspectable failures, preview refusal, completed-run refusal, pending gallery/CSV output, valid append-only import, revision 2, append-only triggers, immutable primary hashes, tampered-manifest rejection, and import rejection for sample/slot mismatch, unknown/duplicate/missing slots, mock auditor, future time, noninspectable ratings, and text/SVG image-rule violations.
+
+**Manual acceptance steps**
+
+1. Run the exact commands below.
+2. Open the printed `audit/preview-gallery.html` directly from the filesystem; confirm it is read-only, shows only public presentations and local images, and does not expose verdicts or reveal material.
+3. Open `audit/preview-labels.csv`; confirm one pending row per sampled slot and empty human fields.
+4. Run the focused audit test; confirm a test-only full-cohort import creates revision 1, a second import creates revision 2, UPDATE/DELETE are rejected, and primary evidence hashes are unchanged.
+5. Confirm smoke `--prepare` writes only preview files and prints `production_audit: false`.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+npm run --silent audit -- --run 6732cab0-3f25-4183-acd9-4253cc9ada9f --prepare > /tmp/p42-audit.out
+cat /tmp/p42-audit.out
+RUN_DIR=data/runs/6732cab0-3f25-4183-acd9-4253cc9ada9f/audit
+test -f "$RUN_DIR/preview.json"
+test -f "$RUN_DIR/preview-labels.csv"
+test -f "$RUN_DIR/preview-gallery.html"
+test ! -f "$RUN_DIR/sample.json"
+test "$(wc -l < "$RUN_DIR/preview-labels.csv")" -eq 21
+test "$(grep -c 'class="card"' "$RUN_DIR/preview-gallery.html")" -eq 20
+node -e "const p=require('./data/runs/6732cab0-3f25-4183-acd9-4253cc9ada9f/audit/preview.json'); console.log({production:p.production,preview:p.preview,core:p.core.length,total:p.denominators.total.sampled,approved:p.denominators.approved.sampled,sampleHash:p.sampleHash});"
+npm exec -- vitest run tests/audit/sample.test.ts
+npm run check
+```
+
+Expected: `mode: preview`, `production_audit: false`, 20 core/preview slots, 20 approved sampled, no production sample file, 20 gallery cards, 21 CSV lines; focused 10 tests and full 43 files / 569 tests pass. The focused test is the exact non-UI proof for append-only import and primary immutability.
+
+**Decision-reviewer:** the first static pass found three material findings. Medium: import trusted a mutable on-disk manifest and did not recompute the deterministic sample from the database; fixed by recomputing `selectAuditSample` during import and rejecting any sample-hash mismatch, with a tampered-manifest regression test. Low: the pending CSV/sample entries disclosed each slot's automatic verdict; fixed by removing the per-slot verdict from the public CSV and entries, while retaining only aggregate category/approval counts, and import now derives verdicts from recomputed candidates. Low: production sampling/import did not require frozen automatic verdicts; fixed by requiring `controlState=completed` for production and adding a regression test. The verification pass confirmed those three fixes, then found two Low residuals: the public manifest still exposed per-slot approval status through `sampleReason`, and the phase record still said the CSV had 22 columns. `sampleReason` was removed from the public entries and the record was corrected to 21 columns; the production gallery banner now reads `READ-ONLY AUDIT SAMPLE`. A final verification pass confirmed the residuals closed with no material residual findings. Final smoke preview sample hash: `ec60c6250f9a6d94ff7e97578f22595c038a7992c947e5e4bfe031bd06ec6b4c`.
+
+**Acceptance:** accepted by the user on 2026-11-06 after the focused 10-test suite, full `npm run check` (43 files / 569 tests), smoke preview artifact inspection, and append-only import/primary-immutability verification. Final smoke preview sample hash: `ec60c6250f9a6d94ff7e97578f22595c038a7992c947e5e4bfe031bd06ec6b4c`.
+
+**Out of scope, unchanged:** final proceed/revise/reject logic (P43), real human primary audit (P53), agent-generated approvals, new candidate generation, and population-accuracy claims.
