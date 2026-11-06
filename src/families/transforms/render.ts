@@ -694,6 +694,7 @@ function resolveChoices(
 function validateChoices(
   spec: TransformsSpec,
   choices: readonly TransformsChoiceInput[],
+  validation: "full" | "calibration" = "full",
 ): readonly NormalizedTransformsChoice[] {
   if (choices.length !== 4 || choices.map((choice) => choice.label).join("") !== "ABCD") {
     throw new TransformsRenderError(
@@ -726,21 +727,29 @@ function validateChoices(
     }
     normalized.push({ label: choice.label, cells: parsed.data });
   }
-  if (new Set(normalized.map((choice) => transformMaskKey(choice.cells))).size !== 4) {
+  if (
+    validation === "full" &&
+    new Set(normalized.map((choice) => transformMaskKey(choice.cells))).size !== 4
+  ) {
     throw new TransformsRenderError(
       "OPTION_NOT_DISTINCT",
       "transform choices must be four distinct occupied-cell masks",
     );
   }
-  const correct = solveTransforms(spec);
-  const trueChoices = normalized.filter((choice) =>
-    checkTransformAnswer(spec, choice.cells),
-  );
-  if (trueChoices.length !== 1 || !sameTransformMask(trueChoices[0]?.cells ?? [], correct)) {
-    throw new TransformsRenderError(
-      "INVALID_SCENE",
-      "transform choices must contain exactly one correct complete mask",
+  if (validation === "full") {
+    const correct = solveTransforms(spec);
+    const trueChoices = normalized.filter((choice) =>
+      checkTransformAnswer(spec, choice.cells),
     );
+    if (
+      trueChoices.length !== 1 ||
+      !sameTransformMask(trueChoices[0]?.cells ?? [], correct)
+    ) {
+      throw new TransformsRenderError(
+        "INVALID_SCENE",
+        "transform choices must contain exactly one correct complete mask",
+      );
+    }
   }
   return normalized;
 }
@@ -749,10 +758,11 @@ export function buildTransformsScene(
   spec: TransformsSpec,
   choices?: readonly TransformsChoiceInput[],
   optionsSeed?: string,
+  validation: "full" | "calibration" = "full",
 ): Scene {
   const parsed = TransformsSpecSchema.parse(spec);
   const resolved = resolveChoices(parsed, choices, optionsSeed);
-  const normalized = validateChoices(parsed, resolved);
+  const normalized = validateChoices(parsed, resolved, validation);
   const source = sourceCellsFromGrid(parsed.source);
   const scene: Scene = {
     width: SCENE_SIZE,
@@ -766,7 +776,11 @@ export function buildTransformsScene(
       ...normalized.map((choice, index) => buildOption(choice, index)),
     ],
   };
-  assertTransformsScene(scene, parsed, normalized);
+  if (validation === "calibration") {
+    assertScene(scene);
+  } else {
+    assertTransformsScene(scene, parsed, normalized);
+  }
   return scene;
 }
 

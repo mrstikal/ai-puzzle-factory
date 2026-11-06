@@ -611,6 +611,7 @@ function resolveChoices(
 function validateChoices(
   spec: CountingSpec,
   choices: readonly CountingChoiceInput[],
+  validation: "full" | "calibration" = "full",
 ): readonly NormalizedCountingChoice[] {
   if (choices.length !== 4 || choices.map((choice) => choice.label).join("") !== "ABCD") {
     throw new CountingRenderError(
@@ -629,20 +630,22 @@ function validateChoices(
     }
     normalized.push({ label: choice.label, answer: parsed.data });
   }
-  if (new Set(normalized.map((choice) => choice.answer)).size !== 4) {
-    throw new CountingRenderError(
-      "OPTION_NOT_DISTINCT",
-      "counting choices must be four distinct integers",
+  if (validation === "full") {
+    if (new Set(normalized.map((choice) => choice.answer)).size !== 4) {
+      throw new CountingRenderError(
+        "OPTION_NOT_DISTINCT",
+        "counting choices must be four distinct integers",
+      );
+    }
+    const trueChoices = normalized.filter((choice) =>
+      checkCountingAnswer(spec, choice.answer),
     );
-  }
-  const trueChoices = normalized.filter((choice) =>
-    checkCountingAnswer(spec, choice.answer),
-  );
-  if (trueChoices.length !== 1) {
-    throw new CountingRenderError(
-      "INVALID_CHOICE",
-      `counting choices must contain exactly one correct integer, found ${trueChoices.length}`,
-    );
+    if (trueChoices.length !== 1) {
+      throw new CountingRenderError(
+        "INVALID_CHOICE",
+        `counting choices must contain exactly one correct integer, found ${trueChoices.length}`,
+      );
+    }
   }
   return normalized;
 }
@@ -651,10 +654,11 @@ export function buildCountingScene(
   spec: CountingSpec,
   choices?: readonly CountingChoiceInput[],
   optionsSeed?: string,
+  validation: "full" | "calibration" = "full",
 ): Scene {
   const parsed = CountingSpecSchema.parse(spec);
   const resolved = resolveChoices(parsed, choices, optionsSeed);
-  const normalized = validateChoices(parsed, resolved);
+  const normalized = validateChoices(parsed, resolved, validation);
   const scene: Scene = {
     width: SCENE_SIZE,
     height: SCENE_SIZE,
@@ -668,7 +672,11 @@ export function buildCountingScene(
       ...normalized.map((choice, index) => buildOption(choice, index)),
     ],
   };
-  assertCountingScene(scene, parsed, normalized);
+  if (validation === "calibration") {
+    assertScene(scene);
+  } else {
+    assertCountingScene(scene, parsed, normalized);
+  }
   return scene;
 }
 

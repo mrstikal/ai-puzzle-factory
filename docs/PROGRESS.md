@@ -2370,3 +2370,75 @@ Expected: Chromium installation succeeds (or reports the pinned browser already 
 **Acceptance:** accepted by the user on 2026-11-06 after the browser suite, the exact non-UI script, the full `npm run check` evidence, and the direct `file://` desktop/mobile observation. The IDE live-preview console messages were diagnosed as injected JetBrains/DevTools resources blocked by the intended CSP, not gallery defects.
 
 **Out of scope, unchanged:** new report features, network hosting, live model calls, calibration scoring, audit labels, and business success claims.
+
+## P40. Held-Out Calibration Fixture Pack and Pending Ground Truth — 2026-11-06
+
+**State:** implemented, offline-verified, artifact-checked, and accepted by the user on 2026-11-06. This phase creates a deterministic 40-item calibration fixture pack, an answer-free gallery, and a pending human-label template. It makes no reviewer, provider, or network call and certifies no human label.
+
+**Files**
+
+- Pack construction: `src/calibration/fixtures.ts` (schemas, fixed calibration seeds, sound fixture builder, composition/hash validation, pack assembly)
+- Visible corruptions: `src/calibration/mutations.ts` (duplicate correct option/tile, text visible-primitive mutations, matrix XOR contradiction, transform direction contradiction, closed path edge, symmetry axis contradiction, counting convention conflict)
+- Output writer: `src/calibration/pack.ts` (`pack.json`, `labels.pending.csv`, answer-free `gallery.html`, local images)
+- CLI: `src/cli/calibration.ts`; `package.json` adds `npm run calibration`
+- Tests: `tests/calibration/fixtures.test.ts`
+- Documentation: `docs/calibration-labeling.md`, `README.md`, this file
+- Calibration-only scene path: `src/families/matrix/render.ts`, `src/families/transforms/render.ts`, `src/families/paths/render.ts`, `src/families/symmetry/render.ts`, `src/families/counting/render.ts` accept an optional `"calibration"` validation mode that still runs generic safe-scene/PNG validation but skips family semantic eligibility. The primary/registry path always uses the default `"full"` mode and existing renderer tests remain unchanged.
+
+**Observable behavior**
+
+- `npm run calibration -- --prepare` writes `data/calibration/<pack-hash>/pack.json`, `labels.pending.csv`, `gallery.html`, and `images/`. It prints the pack hash, directory, fixture counts, and output paths.
+- The pack has exactly 40 fixtures: 20 sound and 20 defective; every family has two sound and two defective; modality is 20 text and 20 SVG. Calibration slot IDs use ordinals 91-94 and never collide with smoke/full slots.
+- Seeds are derived from `puzzle-calibration-v1` with fixed per-fixture descriptors and are disjoint from all smoke/full spec seeds. Pack, fixture, content, PNG, and SVG hashes are deterministic; two independent builds produce identical fixture JSON and pack hash.
+- Sound fixtures use the normal assembly path and have a correct blind label with alignment pass. Defective fixtures preserve the original spec, solve result/proof, choices, visible presentation, reveal data, and original hashes; they carry a separate mutation record and proposed blind/alignment outcomes.
+- Every family has a duplicate-correct-option corruption. Counting duplicate fixtures regenerate the visible option text as well as the rendered tiles, so the text and image agree. Text-family corruption 2 uses accepted family test mutations and independently proves that zero or at least two offered options solve the visible presentation. Matrix contradicts a visible XOR example with zero completions; transforms adds a conflicting clockwise/counterclockwise rule for the actual quarter-turn operation and offers both resulting tiles; paths adds a wall to the unique route in the source and all option mazes; symmetry contradicts the marked axis in the public rule; counting requires both union-once and overlap-once-per-shape totals and offers both distinct counts.
+- `pack.json` includes original evidence, mutation details, content/PNG/SVG/fixture hashes, proposed blind/alignment outcomes, and `humanVerified: false`, `auditor: null`, `auditorTime: null` for all 40 records. `labels.pending.csv` has 40 rows plus header; every `human_verified` cell is `false`, and auditor/time/notes are empty.
+- `gallery.html` renders only visible presentations and local diagrams; it does not show sound/defective labels, expected outcomes, mutation evidence, original proof, or the answer key. It is directly usable from `file://` and contains no remote resource.
+- The intentionally invalid calibration scenes bypass primary eligibility only through the explicit calibration validation mode; safe SVG/parser limits, generic scene validation, and PNG safety checks still run. No network, reviewer, provider, or paid call is made.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm run calibration -- --prepare` | exit 0; pack `b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f`; 40 fixtures (20 sound/20 defective), 20 text/20 SVG. |
+| `npm exec -- vitest run tests/calibration/fixtures.test.ts` | exit 0; 10 tests passed. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 41 files / 545 tests passed, build succeeded. |
+| `npm run test:browser` | exit 0; 6 P39 browser tests still passed after the renderer changes. |
+| Artifact check | `labels.pending.csv` 41 lines; `gallery.html` 40 cards; 60 image files (20 visible SVG pairs + 10 defective original pairs); all 40 records pending human verification. |
+| Headless Chromium `file://` gallery check | 40 cards, 20 text/20 SVG, first local PNG loaded at 1024x1024, no console errors, zero horizontal overflow at 1440 and 360. |
+
+The focused suite checks composition, per-family balance, seed disjointness, deterministic hashes, pending human fields, duplicate option/tile consequences (including counting text/tile agreement), text/matrix/path/transform/symmetry/counting consequences, real local artifact hashes, gallery/label output, and rejection of a defective mutation that still leaves one clear valid offered answer. It does not certify human ground truth; that is P47.
+
+**Manual acceptance steps**
+
+1. Run the exact commands below and open the printed `gallery.html` directly from the filesystem in Chromium.
+2. Confirm the gallery shows 40 cards (20 text, 20 SVG), local PNG/SVG diagrams, and the `PENDING HUMAN VERIFICATION` warning, with no sound/defective labels, expected outcomes, mutation evidence, or answer key.
+3. Open `labels.pending.csv` and confirm 40 data rows, proposed blind/alignment outcomes, and `false` in every `human_verified` cell with empty auditor/time/notes.
+4. Inspect `pack.json` for original spec/proof/choices and a separate mutation record on each defective fixture.
+5. Confirm the CLI and gallery make no network or provider call.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+npm run --silent calibration -- --prepare > /tmp/p40-calibration.out
+cat /tmp/p40-calibration.out
+HASH=$(sed -n 's/^pack_hash: //p' /tmp/p40-calibration.out)
+DIR="data/calibration/$HASH"
+test -f "$DIR/pack.json"
+test -f "$DIR/gallery.html"
+test -f "$DIR/labels.pending.csv"
+test "$(wc -l < "$DIR/labels.pending.csv")" -eq 41
+test "$(grep -c 'class="card"' "$DIR/gallery.html")" -eq 40
+test "$(ls "$DIR/images" | wc -l)" -eq 60
+node -e "const fs=require('fs'); const p=require('./'+process.argv[1]+'/pack.json'); const rows=fs.readFileSync(process.argv[1]+'/labels.pending.csv','utf8').trimEnd().split('\n'); console.log({pack:p.packHash,count:p.fixtures.length,sound:p.fixtures.filter(f=>f.variant==='sound').length,defective:p.fixtures.filter(f=>f.variant==='defective').length,text:p.fixtures.filter(f=>f.modality==='text').length,svg:p.fixtures.filter(f=>f.modality==='svg').length,pending:p.fixtures.every(f=>f.humanVerified===false&&f.auditor===null&&f.auditorTime===null),labelRows:rows.length-1,allLabelsPending:rows.slice(1).every(row=>row.endsWith(',false,,,'))});" "$DIR"
+```
+
+Expected: one `pack_hash`, 40 fixtures, 20 sound, 20 defective, 20 text, 20 SVG, `pending true`, `labelRows 40`, `allLabelsPending true`, and 60 image files. The pack hash is content-derived and may change only when the fixture implementation changes.
+
+**Decision-reviewer:** the first static pass found three material findings. Medium: the counting duplicate fixture kept stale textual options while its rendered tiles duplicated the correct value; fixed by regenerating visible option text from the mutated choices for SVG duplicate fixtures and recording both `assets` and `options` as changed/expected fields for counting. Low: the transforms corruption explanation hard-coded R90 while the actual fixture operation was R270; fixed by deriving the description from the computed rotation label. Low: this P40 progress record was missing; added here. A verification pass confirmed all three fixes and found no material findings. It noted one non-material domain-size mismatch in two text-family family-defect fixtures (ranking/truth options sized for the larger sound-B domain while the reused adversarial test spec described the smaller sound-A domain); fixed by swapping the text-family bases so duplicate defects use sound B and family defects use sound A, making visible rules and options domain-consistent. The final pack hash reflects that change. A final verification pass on the swapped-base pack confirmed no material findings and matched the recorded hash, composition, artifact counts, and pending-label state.
+
+**Acceptance:** accepted by the user on 2026-11-06 after the focused suite, full check, browser regression, artifact counts, and manual gallery/label inspection. The accepted pack is `b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f`; human label certification remains P47.
+
+**Out of scope, unchanged:** P41 reviewer calibration/scoring, P47 human label certification, paid/live reviewer calls, provider selection, and business success claims.

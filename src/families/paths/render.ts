@@ -646,6 +646,7 @@ function resolveChoices(
 function validateChoices(
   spec: PathsSpec,
   choices: readonly PathsChoiceInput[],
+  validation: "full" | "calibration" = "full",
 ): readonly NormalizedPathsChoice[] {
   if (choices.length !== 4 || choices.map((choice) => choice.label).join("") !== "ABCD") {
     throw new PathsRenderError(
@@ -677,30 +678,34 @@ function validateChoices(
     }
     normalized.push({ label: choice.label, route: parsed.data });
   }
-  if (new Set(normalized.map((choice) => pathRouteKey(choice.route))).size !== 4) {
-    throw new PathsRenderError(
-      "OPTION_NOT_DISTINCT",
-      "path choices must be four distinct routes",
-    );
-  }
-  const trueChoices = normalized.filter((choice) =>
-    checkPathAnswer(spec, choice.route),
-  );
-  if (trueChoices.length !== 1) {
-    throw new PathsRenderError(
-      "INVALID_SCENE",
-      `path choices must contain exactly one valid route, found ${trueChoices.length}`,
-    );
-  }
-  for (const choice of normalized) {
+  if (validation === "full") {
     if (
-      !checkPathAnswer(spec, choice.route) &&
-      !routeUsesClosedCorridor(spec, choice.route)
+      new Set(normalized.map((choice) => pathRouteKey(choice.route))).size !== 4
     ) {
       throw new PathsRenderError(
-        "INVALID_SCENE",
-        `path choice ${choice.label} is neither valid nor visibly blocked`,
+        "OPTION_NOT_DISTINCT",
+        "path choices must be four distinct routes",
       );
+    }
+    const trueChoices = normalized.filter((choice) =>
+      checkPathAnswer(spec, choice.route),
+    );
+    if (trueChoices.length !== 1) {
+      throw new PathsRenderError(
+        "INVALID_SCENE",
+        `path choices must contain exactly one valid route, found ${trueChoices.length}`,
+      );
+    }
+    for (const choice of normalized) {
+      if (
+        !checkPathAnswer(spec, choice.route) &&
+        !routeUsesClosedCorridor(spec, choice.route)
+      ) {
+        throw new PathsRenderError(
+          "INVALID_SCENE",
+          `path choice ${choice.label} is neither valid nor visibly blocked`,
+        );
+      }
     }
   }
   return normalized;
@@ -710,10 +715,11 @@ export function buildPathsScene(
   spec: PathsSpec,
   choices?: readonly PathsChoiceInput[],
   optionsSeed?: string,
+  validation: "full" | "calibration" = "full",
 ): Scene {
   const parsed = PathsSpecSchema.parse(spec);
   const resolved = resolveChoices(parsed, choices, optionsSeed);
-  const normalized = validateChoices(parsed, resolved);
+  const normalized = validateChoices(parsed, resolved, validation);
   const scene: Scene = {
     width: SCENE_SIZE,
     height: SCENE_SIZE,
@@ -726,7 +732,11 @@ export function buildPathsScene(
       ...normalized.map((choice, index) => buildOption(parsed, choice, index)),
     ],
   };
-  assertPathsScene(scene, parsed, normalized);
+  if (validation === "calibration") {
+    assertScene(scene);
+  } else {
+    assertPathsScene(scene, parsed, normalized);
+  }
   return scene;
 }
 

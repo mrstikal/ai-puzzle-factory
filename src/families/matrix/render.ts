@@ -249,19 +249,25 @@ function buildOption(
   };
 }
 
-function validateChoices(choices: readonly MatrixChoiceInput[]): void {
+function validateChoices(
+  choices: readonly MatrixChoiceInput[],
+  validation: "full" | "calibration" = "full",
+): void {
   if (
     choices.length !== 4 ||
     choices.map((choice) => choice.label).join("") !== "ABCD" ||
-    new Set(choices.map((choice) => choice.mask)).size !== 4 ||
     choices.some(
       (choice) =>
         !Number.isInteger(choice.mask) || choice.mask < 0 || choice.mask > 15,
-    )
+    ) ||
+    (validation === "full" &&
+      new Set(choices.map((choice) => choice.mask)).size !== 4)
   ) {
     throw new MatrixRenderError(
       "INVALID_SCENE",
-      "matrix renderer requires four distinct A-D masks in 0..15",
+      validation === "full"
+        ? "matrix renderer requires four distinct A-D masks in 0..15"
+        : "matrix renderer requires four ordered A-D masks in 0..15",
     );
   }
 }
@@ -294,10 +300,11 @@ export function buildMatrixScene(
   spec: MatrixSpec,
   choices?: readonly MatrixChoiceInput[],
   optionsSeed?: string,
+  validation: "full" | "calibration" = "full",
 ): Scene {
   const parsed = MatrixSpecSchema.parse(spec);
   const resolvedChoices = resolveChoices(parsed, choices, optionsSeed);
-  validateChoices(resolvedChoices);
+  validateChoices(resolvedChoices, validation);
   const scene: Scene = {
     width: SCENE_SIZE,
     height: SCENE_SIZE,
@@ -317,7 +324,11 @@ export function buildMatrixScene(
       ),
     ],
   };
-  assertMatrixScene(scene, parsed, resolvedChoices);
+  if (validation === "calibration") {
+    assertScene(scene);
+  } else {
+    assertMatrixScene(scene, parsed, resolvedChoices);
+  }
   return scene;
 }
 

@@ -522,6 +522,7 @@ function resolveChoices(
 function validateChoices(
   spec: SymmetrySpec,
   choices: readonly SymmetryChoiceInput[],
+  validation: "full" | "calibration" = "full",
 ): readonly NormalizedSymmetryChoice[] {
   if (choices.length !== 4 || choices.map((choice) => choice.label).join("") !== "ABCD") {
     throw new SymmetryRenderError(
@@ -555,23 +556,28 @@ function validateChoices(
     }
     normalized.push({ label: choice.label, answer: parsed.data });
   }
-  if (
-    new Set(normalized.map((choice) => choice.answer.map((row) => row.join("")).join("|")))
-      .size !== 4
-  ) {
-    throw new SymmetryRenderError(
-      "OPTION_NOT_DISTINCT",
-      "symmetry choices must be four distinct completions",
+  if (validation === "full") {
+    if (
+      new Set(
+        normalized.map((choice) =>
+          choice.answer.map((row) => row.join("")).join("|"),
+        ),
+      ).size !== 4
+    ) {
+      throw new SymmetryRenderError(
+        "OPTION_NOT_DISTINCT",
+        "symmetry choices must be four distinct completions",
+      );
+    }
+    const trueChoices = normalized.filter((choice) =>
+      checkSymmetryAnswer(spec, choice.answer),
     );
-  }
-  const trueChoices = normalized.filter((choice) =>
-    checkSymmetryAnswer(spec, choice.answer),
-  );
-  if (trueChoices.length !== 1) {
-    throw new SymmetryRenderError(
-      "INVALID_CHOICE",
-      `symmetry choices must contain exactly one valid completion, found ${trueChoices.length}`,
-    );
+    if (trueChoices.length !== 1) {
+      throw new SymmetryRenderError(
+        "INVALID_CHOICE",
+        `symmetry choices must contain exactly one valid completion, found ${trueChoices.length}`,
+      );
+    }
   }
   return normalized;
 }
@@ -580,10 +586,11 @@ export function buildSymmetryScene(
   spec: SymmetrySpec,
   choices?: readonly SymmetryChoiceInput[],
   optionsSeed?: string,
+  validation: "full" | "calibration" = "full",
 ): Scene {
   const parsed = SymmetrySpecSchema.parse(spec);
   const resolved = resolveChoices(parsed, choices, optionsSeed);
-  const normalized = validateChoices(parsed, resolved);
+  const normalized = validateChoices(parsed, resolved, validation);
   const scene: Scene = {
     width: SCENE_SIZE,
     height: SCENE_SIZE,
@@ -596,7 +603,11 @@ export function buildSymmetryScene(
       ...normalized.map((choice, index) => buildOption(parsed, choice, index)),
     ],
   };
-  assertSymmetryScene(scene, parsed, normalized);
+  if (validation === "calibration") {
+    assertScene(scene);
+  } else {
+    assertSymmetryScene(scene, parsed, normalized);
+  }
   return scene;
 }
 

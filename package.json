@@ -16,6 +16,7 @@
     "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "experiment": "tsx src/cli/experiment.ts",
     "preview": "tsx src/cli/preview.ts",
+    "calibration": "tsx src/cli/calibration.ts",
     "preflight": "tsx src/cli/preflight.ts",
     "report": "tsx src/cli/report.ts",
     "export": "tsx src/cli/export.ts"
