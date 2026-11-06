@@ -700,7 +700,7 @@ describe("serial smoke mock run", () => {
     180_000,
   );
 
-  it("rejects full, live, invalid cost, and mismatched seeds explicitly", async () => {
+  it("rejects conflicting modes, ungated live execution, invalid cost, and mismatched seeds explicitly", async () => {
     const rejectDb = join(tempDirectory, "reject.sqlite");
     const stderr: string[] = [];
     const stderrSpy = vi
@@ -711,10 +711,55 @@ describe("serial smoke mock run", () => {
       });
     try {
       await expect(
-        main(["node", "experiment", "--full", "--mock", "--db", rejectDb]),
+        main([
+          "node",
+          "experiment",
+          "--full",
+          "--smoke",
+          "--mock",
+          "--db",
+          rejectDb,
+        ]),
       ).resolves.toBe(1);
       await expect(
         main(["node", "experiment", "--smoke", "--live", "--db", rejectDb]),
+      ).resolves.toBe(1);
+      await expect(
+        main([
+          "node",
+          "experiment",
+          "--full",
+          "--live",
+          "--allow-paid",
+          "--db",
+          rejectDb,
+        ]),
+      ).resolves.toBe(1);
+      await expect(
+        main([
+          "node",
+          "experiment",
+          "--full",
+          "--live",
+          "--allow-paid",
+          "--protocol",
+          "not-a-hash",
+          "--db",
+          rejectDb,
+        ]),
+      ).resolves.toBe(1);
+      await expect(
+        main([
+          "node",
+          "experiment",
+          "--full",
+          "--live",
+          "--allow-paid",
+          "--protocol",
+          "a".repeat(64),
+          "--db",
+          rejectDb,
+        ]),
       ).resolves.toBe(1);
       await expect(
         main([
@@ -744,10 +789,19 @@ describe("serial smoke mock run", () => {
       stderrSpy.mockRestore();
     }
     const text = stderr.join("");
-    expect(text).toContain("P36 execution supports only --smoke --mock or --resume <run-id>");
-    expect(text).toContain("live execution is not implemented");
+    expect(text).toContain("--full and --smoke are mutually exclusive");
+    expect(text).toContain("live execution requires --allow-paid");
+    expect(text).toContain(
+      "--full --live requires --protocol <freeze-hash>",
+    );
+    expect(text).toContain(
+      "--protocol must be a 64-character lowercase SHA-256 hex string",
+    );
+    expect(text).toContain(
+      "live execution is authorization-gated but not enabled in P45",
+    );
     expect(text).toContain("--max-cost must be a non-negative decimal USD string");
     expect(text).toContain("fixed to puzzle-smoke-v1");
     expect(existsSync(rejectDb)).toBe(false);
-  });
+  }, 15_000);
 });

@@ -13,7 +13,7 @@ import {
   ArithmeticSpecSchema,
   normalizedConstraintKey,
   relabelConstraint,
-  solveArithmetic,
+  solveArithmeticConstraints,
   tupleKey,
   type ArithmeticConstraint,
   type ArithmeticSpec,
@@ -60,10 +60,10 @@ export function canonicalizeArithmeticSpec(spec: ArithmeticSpec): CanonicalStruc
     normalize: canonicalizeArithmeticConstraints,
     clueKey: normalizedConstraintKey,
     solve: (constraints) => {
-      const solved = solveArithmetic({
-        allDifferent: parsed.allDifferent,
-        constraints: [...constraints],
-      });
+      const solved = solveArithmeticConstraints(
+        parsed.allDifferent,
+        [...constraints],
+      );
       if (solved.solutions.length !== 1) {
         return { solutionCount: solved.solutions.length, answerKey: "" };
       }

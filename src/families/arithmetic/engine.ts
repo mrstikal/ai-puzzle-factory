@@ -343,6 +343,10 @@ export function constructArithmeticSpec(
       continue;
     }
     const candidate = constraints.filter((_candidate, candidateIndex) => candidateIndex !== index);
+    if (candidate.length < MIN_CONSTRAINTS) {
+      nonredundantInequalities += 1;
+      continue;
+    }
     const solved = solveArithmetic({ allDifferent, constraints: candidate });
     if (
       solved.solutions.length !== 1 ||

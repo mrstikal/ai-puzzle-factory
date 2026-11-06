@@ -16,10 +16,10 @@ import {
   openDatabase,
 } from "../storage/database.js";
 import {
-  runSmokeMockExperiment,
+  runMockExperiment,
   type RunSmokeMockResult,
 } from "../runner/run.js";
-import { resumeSmokeExperiment } from "../runner/resume.js";
+import { resumeMockExperiment } from "../runner/resume.js";
 import { RunCancellation } from "../runner/cancel.js";
 import {
   DEFAULT_CONCURRENCY,
@@ -28,20 +28,25 @@ import {
 } from "../runner/workers.js";
 
 export const PROGRAM_NAME = "experiment";
+const MOCK_DEADLINE_MS = 30_000;
 
 const SCOPE_NOTE = [
-  "Availability (P36):",
+  "Availability (P45):",
   "  --dry-run              print the deterministic PlanManifest and exit",
-  "  --full | --smoke       select the 200-slot or 20-slot plan (default: full)",
-  "  --mock | --live        evidence mode; P36 executes --smoke --mock or --resume <run-id> --mock",
+  "  --full | --smoke       select the 200-slot or 20-slot plan (default: full for --dry-run)",
+  "  --mock                 execute an explicit --full or --smoke offline synthetic cohort",
+  "  --full --mock          execute the complete 200-slot release simulation",
+  "  --resume <run-id>      resume a mock full or smoke run from committed checkpoints",
+  "  --live                 authorization-gated live path; P51 executes the frozen protocol",
+  "  --allow-paid           required with --live; never implied by --mock",
+  "  --protocol <hash>      required with --full --live; immutable frozen-protocol hash",
   "  --seed <seed>          restate the fixed root seed for the selected run kind",
   "  --concurrency <1|2>    candidate workers and max in-flight requests (default: 2)",
-  "  --max-cost <usd>       smoke mock budget cap (default: 0; mock calls are nonbilling)",
+  "  --max-cost <usd>       full/smoke mock budget cap (default: 0; mock calls are nonbilling)",
   "  --db <path>            SQLite path (default: data/experiment.sqlite)",
-  "  --resume <run-id>      resume the same run from committed checkpoints",
   "  --ack-budget-increase  authorize a cost-only cap increase with --max-cost",
   "  --operator <name>      operator acknowledgement recorded with a cap increase",
-  "  P36 adds crash-safe mock resume; SIGINT drains and leaves a resumable checkpoint",
+  "  P45 keeps mock full runs synthetic; live full remains gated until P51",
 ].join("\n");
 
 interface ExperimentOptions {
@@ -50,6 +55,8 @@ interface ExperimentOptions {
   readonly smoke?: boolean;
   readonly mock?: boolean;
   readonly live?: boolean;
+  readonly allowPaid?: boolean;
+  readonly protocol?: string;
   readonly seed?: string;
   readonly maxCost?: string;
   readonly db?: string;
@@ -104,6 +111,12 @@ async function handleOptions(
   }
   if (options.mock === true && options.live === true) {
     program.error("--mock and --live are mutually exclusive", { exitCode: 1 });
+  }
+  if (options.allowPaid === true && options.live !== true) {
+    program.error("--allow-paid requires --live", { exitCode: 1 });
+  }
+  if (options.protocol !== undefined && options.live !== true) {
+    program.error("--protocol requires --live", { exitCode: 1 });
   }
   if (options.resume !== undefined) {
     if (options.dryRun === true) {
@@ -180,8 +193,9 @@ async function handleOptions(
             new Promise((resolve) => setTimeout(resolve, ms)),
         },
         random: () => 0,
+        deadlineMs: MOCK_DEADLINE_MS,
       });
-      const result = await resumeSmokeExperiment({
+      const result = await resumeMockExperiment({
         db,
         runId: options.resume,
         apiKey: "mock-offline-key",
@@ -213,8 +227,31 @@ async function handleOptions(
     }
   }
   if (options.live === true) {
+    if (options.allowPaid !== true) {
+      program.error("live execution requires --allow-paid", { exitCode: 1 });
+    }
+    if (options.full !== true && options.smoke !== true) {
+      program.error(
+        "live execution requires an explicit --full or --smoke cohort",
+        { exitCode: 1 },
+      );
+    }
+    if (options.full === true && options.protocol === undefined) {
+      program.error(
+        "--full --live requires --protocol <freeze-hash> with immutable protocol evidence",
+        { exitCode: 1 },
+      );
+    }
+    if (
+      options.protocol !== undefined &&
+      !/^[0-9a-f]{64}$/.test(options.protocol)
+    ) {
+      program.error("--protocol must be a 64-character lowercase SHA-256 hex string", {
+        exitCode: 1,
+      });
+    }
     program.error(
-      "live execution is not implemented; P36 supports offline --smoke --mock or --resume <run-id> --mock",
+      "live execution is authorization-gated but not enabled in P45; P51 executes the frozen protocol",
       { exitCode: 1 },
     );
   }
@@ -229,10 +266,11 @@ async function handleOptions(
     return 0;
   }
 
-  if (options.smoke !== true) {
-    program.error("P36 execution supports only --smoke --mock or --resume <run-id>", {
-      exitCode: 1,
-    });
+  if (options.full !== true && options.smoke !== true) {
+    program.error(
+      "mock execution requires an explicit --full or --smoke cohort",
+      { exitCode: 1 },
+    );
   }
   const maxCost = options.maxCost ?? "0";
   const parsedCost = UsdSchema.safeParse(maxCost);
@@ -253,7 +291,7 @@ async function handleOptions(
     );
   }
   buildPlanManifest({
-    runKind: "smoke",
+    runKind,
     ...(options.seed === undefined ? {} : { rootSeed: options.seed }),
   });
   const dbPath = options.db ?? join("data", "experiment.sqlite");
@@ -273,7 +311,7 @@ async function handleOptions(
       },
     });
     const runId = randomUUID();
-    const accountId = `smoke-${runId}`;
+    const accountId = `${runKind}-${runId}`;
     const mock = createMockTransport({
       db,
       clock: {
@@ -281,13 +319,15 @@ async function handleOptions(
         sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
       },
       random: () => 0,
+      deadlineMs: MOCK_DEADLINE_MS,
     });
-    const result = await runSmokeMockExperiment({
+    const result = await runMockExperiment({
       db,
       runId,
       accountId,
       apiKey: "mock-offline-key",
       transport: mock,
+      runKind,
       maxCostUsd: maxCost,
       concurrency,
       cancellation,
@@ -316,16 +356,18 @@ export function createProgram(onExitCode?: (code: number) => void): Command {
     .showHelpAfterError()
     .addHelpText("after", `\n${SCOPE_NOTE}`)
     .option("--dry-run", "print the deterministic plan manifest and exit")
-    .option("--full", "plan the full 200-slot cohort (default)")
+    .option("--full", "plan or run the full 200-slot cohort (dry-run default)")
     .option("--smoke", "plan or run the 20-slot smoke cohort")
     .option("--mock", "use synthetic mock evidence (default)")
-    .option("--live", "use live provider evidence (not implemented)")
+    .option("--live", "authorization-gated live path (P51 executes the frozen protocol)")
+    .option("--allow-paid", "acknowledge paid execution; required with --live")
+    .option("--protocol <hash>", "immutable frozen-protocol hash; required with --full --live")
     .option("--resume <run-id>", "resume the same run from committed checkpoints")
     .option("--ack-budget-increase", "authorize a cost-only cap increase")
     .option("--operator <name>", "operator name for a cap increase")
     .option("--seed <seed>", "restate the fixed root seed for the selected run kind")
     .option("--concurrency <1|2>", "candidate workers (default: 2)")
-    .option("--max-cost <usd>", "smoke mock budget cap (default: 0)")
+    .option("--max-cost <usd>", "full/smoke mock budget cap (default: 0)")
     .option("--db <path>", "SQLite path (default: data/experiment.sqlite)")
     .action(async (options: ExperimentOptions) => {
       const code = await handleOptions(program, options);

@@ -334,6 +334,17 @@ describe("arithmetic construction", () => {
     expect(other.trace.drawsUsed).toBeLessThanOrEqual(64);
   });
 
+  it("handles a two-constraint construction without solving a one-constraint subset", () => {
+    const result = constructArithmeticSpec(
+      "457184fcf194f0c7cc6e0f161a8e8e5d637a8bea72e2f4f1b1968fb16707cb4c",
+      1,
+    );
+    expect(result.spec.constraints).toHaveLength(2);
+    expect(result.trace.constraintCountAfterPruning).toBe(2);
+    expect(result.trace.nonredundantInequalities).toBeGreaterThanOrEqual(0);
+    expect(() => arithmeticEngine.canonicalData(result.spec)).not.toThrow();
+  });
+
   it("constructs at least 95 of 100 fixed seeds with independent uniqueness", () => {
     const difficulties: Difficulty[] = [
       ...Array.from({ length: 34 }, () => 1 as Difficulty),

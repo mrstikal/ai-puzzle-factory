@@ -193,22 +193,26 @@ export function createResumeTransport(
   };
 }
 
-function findAccountId(db: Database.Database, runId: string): string {
+function findAccountId(
+  db: Database.Database,
+  runId: string,
+  runKind: "full" | "smoke",
+): string {
   const row = db
     .prepare(
-      "SELECT account_id FROM budget_accounts WHERE run_id = ? AND run_kind = 'smoke' LIMIT 1",
+      "SELECT account_id FROM budget_accounts WHERE run_id = ? AND run_kind = ? LIMIT 1",
     )
-    .get(runId) as { account_id: string } | undefined;
+    .get(runId, runKind) as { account_id: string } | undefined;
   if (row === undefined) {
     throw new ResumeError(
       "ACCOUNT_NOT_FOUND",
-      `smoke budget account not found for run ${runId}`,
+      `${runKind} budget account not found for run ${runId}`,
     );
   }
   return row.account_id;
 }
 
-export async function resumeSmokeExperiment(
+export async function resumeMockExperiment(
   input: ResumeSmokeInput,
 ): Promise<RunSmokeMockResult> {
   let run: ReturnType<typeof getRun>;
@@ -228,10 +232,10 @@ export async function resumeSmokeExperiment(
       { cause: error },
     );
   }
-  if (run.runKind !== "smoke") {
+  if (run.runKind !== "full" && run.runKind !== "smoke") {
     throw new ResumeError(
       "UNSUPPORTED_RUN_KIND",
-      `P36 resume supports only smoke runs, received ${run.runKind}`,
+      `resume supports only full or smoke runs, received ${run.runKind}`,
     );
   }
   if (run.controlState === "completed") {
@@ -252,7 +256,7 @@ export async function resumeSmokeExperiment(
   }
   const clock = input.clock ?? { now: () => new Date() };
   const currentPlan = buildPlanManifest({
-    runKind: "smoke",
+    runKind: run.runKind,
     rootSeed: run.rootSeed,
   });
   if (
@@ -264,7 +268,7 @@ export async function resumeSmokeExperiment(
       "current plan/protocol no longer matches the stored run manifest",
     );
   }
-  const accountId = findAccountId(input.db, run.runId);
+  const accountId = findAccountId(input.db, run.runId, run.runKind);
   let account = getBudgetAccount(input.db, accountId);
   if (input.budgetIncrease !== undefined) {
     try {
@@ -308,7 +312,7 @@ export async function resumeSmokeExperiment(
       apiKey: input.apiKey,
       transport,
       evidenceKind: run.evidenceKind,
-      runKind: "smoke",
+      runKind: run.runKind,
       routes,
       maxCostUsd: account.maxCostUsd,
       plan: run.manifest as PlanManifest,
@@ -342,4 +346,10 @@ export async function resumeSmokeExperiment(
     }
     throw error;
   }
+}
+
+export async function resumeSmokeExperiment(
+  input: ResumeSmokeInput,
+): Promise<RunSmokeMockResult> {
+  return resumeMockExperiment(input);
 }

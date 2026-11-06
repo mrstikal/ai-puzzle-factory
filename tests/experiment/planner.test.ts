@@ -555,11 +555,11 @@ describe("CLI dry-run", () => {
       },
       {
         args: ["--dry-run", "--live"],
-        message: /live execution is not implemented/,
+        message: /live execution requires --allow-paid/,
       },
       {
         args: ["--seed", "puzzle-poc-v1"],
-        message: /P36 execution supports only --smoke --mock or --resume <run-id>/,
+        message: /mock execution requires an explicit --full or --smoke cohort/,
       },
       {
         args: ["--dry-run", "--seed", CALIBRATION_ROOT_SEED],

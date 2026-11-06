@@ -525,12 +525,6 @@ function stageHook(
 export async function runSmokeCohort(
   input: RunSmokeCohortInput,
 ): Promise<RunSmokeMockResult> {
-  if (input.runKind !== "smoke") {
-    throw new RunError(
-      "INVALID_INPUT",
-      "P36 supports only smoke runs",
-    );
-  }
   const isMock = input.transport.isMock === true;
   if (input.evidenceKind === "mock" && !isMock) {
     throw new RunError(
@@ -566,10 +560,11 @@ export async function runSmokeCohort(
       runKind: input.runKind,
       ...(input.rootSeed === undefined ? {} : { rootSeed: input.rootSeed }),
     });
-  if (plan.runKind !== "smoke" || plan.slots.length !== 20) {
+  const expectedSlots = input.runKind === "smoke" ? 20 : 200;
+  if (plan.runKind !== input.runKind || plan.slots.length !== expectedSlots) {
     throw new RunError(
       "INVALID_INPUT",
-      "P36 supports only the fixed 20-slot smoke plan",
+      `plan kind/length does not match the requested ${input.runKind} run`,
     );
   }
   const clock = input.clock ?? { now: () => new Date() };
@@ -616,7 +611,7 @@ export async function runSmokeCohort(
       createBudgetAccount(input.db, {
         accountId: input.accountId,
         runId: input.runId,
-        runKind: "smoke",
+        runKind: input.runKind,
         maxCostUsd: maxCost.data,
         createdAt,
       });
@@ -887,8 +882,12 @@ export async function runSmokeCohort(
   }
 }
 
-export async function runSmokeMockExperiment(
-  input: RunSmokeMockInput,
+export interface RunMockInput extends RunSmokeMockInput {
+  readonly runKind: RunKind;
+}
+
+export async function runMockExperiment(
+  input: RunMockInput,
 ): Promise<RunSmokeMockResult> {
   return runSmokeCohort({
     db: input.db,
@@ -897,7 +896,7 @@ export async function runSmokeMockExperiment(
     apiKey: input.apiKey,
     transport: input.transport,
     evidenceKind: "mock",
-    runKind: "smoke",
+    runKind: input.runKind,
     routes: buildMockRoutes(),
     maxCostUsd: input.maxCostUsd,
     ...(input.rootSeed === undefined ? {} : { rootSeed: input.rootSeed }),
@@ -922,4 +921,16 @@ export async function runSmokeMockExperiment(
       : { reviewScenarioKinds: input.reviewScenarioKinds }),
     ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
   });
+}
+
+export async function runSmokeMockExperiment(
+  input: RunSmokeMockInput,
+): Promise<RunSmokeMockResult> {
+  return runMockExperiment({ ...input, runKind: "smoke" });
+}
+
+export async function runFullMockExperiment(
+  input: RunSmokeMockInput,
+): Promise<RunSmokeMockResult> {
+  return runMockExperiment({ ...input, runKind: "full" });
 }

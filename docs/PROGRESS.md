@@ -2726,3 +2726,103 @@ Expected: focused tests pass; archive and verify print `"ok": true`; manifest ha
 **Acceptance:** accepted by the user on 2026-11-06 after the focused provenance/security suites (8 + 6 tests; 5 files / 50 focused tests), full `npm run check` (46 files / 601 tests), `npm run test:browser` (6 passed), archive/verify CLI inspection, and the three decision-reviewer passes. Final archive `archiveHash` is `6c5ee807e233b280e5ac8913e414676548b7f383a9d7d44aa54751af231f12c2`; verification returned `ok:true` with zero failures.
 
 **Out of scope, unchanged:** live preflight/calibration/smoke evidence collection (P46/P48/P49), frozen-protocol-plus-provenance packaging (P50), paid requests, primary execution, and any claim that a future remote generation is reproducible.
+
+## P45. Full Offline Release Run and Fresh Reproduction — 2026-11-06
+
+**State:** implemented, offline-verified, artifact/report checked, and accepted by the user on 2026-11-06. The full run is synthetic and must never be treated as live evidence or a business proceed.
+
+**Files**
+
+- Runner generalization: `src/runner/run.ts` (`runMockExperiment`, `runFullMockExperiment`, full 200-slot plan/account validation), `src/runner/resume.ts` (`resumeMockExperiment`, full/smoke account and plan resume; `resumeSmokeExperiment` compatibility alias)
+- CLI guards: `src/cli/experiment.ts` (explicit `--full`/`--smoke` cohort, full mock execution, `--allow-paid`/`--protocol` live gate, `--resume` full/smoke, 30 s mock deadline)
+- Demonstrated release fixes: `src/families/arithmetic/engine.ts` (do not solve a one-constraint nonredundancy subset), `src/families/arithmetic/canonical.ts` + `src/families/arithmetic/schema.ts` (`solveArithmeticConstraints` accepts reduced one-clue subsets during canonicalization)
+- Tests: `tests/experiment/full-mock.test.ts` (new), `tests/families/arithmetic.test.ts`, `tests/runner/serial.test.ts`, `tests/bootstrap.test.ts`, `tests/experiment/planner.test.ts`
+- Documentation: `README.md`, `docs/reproduction.md`, this file
+
+**Observable behavior**
+
+- `npm run experiment -- --full --mock --seed puzzle-poc-v1 --max-cost 0` executes the complete 200-slot synthetic cohort through the real planner, preparation, duplicate barrier, blind/alignment reviews, verdict reducer, ledger, budget, report, and export surfaces. Execution now requires an explicit `--full` or `--smoke` cohort; a bare invocation fails instead of accidentally starting 200 slots.
+- The full run reaches 200/200 terminal slots with exact plan quotas (100 text / 100 SVG, 120 `spec_first` / 80 `ai_spec`, 20 per family, difficulty 70/70/60). The deterministic mock run produced 148 approved, 18 rejected, 34 inconclusive, 0 generation errors; 644 logical calls/attempts; barrier 145 unique, 11 owners, 18 structural duplicates, 34 near-suspected. All calls/attempts are `validated` with known zero cost and no unknown exposure.
+- Stage records: 200 `spec_ready`, 200 `formal_checked`, 200 `presentation_ready`, 200 `duplicate_checked`, 182 `blind_reviewed`, 182 `alignment_reviewed`, 200 `terminal`. Artifacts: 644 raw responses, 100 SVG, 200 PNG; 300 stage-artifact links. Every planned slot is terminal; no duplicate `(slot, role)` calls; no duplicate terminal rows.
+- Metrics: planned/started/terminal/fingerprintable/formal/presentation all 200; review coverage 1; fingerprint coverage 1; conditional review agreement 1; structural uniqueness 0.91 (182 distinct structures, 145 barrier owners); cost status known, actual USD 0. The synthetic run does not meet the business uniqueness threshold and is correctly not a proceed.
+- Report/export: 200 candidate rows, 200 puzzle JSON files, 200 HTML cards, 200 CSV rows, 644 request rows, 100 SVG + 100 PNG copies. `report.html` contains the `MOCK DATA` banner, every planned slot ID, closed reveal details, and no final decision/proceed object. `summary.json` says `planned:200`, `terminal:200`, `runKind:full`, `evidenceKind:mock`.
+- Concurrency 1 and 2 produce identical stable content after removing generated call/attempt UUIDs: same plan hash, slot stage/verdict, stable stage payloads, barrier payload, call/attempt role/state/cost inventory, and artifact-kind counts.
+- Full mock resume is supported: cancelling a full run after four stage commits leaves a resumable checkpoint; `--resume <run-id> --mock` completes to 200 terminal slots without duplicate terminal rows or duplicate `(slot, role)` logical calls. The smoke resume behavior remains compatible through the `resumeSmokeExperiment` alias.
+- Live full remains authorization-gated: `--live` requires `--allow-paid`; `--full --live` additionally requires a 64-hex `--protocol` hash. P45 validates the gate and then refuses to start paid calls; P51 executes the frozen protocol. `--allow-paid`/`--protocol` are rejected with mock/non-live commands.
+- Two arithmetic release defects found by the full run are fixed: a two-constraint construction no longer calls `solveArithmetic` on a one-constraint nonredundancy subset, and canonicalization uses `solveArithmeticConstraints` so reduced one-clue subsets can be evaluated. This removed the full run's `generation_error` and fingerprint failure.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/experiment/full-mock.test.ts` | exit 0; 4 tests passed (two full runs + report/export + full resume), 179 s. |
+| `npm exec -- vitest run tests/families/arithmetic.test.ts` | exit 0; 16 tests passed. |
+| `npm exec -- vitest run tests/runner/resume.test.ts tests/runner/concurrency.test.ts tests/families/arithmetic.test.ts` | exit 0; 3 files / 36 tests passed. |
+| `npm exec -- vitest run tests/runner/serial.test.ts` | exit 0; 8 tests passed. |
+| `npm exec -- vitest run tests/bootstrap.test.ts tests/experiment/planner.test.ts` | exit 0; 2 files / 33 tests passed. |
+| `npm run lint` | exit 0. |
+| `npm run typecheck` | exit 0. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 47 files / 606 tests passed, build succeeded. |
+| `npm run test:browser` | exit 0; 6 Playwright Chromium tests passed. |
+| `npm run --silent experiment -- --full --mock --seed puzzle-poc-v1 --max-cost 0` | exit 0; run `ace4a2d5-31dc-466e-896f-c8cc07b331f7`, status completed, 200/200 terminal, 148/18/34/0 verdicts, 644 calls/attempts, unknown 0, cost known 0, barrier 145/18/34. |
+| `npm run --silent report -- --run ace4a2d5-31dc-466e-896f-c8cc07b331f7` | exit 0; `data/runs/<id>/report.html` with 200 cards and `MOCK DATA`. |
+| `npm run --silent export -- --run ace4a2d5-31dc-466e-896f-c8cc07b331f7 --format all` | exit 0; 200 puzzles, 200 candidates, 644 requests, 100 SVG + 100 PNG images. |
+| Fresh copy: `rsync ... /tmp/p45-fresh && npm ci && npm exec playwright install chromium` | exit 0; 154 packages installed, native `better-sqlite3` works, Chromium available. |
+| Fresh copy: `npm run check` | exit 0; 47 files / 606 tests passed, build succeeded (257 s). |
+| Fresh copy: full mock CLI | exit 0; run `28a3d49b-f556-4fa8-a4d3-483dc4bc2a5f`, same 200/200, 148/18/34/0, 644 calls, barrier 145/18/34. |
+| Fresh copy: `npm run report` + `npm run test:browser` | exit 0; 200 cards with `MOCK DATA`; 6 browser tests passed. |
+
+**Manual acceptance steps**
+
+1. Run the exact non-UI script below from `/home/alex/ai-puzzle-factory`.
+2. Confirm the CLI prints `status completed`, `slots 200/200 terminal`, `generation_error=0`, `unknown=0`, `cost status=known actual=0`, and barrier `unique=145 owners=11 near=34 duplicates=18`.
+3. Confirm `report.html` has 200 `<article class="card">` entries, all 200 planned slot IDs, and the `MOCK DATA` banner; confirm `summary.json` has `planned:200`, `terminal:200`, `runKind:full`, `evidenceKind:mock`.
+4. Confirm 200 puzzle JSON files, 200 candidate rows, 644 request rows, 100 SVG + 100 PNG files, and no final decision/proceed object.
+5. Run `npm run check` (47 files / 606 tests) and `npm run test:browser` (6 passed).
+6. Run the fresh-copy reproduction block; confirm the same full-run counts and tests without `.env`, the original `data/`, or Git state.
+7. Confirm no network, paid, key, live model, or business proceed occurred.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+npm exec -- vitest run tests/experiment/full-mock.test.ts tests/families/arithmetic.test.ts
+npm run --silent experiment -- --full --mock --seed puzzle-poc-v1 --max-cost 0 | tee /tmp/p45-run.txt
+RUN_ID=$(awk '/^run /{print $2}' /tmp/p45-run.txt)
+npm run --silent report -- --run "$RUN_ID"
+npm run --silent export -- --run "$RUN_ID" --format all
+node -e "const fs=require('fs'); const id=process.argv[1]; const h=fs.readFileSync('data/runs/'+id+'/report.html','utf8'); console.log({runId:id,cards:(h.match(/<article class=\"card\"/g)||[]).length,mock:h.includes('MOCK DATA')});" "$RUN_ID"
+node -e "const s=require('./data/runs/'+process.argv[1]+'/summary.json'); console.log({planned:s.planned.total,terminal:s.counts.terminal,verdicts:s.failures.verdictHistogram,evidenceKind:s.run.evidenceKind,runKind:s.run.runKind});" "$RUN_ID"
+test -f "data/runs/$RUN_ID/report.html"
+test "$(ls "data/runs/$RUN_ID/puzzles" | wc -l)" -eq 200
+test "$(grep -o '<article class="card"' "data/runs/$RUN_ID/report.html" | wc -l)" -eq 200
+grep -q "MOCK DATA" "data/runs/$RUN_ID/report.html"
+npm run check
+npm run test:browser
+```
+
+Expected: focused full-mock/arithmetic tests pass; the full run prints the exact 200/200 and 148/18/34/0 counts; report/export contain 200 puzzles/cards and 644 request rows; the report is `MOCK DATA`; `npm run check` is 47 files / 606 tests with a successful build; browser is 6 passed. Missing native/browser setup or a skipped test is a failed/unverified gate, not a pass.
+
+**Fresh-copy reproduction**
+
+```bash
+rm -rf /tmp/p45-fresh
+mkdir -p /tmp/p45-fresh
+rsync -a --exclude node_modules --exclude data --exclude .git --exclude .env ./ /tmp/p45-fresh/
+cd /tmp/p45-fresh
+test ! -e .env
+npm ci
+npm exec playwright install chromium
+npm run check
+npm run --silent experiment -- --full --mock --seed puzzle-poc-v1 --max-cost 0
+npm run test:browser
+```
+
+The fresh copy completed with 47 files / 606 tests, the same full-run counts (`200/200`, `148/18/34/0`, `644` calls, barrier `145/18/34`), 200 report cards, and 6 browser tests. `npm ci` needed registry/cache access; the Chromium install is the documented native/browser tooling step. A missing dependency or skipped test means the reproduction is unverified, not accepted.
+
+**Decision-reviewer:** the first static pass confirmed one Low-severity CLI documentation defect: `--help` advertised `default: full` for cohort selection and `--mock` as executing the selected cohort, while the execution guard required an explicit `--full` or `--smoke`; an operator following the help could not start the advertised default. Fixed by scoping the default to `--dry-run` (`default: full for --dry-run`), stating `--mock execute an explicit --full or --smoke offline synthetic cohort`, aligning the `--full` option description, and pinning the phrase in `tests/bootstrap.test.ts`. The reviewer rejected three hypotheses: the pre-existing resume `--max-cost` equal-cap abort (not introduced by P45 and explicit/safe), the arithmetic one-constraint guard counting a redundant inequality (anchor equations leave a free variable, so the guard agrees with the exact solver), and canonicalization emitting an invalid one-relation core (the baseline uniqueness check remains and the new internal solver handles reduced subsets). The verification pass confirmed the help/execution contract is consistent and closed the finding with no residual material findings. Coverage note, not a defect: the full-run cancellation test cancels during preparation; smoke review-phase crash/resume tests remain the recovery proof for that phase.
+
+**Acceptance:** accepted by the user on 2026-11-06 after the focused full-mock/arithmetic suites, `npm run check` (47 files / 606 tests), `npm run test:browser` (6 passed), the CLI full run/report/export inspection, and the fresh-copy reproduction (47 files / 606 tests, same 200/200 and 148/18/34/0 counts, 6 browser tests). The synthetic report remains `MOCK DATA`; no business proceed was produced.
+
+**Out of scope, unchanged:** paid compatibility, live preflight/calibration/smoke evidence (P46/P48/P49), frozen-protocol-plus-provenance packaging (P50), live full execution (P51), and any business proceed claim. Acceptance is offline-verified and live-unverified.

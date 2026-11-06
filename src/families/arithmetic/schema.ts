@@ -85,26 +85,36 @@ export function allDifferentSatisfied(tuple: readonly number[]): boolean {
   return tuple[0] !== tuple[1] && tuple[0] !== tuple[2] && tuple[1] !== tuple[2];
 }
 
-export function solveArithmetic(spec: ArithmeticSpec): {
+export function solveArithmeticConstraints(
+  allDifferent: boolean,
+  constraints: readonly ArithmeticConstraint[],
+): {
   readonly solutions: readonly ArithmeticTuple[];
   readonly enumeratedStates: number;
 } {
-  const parsed = ArithmeticSpecSchema.parse(spec);
   const solutions: ArithmeticTuple[] = [];
   for (let x = 0; x < ARITHMETIC_DOMAIN_SIZE; x += 1) {
     for (let y = 0; y < ARITHMETIC_DOMAIN_SIZE; y += 1) {
       for (let z = 0; z < ARITHMETIC_DOMAIN_SIZE; z += 1) {
         const tuple: ArithmeticTuple = [x, y, z];
-        if (parsed.allDifferent && !allDifferentSatisfied(tuple)) {
+        if (allDifferent && !allDifferentSatisfied(tuple)) {
           continue;
         }
-        if (parsed.constraints.every((constraint) => constraintSatisfied(constraint, tuple))) {
+        if (constraints.every((constraint) => constraintSatisfied(constraint, tuple))) {
           solutions.push(tuple);
         }
       }
     }
   }
   return { solutions, enumeratedStates: ARITHMETIC_TUPLE_COUNT };
+}
+
+export function solveArithmetic(spec: ArithmeticSpec): {
+  readonly solutions: readonly ArithmeticTuple[];
+  readonly enumeratedStates: number;
+} {
+  const parsed = ArithmeticSpecSchema.parse(spec);
+  return solveArithmeticConstraints(parsed.allDifferent, parsed.constraints);
 }
 
 export type ArithmeticNormalizationErrorCode = "NONINTEGRAL_EQUALITY";

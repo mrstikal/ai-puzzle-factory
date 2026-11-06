@@ -87,7 +87,15 @@ To reproduce locally:
 3. Use the existing `--resume <run-id> --mock` path to reuse saved responses without a new request.
 4. Compare the replayed response content and hashes with the stored request/attempt rows; the primary run, slot, stage, and artifact rows must remain unchanged.
 
-## Manual acceptance
+## Full offline release (P45)
+
+P45 completes the full 200-slot synthetic release path. `npm run experiment -- --full --mock --seed puzzle-poc-v1 --max-cost 0` uses the deterministic mock transport, the real plan/barrier/preparation/review/verdict/ledger pipeline, and the real report/export surfaces. The report is always labeled `MOCK DATA`; it is not live evidence and cannot produce a business proceed. The full run currently reaches 200/200 terminal slots with 148 approved, 18 rejected, 34 inconclusive, 0 generation errors, 644 calls/attempts, and a 145-unique/18-structural-duplicate/34-near-suspected barrier. Concurrency 1 and 2 produce identical stable content apart from generated call/attempt UUIDs. Full mock resume is supported for a cancelled run and must finish at 200 terminal slots without duplicate terminal rows.
+
+Two arithmetic release defects were found by the full run and fixed: a two-constraint construction no longer calls the two-constraint solver on a one-constraint nonredundancy subset, and canonicalization uses an internal solver that accepts reduced one-clue subsets. The focused regression lives in `tests/families/arithmetic.test.ts`; the full release test lives in `tests/experiment/full-mock.test.ts`.
+
+Live full execution remains authorization-gated: `--live` requires `--allow-paid`; `--full --live` additionally requires a 64-hex `--protocol` hash. P45 validates the gate but does not start paid calls; P51 executes the frozen protocol.
+
+## P44 manual acceptance
 
 Run the exact script below. It uses the repository's existing synthetic tests rather than a full paid run.
 
@@ -121,6 +129,47 @@ Expected:
 
 The focused tests are the exact non-UI proof for missing/modified/extra/symlink files, secret canaries, archive path traversal and tampering, dirty snapshots, code/hash drift rejection, credential-redacted HTML/CSV/JSONL/SVG exports, the public/reveal boundary, replay identity, and unchanged primary run/stage/artifact rows.
 
+## P45 manual acceptance and fresh-copy reproduction
+
+Run the exact script below from the repository root. It creates a full synthetic run in the default `data/experiment.sqlite`, then opens the report/export surfaces.
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+npm exec -- vitest run tests/experiment/full-mock.test.ts tests/families/arithmetic.test.ts
+npm run --silent experiment -- --full --mock --seed puzzle-poc-v1 --max-cost 0 | tee /tmp/p45-run.txt
+RUN_ID=$(awk '/^run /{print $2}' /tmp/p45-run.txt)
+npm run --silent report -- --run "$RUN_ID"
+npm run --silent export -- --run "$RUN_ID" --format all
+node -e "const fs=require('fs'); const id=process.argv[1]; const h=fs.readFileSync('data/runs/'+id+'/report.html','utf8'); console.log({runId:id,cards:(h.match(/<article class=\"card\"/g)||[]).length,mock:h.includes('MOCK DATA')});" "$RUN_ID"
+node -e "const s=require('./data/runs/'+process.argv[1]+'/summary.json'); console.log({planned:s.planned.total,terminal:s.counts.terminal,verdicts:s.failures.verdictHistogram,evidenceKind:s.run.evidenceKind,runKind:s.run.runKind});" "$RUN_ID"
+test -f "data/runs/$RUN_ID/report.html"
+test "$(ls "data/runs/$RUN_ID/puzzles" | wc -l)" -eq 200
+test "$(grep -o '<article class="card"' "data/runs/$RUN_ID/report.html" | wc -l)" -eq 200
+grep -q "MOCK DATA" "data/runs/$RUN_ID/report.html"
+npm run check
+npm run test:browser
+```
+
+Expected: the focused full-mock/arithmetic tests pass; the run prints `status completed`, `slots 200/200 terminal`, `generation_error=0`, `unknown=0`, and `cost status=known actual=0`; the report/export contain 200 puzzle files and 200 HTML cards; the summary says `planned: 200`, `terminal: 200`, `evidenceKind: "mock"`, `runKind: "full"`; `npm run check` passes with the full suite and build; `npm run test:browser` passes. Missing native/browser setup or a skipped test is a failed/unverified gate, not a pass.
+
+Fresh-copy reproduction without `.env`:
+
+```bash
+rm -rf /tmp/p45-fresh
+mkdir -p /tmp/p45-fresh
+rsync -a --exclude node_modules --exclude data --exclude .git --exclude .env ./ /tmp/p45-fresh/
+cd /tmp/p45-fresh
+test ! -e .env
+npm ci
+npm exec playwright install chromium
+npm run check
+npm run --silent experiment -- --full --mock --seed puzzle-poc-v1 --max-cost 0
+npm run test:browser
+```
+
+The fresh copy must reproduce the same focused/full/browser results without reading the original `data/`, `.env`, or Git state. `npm ci` needs registry access unless the npm cache is populated; the Chromium install is the documented native/browser tooling step. A missing dependency or skipped test means the reproduction is unverified, not accepted.
+
 ## Out of scope
 
-P44 does not collect live evidence, approve expenditure, run the primary cohort, qualify live calibration, or claim that a future remote generation is reproducible. P46/P48/P49 supply live preflight, calibration, and smoke evidence; P50 combines the provenance archive with the frozen protocol.
+P45 does not prove paid compatibility or live success. Acceptance is offline-verified and live-unverified, not a business proceed. P46/P48/P49 supply live preflight, calibration, and smoke evidence; P50 combines provenance with the frozen protocol; P51 executes live full.
