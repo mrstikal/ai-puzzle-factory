@@ -58,14 +58,24 @@ A fixture whose mutation still leaves one clear valid offered answer must fail c
 `labels.pending.csv` has one row per fixture and these columns:
 
 ```text
-fixture_id,slot_id,source_fixture_id,family,modality,difficulty,sound_or_defective,
-seed,content_hash,png_hash,svg_hash,fixture_hash,proposed_blind_result,
-proposed_correct_label,accepted_defect_codes,proposed_alignment_result,
-accepted_failing_fields,accepted_fact_ids,corruption_explanation,human_verified,
-auditor,auditor_time,notes
+pack_hash,fixture_id,slot_id,source_fixture_id,family,modality,difficulty,
+sound_or_defective,seed,content_hash,png_hash,svg_hash,fixture_hash,
+proposed_blind_result,proposed_correct_label,accepted_defect_codes,
+proposed_alignment_result,accepted_failing_fields,accepted_fact_ids,
+corruption_explanation,observed_blind_result,observed_correct_label,
+observed_defect_codes,observed_alignment_result,observed_failing_fields,
+observed_fact_ids,provenance,human_verified,auditor,auditor_time,notes
 ```
 
-`proposed_*` fields are agent-prepared evidence, not human judgments. Every `human_verified` value is `false`; `auditor`, `auditor_time`, and `notes` are empty. Do not treat the proposed fields as approved ground truth.
+`proposed_*` fields are agent-prepared evidence, not human judgments. In the pending template, the `observed_*` fields, `provenance`, `auditor`, `auditor_time`, and `notes` are empty, and every `human_verified` value is `false`. Do not treat the proposed fields as approved ground truth.
+
+## P41 mock calibration and label import
+
+P41 adds `src/calibration/labels.ts`, `run.ts`, `score.ts`, `tests/calibration/score.test.ts`, and `tests/fixtures/calibration/mock-labels.csv`. `npm run calibration -- --mock --labels <path>` validates the label file, runs exactly one blind and one alignment review per fixture (80 review calls, zero generation calls) through the same frozen prompt/schema/model-route/payload builders as primary, and scores four separate combinations: text blind, text alignment, SVG blind, SVG alignment.
+
+Each combination reports a decisive-only 2x2 confusion matrix and a conservative all-ten matrix. The conservative numerator counts only a compatible defect/no-unique blind issue code with non-selected status and `ambiguity=present`, or a failing alignment field with an accepted fact ID when one is specified. A blind abstention, wrong clean answer, unrelated issue code, parse/API error, or missing call never counts. An alignment detection is credited when at least one accepted field fails with an accepted fact ID and at least one applicable field outside the accepted set passes; an additional unrelated failing field does not erase that credit, while a reject-all response does not earn it. The report includes a stable `labelsHash` over the label rows; `--verify-labels` prints the same hash. Gates are fixed at 9/10 conservative sensitivity and 8/10 conservative specificity per combination. Wilson intervals, coverage, abstentions, errors, and partial-run denominators are reported. A mock/test-only label file must use `provenance=mock_test_only` and auditor `mock-test-only`; mock results are marked `evidenceKind=mock`, `liveEligible=false`, and never qualify a live freeze.
+
+`npm run calibration -- --verify-labels <path> --auditor <name>` validates a human label file without filling observations or claiming an actual review. It requires 40 rows, the matching pack hash, matching fixture/content/PNG/SVG/fixture hashes, complete proposed and observed labels, known defect codes/fields/fact IDs, `provenance=human`, `human_verified=true`, the exact `--auditor` identity, and a valid non-future auditor time. A human observation that disagrees with the pack is rejected; correct P40 and create a new pack hash instead of overwriting truth.
 
 ## Human audit gate
 
@@ -75,7 +85,10 @@ P47 is the manual gate. A human must inspect and solve all 40 actual presentatio
 
 ```bash
 npm run calibration -- --prepare
+npm run calibration -- --mock --labels tests/fixtures/calibration/mock-labels.csv
+npm run calibration -- --verify-labels <human-labels.csv> --auditor <name>
 npm exec -- vitest run tests/calibration/fixtures.test.ts
+npm exec -- vitest run tests/calibration/score.test.ts
 npm run check
 ```
 

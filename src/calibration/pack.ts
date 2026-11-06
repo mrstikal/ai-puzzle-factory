@@ -9,6 +9,10 @@ import type {
   CalibrationFixture,
   CalibrationPack,
 } from "./fixtures.js";
+import {
+  pendingLabelRows,
+  renderCalibrationLabelsCsv,
+} from "./labels.js";
 
 const GALLERY_STYLE = `:root { color-scheme: light; --bg: #f4f5f7; --surface: #fff; --text: #1c2430; --muted: #55616f; --border: #cfd6df; --accent: #174f8a; --warn: #7a4b00; --warn-bg: #fdf0d5; }
 * { box-sizing: border-box; }
@@ -59,17 +63,6 @@ function escapeHtml(value: string): string {
 
 function cspHash(content: string): string {
   return `sha256-${createHash("sha256").update(content, "utf8").digest("base64")}`;
-}
-
-function csvCell(value: string): string {
-  let text = value;
-  if (/^[=+\-@]/.test(text)) {
-    text = `'${text}`;
-  }
-  if (/[",\n\r]/.test(text)) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
 }
 
 function renderRules(rules: VisibleRules): string {
@@ -189,67 +182,6 @@ ${pack.fixtures.map(renderCard).join("\n")}
 `;
 }
 
-function labelRows(fixtures: readonly CalibrationFixture[]): string[][] {
-  return fixtures.map((fixture) => [
-    fixture.fixtureId,
-    fixture.slotId,
-    fixture.sourceFixtureId ?? "",
-    fixture.family,
-    fixture.modality,
-    String(fixture.difficulty),
-    fixture.variant,
-    fixture.seed,
-    fixture.contentHash,
-    fixture.pngHash ?? "",
-    fixture.svgHash ?? "",
-    fixture.fixtureHash,
-    fixture.expected.blind.result,
-    fixture.expected.blind.correctLabel ?? "",
-    fixture.expected.blind.acceptedDefectCodes.join(";"),
-    fixture.expected.alignment.result,
-    fixture.expected.alignment.acceptedFailingFields.join(";"),
-    fixture.expected.alignment.acceptedFactIds.join(";"),
-    fixture.mutation?.description ?? "",
-    "false",
-    "",
-    "",
-    "",
-  ]);
-}
-
-const LABEL_HEADER = [
-  "fixture_id",
-  "slot_id",
-  "source_fixture_id",
-  "family",
-  "modality",
-  "difficulty",
-  "sound_or_defective",
-  "seed",
-  "content_hash",
-  "png_hash",
-  "svg_hash",
-  "fixture_hash",
-  "proposed_blind_result",
-  "proposed_correct_label",
-  "accepted_defect_codes",
-  "proposed_alignment_result",
-  "accepted_failing_fields",
-  "accepted_fact_ids",
-  "corruption_explanation",
-  "human_verified",
-  "auditor",
-  "auditor_time",
-  "notes",
-] as const;
-
-function renderLabels(fixtures: readonly CalibrationFixture[]): string {
-  const rows = [LABEL_HEADER as unknown as string[], ...labelRows(fixtures)];
-  return `${rows
-    .map((row) => row.map((cell) => csvCell(cell)).join(","))
-    .join("\n")}\n`;
-}
-
 function writeArtifact(path: string, bytes: Buffer): void {
   writeFileSync(path, bytes);
 }
@@ -307,7 +239,7 @@ export function writeCalibrationPack(
     }
   }
   writeFileSync(packPath, `${JSON.stringify(pack, null, 2)}\n`, "utf8");
-  writeFileSync(labelsPath, renderLabels(pack.fixtures), "utf8");
+  writeFileSync(labelsPath, renderCalibrationLabelsCsv(pendingLabelRows(pack)), "utf8");
   writeFileSync(galleryPath, renderCalibrationGallery(pack), "utf8");
   return {
     directory,

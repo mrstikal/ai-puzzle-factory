@@ -2442,3 +2442,76 @@ Expected: one `pack_hash`, 40 fixtures, 20 sound, 20 defective, 20 text, 20 SVG,
 **Acceptance:** accepted by the user on 2026-11-06 after the focused suite, full check, browser regression, artifact counts, and manual gallery/label inspection. The accepted pack is `b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f`; human label certification remains P47.
 
 **Out of scope, unchanged:** P41 reviewer calibration/scoring, P47 human label certification, paid/live reviewer calls, provider selection, and business success claims.
+
+## P41. Calibration Runner, Label Validation, and Scoring — 2026-11-06
+
+**State:** implemented, offline-verified, mock-scored, and accepted by the user on 2026-11-06. This phase runs the calibration reviewer over the held-out pack with mock/test-only labels and scores blind/alignment behaviour. It makes no live reviewer or provider call, certifies no human label, and cannot qualify a live freeze.
+
+**Files**
+
+- Labels: `src/calibration/labels.ts` (31-column CSV contract, pending/mock row builders, parser, pack/fixture/hash/auditor/time/fact validation)
+- Runner: `src/calibration/run.ts` (80-call mock blind+alignment runner using the same frozen prompt/schema/route/payload builders as primary, calibration ledger calls with probe keys, zero generations)
+- Scoring: `src/calibration/score.ts` (four separate text/SVG blind/alignment matrices, decisive and conservative rates, all-ten denominators, Wilson intervals, coverage/abstentions/errors, fixed 9/10 and 8/10 gates)
+- CLI: `src/cli/calibration.ts` (`--mock`, `--mock-mode oracle|agree|reject`, `--labels`, `--verify-labels`, `--auditor`; P40 `--prepare` retained)
+- Tests: `tests/calibration/score.test.ts`
+- Mock labels: `tests/fixtures/calibration/mock-labels.csv` (mock/test-only provenance, 40 rows)
+- Pack writer integration: `src/calibration/pack.ts` now emits the 31-column pending template with `pack_hash`, observed fields, and provenance
+- Documentation: `docs/calibration-labeling.md`, `README.md`, this file
+
+**Observable behavior**
+
+- `npm run calibration -- --mock --labels <path>` validates a mock/test-only label file against the current pack, runs exactly one blind and one alignment review per fixture (80 review calls, 0 generation calls), and prints the scoring report as JSON. A stderr banner marks the result as mock/test-only.
+- The runner uses the same `blindTextPromptMetadata`/`buildBlindTextMessages`, `blindVisionPromptMetadata`/`buildBlindVisionMessages`, `alignmentPromptMetadata`/`buildAlignmentMessages`, strict response schemas, mock primary routes, and `buildChatRequest` as the primary review path. Calibration calls use ledger `runKind=calibration` with the fixture ID as `probeKey`; no DB run/slot is fabricated.
+- Blind payloads contain only question/rules/clue texts/options; calibration truth labels, variant, mutation, expected outcomes, and fixture IDs are absent. Alignment payloads contain the original DSL/proof/key/options/inventory plus the actual visible presentation.
+- Scoring reports four independent combinations: `text_blind`, `text_alignment`, `svg_blind`, `svg_alignment`. Each has a decisive-only 2x2 matrix and a conservative all-ten matrix. Conservative detection requires a compatible defect/no-unique blind issue code or an accepted failing alignment field with an accepted fact ID when specified; wrong clean answers, unrelated criticism, abstentions, errors, and missing calls do not count. An additional unrelated failing field does not add credit but does not erase a valid accepted-field detection.
+- Each combination reports 10 defective and 10 sound denominators, sensitivity/specificity with Wilson 95% intervals, coverage, abstentions, and errors. Gates are fixed at 9/10 conservative sensitivity and 8/10 conservative specificity. A blind detection must be non-selected, ambiguity-present, and carry a compatible issue code, so a hedged abstention is never credited. An alignment detection must fail an accepted field with an accepted fact ID and must have at least one applicable field outside the accepted set passing, so a reject-all response is not credited while an additional unrelated failing field does not erase a correct accepted-field detection. The report is always `evidenceKind=mock`, `liveEligible=false` and includes a stable `labelsHash` over the observed/proposed label rows; mock labels must use `provenance=mock_test_only` and auditor `mock-test-only`.
+- `--mock-mode oracle` follows the mock labels, `agree` selects the original correct answer/all-pass, and `reject` rejects everything. Oracle passes all gates; agree has zero sensitivity; reject has zero specificity and does not reward its unrelated criticism conservatively.
+- `npm run calibration -- --verify-labels <path> --auditor <name>` validates a human label file without running reviews or filling observations. It requires 40 rows, matching pack/fixture/content/PNG/SVG/fixture hashes, complete proposed and observed labels, known defect codes/fields/fact IDs, `provenance=human`, `human_verified=true`, exact auditor identity, and a valid non-future auditor time. Mock labels are rejected for this mode.
+- P40 pending CSV now includes `pack_hash`, empty observed/provenance/auditor fields, and `human_verified=false`; the P40 pack hash remains `b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f`.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/calibration/score.test.ts` | exit 0; 14 tests passed. |
+| `npm run calibration -- --mock --labels tests/fixtures/calibration/mock-labels.csv` | exit 0; 80 review calls, 0 generation calls, 80 transport requests, 40 observations; all four combinations pass with 10/10 denominators and 100% oracle sensitivity/specificity. |
+| `npm run calibration -- --mock --mock-mode agree --labels tests/fixtures/calibration/mock-labels.csv` | gates fail; every combination has 0 sensitivity and 1 specificity. |
+| `npm run calibration -- --mock --mock-mode reject --labels tests/fixtures/calibration/mock-labels.csv` | gates fail; every combination has 0 specificity and 0 conservative sensitivity. |
+| `npm run calibration -- --verify-labels <synthetic-human-test.csv> --auditor test-auditor` | validates 40 rows/hashes/auditor/time; does not run reviews. Mock labels are rejected with `--verify-labels`. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 42 files / 559 tests passed, build succeeded. |
+
+The focused suite covers 80 calls/zero generations, blind payload isolation, four matrices, all-ten denominators, oracle/agree/reject behaviour, wrong clean answers, unrelated criticism, wrong failing fields/fact IDs, all-abstain/errors, partial runs, Wilson intervals, label/pack/fixture hash failures, mock-vs-human provenance, auditor identity/time, and incomplete observed labels.
+
+**Manual acceptance steps**
+
+1. Run the exact commands below.
+2. Confirm the oracle report has `evidenceKind=mock`, `liveEligible=false`, 80 review calls, 0 generation calls, 40 observations, four combinations, and all gates pass.
+3. Run `--mock-mode agree`; confirm zero sensitivity and specificity 1, with failing sensitivity gates.
+4. Run `--mock-mode reject`; confirm zero specificity, failing gates, and zero conservative sensitivity despite the diagnostic matrix flagging defects.
+5. Run `--verify-labels` with a real human label file when available; confirm it validates hashes/auditor/time without filling observations. Confirm the mock label fixture is rejected as human evidence.
+6. Confirm no network, provider, or live reviewer call is made.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+npm run --silent calibration -- --mock --labels tests/fixtures/calibration/mock-labels.csv > /tmp/p41-oracle.json 2>/tmp/p41-oracle.err
+cat /tmp/p41-oracle.err
+node -e "const s=require('/tmp/p41-oracle.json'); console.log({evidence:s.evidenceKind,live:s.liveEligible,provenance:s.provenance,calls:s.reviewCalls,generations:s.generationCalls,observations:s.observations,coverage:s.coverage,gates:s.gates});"
+node -e "const s=require('/tmp/p41-oracle.json'); for (const [k,v] of Object.entries(s.combinations)) console.log(k,{matrix:v.matrix,decisive:v.decisive,conservative:v.conservative});"
+npm run --silent calibration -- --mock --mock-mode agree --labels tests/fixtures/calibration/mock-labels.csv > /tmp/p41-agree.json 2>/tmp/p41-agree.err
+npm run --silent calibration -- --mock --mock-mode reject --labels tests/fixtures/calibration/mock-labels.csv > /tmp/p41-reject.json 2>/tmp/p41-reject.err
+node -e "for (const name of ['agree','reject']) { const s=require('/tmp/p41-'+name+'.json'); console.log(name,{allPass:s.gates.allPass,combos:Object.fromEntries(Object.entries(s.combinations).map(([k,v])=>[k,{sens:v.conservative.sensitivity,spec:v.conservative.specificity,pass:v.conservative.pass}]))}); }"
+npm run --silent calibration -- --verify-labels tests/fixtures/calibration/mock-labels.csv --auditor test-auditor > /tmp/p41-verify.out 2>/tmp/p41-verify.err; test $? -ne 0
+grep -q "human provenance" /tmp/p41-verify.err
+npm run check
+```
+
+Expected: oracle has 80 calls, 0 generations, 40 observations, `live false`, `provenance mock_test_only`, coverage 40/40, all four gates true; agree has sensitivity 0/specificity 1 and gates false; reject has specificity 0 and gates false; `--verify-labels` rejects the mock fixture with a human-provenance error; `npm run check` ends with 42 files / 559 tests and a successful build.
+
+**Decision-reviewer:** the first static pass found two Medium scoring findings. First, the conservative blind numerator credited responses with an accepted issue code even when the diagnostic classifier treated the same response as an abstention (for example `ambiguity=uncertain`); fixed by requiring non-selected status, `ambiguity=present`, and a compatible issue code. Second, the conservative alignment numerator discarded a correct accepted-field/fact-ID detection when the response also failed an unrelated field; fixed by crediting an accepted-field/fact-ID failure while requiring at least one applicable non-accepted field to pass, which still prevents a reject-all response from earning credit. The review also noted P47 interface gaps; a stable `labelsHash` was added to the report and `--verify-labels` output, and `scoreCalibration` now rejects nonzero generation counts. A verification pass confirmed both fixes and the label-hash/generation guard, with no material residual findings; only the wording nit above was corrected.
+
+**Acceptance:** accepted by the user on 2026-11-06 after the focused 14-test suite, full `npm run check` (42 files / 559 tests), exact mock/verify script, oracle/agree/reject gate inspection, and label-hash validation. Mock/test-only evidence remains non-live; human label certification remains P47.
+
+**Out of scope, unchanged:** live calibration qualification, paid/live reviewer calls, human label certification (P47), freeze issuance, and business success claims.
