@@ -2585,3 +2585,63 @@ Expected: `mode: preview`, `production_audit: false`, 20 core/preview slots, 20 
 **Acceptance:** accepted by the user on 2026-11-06 after the focused 10-test suite, full `npm run check` (43 files / 569 tests), smoke preview artifact inspection, and append-only import/primary-immutability verification. Final smoke preview sample hash: `ec60c6250f9a6d94ff7e97578f22595c038a7992c947e5e4bfe031bd06ec6b4c`.
 
 **Out of scope, unchanged:** final proceed/revise/reject logic (P43), real human primary audit (P53), agent-generated approvals, new candidate generation, and population-accuracy claims.
+
+## P43. Protocol Freeze and Explicit Business-Decision Evaluator — 2026-11-06
+
+**State:** implemented, offline-verified, pure-gate tested, and accepted by the user on 2026-11-06. This phase adds the pre-run protocol freeze and the post-run proceed/revise/reject evaluator. It does not collect live evidence, approve expenditure, execute the primary cohort, or change measured outcomes.
+
+**Files**
+
+- Migration: `src/storage/migrations/0004_protocol_freezes.sql` (append-only hash-committed frozen protocols, USD 0.10 check, UPDATE/DELETE triggers)
+- Freeze gate: `src/experiment/freeze.ts` (`canFreezeProtocol`, `verifyFrozenProtocol`, `storeFrozenProtocol`, `getFrozenProtocol`, injected provenance provider)
+- Decision gate: `src/reporting/decision.ts` (`decideFinal`, every section 9.3 predicate, explicit pass/fail/not-evaluable reasons, strong-failure rejection, incomplete-evidence revise precedence, novelty/quality/missing-evidence caveats)
+- CLI: `src/cli/freeze.ts`; `package.json` adds `npm run freeze`
+- Tests: `tests/experiment/freeze.test.ts`
+- Documentation: `docs/decision-rules.md`, `README.md`, this file
+- Existing test update: `tests/storage/checkpoints.test.ts` now expects five migrations
+
+**Observable behavior**
+
+- `canFreezeProtocol` validates only pre-run evidence: immutable 200-slot full plan/seed/quota, live preflight with supported routes and a positive known price for every `REQUEST_ROLES` entry, price catalog and observation time, a 680-call forecast plus 160-approval projection/max/reserve with correct ordering, human-verified 40-fixture pack, live same-config calibration with 80 review calls/zero generations, four passing modality/role gates with 10/10 denominators, accepted completed live smoke coverage (20/20, 10 families, four roles, canonical smoke plan hash), configuration/prompt/schema/source/provenance agreement, and an authorized cap at least the largest forecast/reserve. It rejects mock/partial/stale/unverified evidence, plan/config drift, missing role prices, malformed/understated forecasts, insufficient cap, calibration gate/denominator failures, smoke gaps, and provenance mismatch.
+- A successful freeze returns a hash-committed `FrozenProtocol`; `storeFrozenProtocol` appends it to `protocol_freezes`, whose UPDATE/DELETE triggers reject mutation. Cap amendments are recorded as caveats and do not change the USD 0.10 threshold.
+- `decideFinal` evaluates the completed live 200-slot run, fixed 100 text/SVG denominators, canonical ten families and all `${family}/${lane}` cells, uniqueness/coverage, known-complete cost and USD 0.10 cost/approved, approved near-duplicate flags with required per-family and family/lane novelty/quality/missing-evidence disclosure, same-config live calibration with 10/10 denominators, completed human audit with independent total/approved inspectability denominators and cross-counter consistency, unresolved-defect/disagreement counts, routes, and the frozen protocol. Every predicate is emitted with `pass|fail|not_evaluable`, required and actual values.
+- Decision precedence: incomplete/non-live/missing-audit/unknown-cost/missing-frozen evidence → `revise`; otherwise strong failure (modality approval <50%, calibration sensitivity/specificity <50%, or repeatable correctness defect >=2 in one family) → `reject`; all predicates pass → `proceed`; other borderline/failed predicates → `revise`. Incomplete runs are never reported as definitive business rejection.
+- Near-duplicate approval shortfalls disclose novelty-only, additional-quality, and incomplete/failed-review categories separately without waiving the frozen approval floor. The audit is described as stratified/enriched, not an unbiased population estimate. Failed predicates and caveats are always emitted.
+- `npm run freeze -- --evidence <bundle.json> [--max-run-cost <usd>] [--db <path>] [--operator <name>]` validates a JSON bundle `{ "freeze": FreezeProtocolEvidence, "final"?: FinalDecisionEvidence }`, can append a successful frozen protocol to `protocol_freezes`, and prints the freeze result and optional decision. `--smoke`/`--calibration` IDs are future-facing; P43 refuses to invent live evidence and requires `--evidence` until P44/P48/P49 supply the real graph. No network or expenditure.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/experiment/freeze.test.ts` | exit 0; 18 tests passed. |
+| `npm run freeze -- --help` | exit 0; documents the evidence-bundle gate and future-facing IDs. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 44 files / 587 tests passed, build succeeded. |
+| Migration idempotence | repeated `migrate` records five versions; frozen protocol store/reload and UPDATE/DELETE rejection pass. |
+
+The focused suite hand-builds a complete pass and one-predicate failures for modality 79/100 vs 80/100 and 49/100 vs 50/100, family 9/20 vs 10/20, calibration sensitivity 8/10 vs 9/10 and specificity 7/10 vs 8/10 and reject 4/10 vs 5/10, cost/cap/forecast, missing/partial audit, sparse fingerprints, novelty-only vs quality/missing evidence, stale calibration/drift/mocks, route support, repeatable correctness, missing frozen protocol, and incomplete-run precedence.
+
+**Manual acceptance steps**
+
+1. Run the exact commands below.
+2. Inspect the focused test output; confirm the complete synthetic pass yields `proceed`, each one-predicate failure yields `revise` or `reject` with a readable failed predicate id, and incomplete evidence never yields `reject`.
+3. Run `npm run freeze -- --help`; confirm the CLI requires an evidence bundle and does not claim live collection.
+4. Confirm `npm run check` reports 44 files / 587 tests and five migrations.
+5. Confirm no network, paid, or live evidence collection occurred.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+npm exec -- vitest run tests/experiment/freeze.test.ts
+npm run freeze -- --help
+npm run check
+```
+
+Expected: focused 18 tests pass; freeze help exits 0 and mentions `--evidence`; full check ends with 44 files / 587 tests and a successful build. The focused suite is the exact non-UI proof of the synthetic complete pass and every one-predicate failure; no live network is needed.
+
+**Decision-reviewer:** the first static pass found six material findings. High: smoke evidence compared its 20-slot plan hash with the full 200-slot plan hash, making genuine live freeze impossible; fixed by comparing against the canonical smoke plan hash. Medium: reject thresholds used caller-supplied modality denominators; fixed to fixed 100 denominators with an explicit denominator predicate. Medium: family and per-family audit floors iterated only supplied family keys; fixed to the canonical ten families plus a family/lane completeness predicate. Medium: audit counters were not cross-validated and `approvedInspectable` was unused; fixed with an audit denominator consistency predicate, an approved-inspectable >=20 floor, and evaluability tied to consistent counters. Medium: freeze accepted partial role prices and an unvalidated forecast; fixed by requiring all six `REQUEST_ROLES`, adding the 680-call forecast amount, and enforcing forecast/reserve/cap ordering. Low: per-family/lane novelty attribution was dropped; fixed by requiring and emitting the by-family and family/lane near-duplicate breakdown. The review also noted P44/P48/P50/P53 interface risks; P43 now requires 10/10 calibration denominators and an explicit calibration denominator predicate, persists an optional frozen protocol with `--db` under the writer lock, supports an explicit `--operator`, and marks future `--smoke`/`--calibration` IDs as non-authoritative. The verification pass confirmed the six fixes and found six residual issues: a missing writer lock on `--db`, an unguarded malformed forecast conversion, an unbounded clarity numerator, a runtime-unchecked near-duplicate family/lane disclosure, undefined `approvedCoreByFamily` semantics, and stale observable-behavior bullets. The writer lock, decimal guard, clarity/unresolved bounds, near-disclosure predicate, interface documentation, and this record were corrected. The second verification pass then found three Low residuals: a stale 583-test count in manual acceptance, a TypeError path when a near-duplicate disclosure map was entirely absent, and an unguarded lock release that could skip database cleanup. The count was corrected to 587, both near-duplicate maps now default to empty objects with a readable failed predicate, and the CLI now closes the database before a guarded lock release. A final verification pass confirmed those residuals closed with no material findings.
+
+**Acceptance:** accepted by the user on 2026-11-06 after the focused 18-test suite, full `npm run check` (44 files / 587 tests), freeze CLI help, and synthetic complete-pass/one-predicate-failure inspection. P43 remains a pure gate: no live evidence collection, expenditure approval, or primary execution.
+
+**Out of scope, unchanged:** actually approving live expenditure, collecting live preflight/calibration/smoke/provenance evidence (P44/P46/P48/P49), running the primary cohort, and changing measured outcomes.
