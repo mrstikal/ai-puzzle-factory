@@ -2242,3 +2242,72 @@ Expected: report `planned 20`, `started 20`, `terminal 20`, `approved 20`, `atte
 **Acceptance:** accepted by the user on 2026-11-05 after the focused suite, the exact non-UI script, and the full `npm run check` evidence.
 
 **Out of scope, unchanged:** HTML gallery, browser acceptance, calibration scoring, audit labels, business success claims, and any paid provider request.
+
+## P38. Static Offline HTML Gallery — 2026-11-06
+
+**State:** implemented, offline-verified, browser-checked from `file://`, and accepted by the user on 2026-11-06. This phase adds a static gallery over committed SQLite snapshots. It does not add browser automation, live execution, calibration scoring, or business success claims.
+
+**Files**
+
+- Gallery: `src/reporting/html.ts`
+- Fixed assets: `src/reporting/assets/report.css`, `src/reporting/assets/report.js`
+- CLI integration: `src/cli/report.ts` (metrics stdout preserved; gallery path on stderr)
+- Export reuse: `src/reporting/export.ts` (exported `buildCandidateRows`, `buildRequestRows`, `resolveRunDirectory`, `writeAtomicFile`)
+- Build: `scripts/copy-assets.mjs` (copies the reporting assets into `dist/reporting/assets`)
+- Tests: `tests/reporting/html.test.ts`, `tests/reporting/fixtures.ts` (optional hostile-text, live-evidence, blind-disagreement, and alignment-outcome fixture options)
+- Documentation: `README.md` and this file
+
+**Observable behavior**
+
+- `npm run report -- --run <run-id>` still writes the exact P37 metrics JSON to stdout and now writes `data/runs/<run-id>/report.html` plus `data/runs/<run-id>/images/<slot-id>.png|svg` for every referenced artifact. The absolute gallery path is printed on stderr. The metrics are emitted before the gallery write, so a gallery write failure cannot suppress the read-only metrics contract.
+- The gallery contains one card for every planned slot, including unstarted slots, early failures, review failures, and terminal failures. Each card shows its status badge, family/modality/lane/difficulty/stage badges, alignment outcome when available, public question/rules/clues/options, the local PNG (or an SVG-only fallback), visible failure records and evidence, and closed-by-default reveal sections for key/hint/explanation, proof/fingerprint/terminal payload, blind/alignment/duplicate reviews, and cost/failure/provenance details.
+- Filters cover modality, family, lane, status, difficulty, and reviewer disagreement. Disagreement means a blind reviewer chose a different option or the committed `REVIEWER_DISAGREES` failure exists; an alignment non-pass is shown separately as an `alignment fail|uncertain` badge and is not treated as reviewer disagreement. Native `<select>`, `<details>`, `<button>`, and `<dialog>` controls provide keyboard-accessible filtering, reveal-all/hide-all, and full-image zoom.
+- Mock/live and incomplete-run banners are derived from the committed run. The header shows planned/started/terminal/approved/rejected/inconclusive/generation-error/unstarted counts, known and actual cost with an explicit cost status, and unknown-attempt counts. A zero-attempt run renders `not applicable`, never `unknown`, for actual cost.
+- All model-authored text is HTML-escaped in text and attribute contexts. The embedded `application/json` report block escapes `<`, `>`, `&`, U+2028, and U+2029, so `</script>` cannot terminate the block. The fixed CSS and JavaScript are inlined with generated SHA-256 CSP hashes; the meta CSP is `default-src 'none'; base-uri 'none'; form-action 'none'; img-src 'self' data:; style-src 'sha256-…'; script-src 'sha256-…'`. There is no fetch, CDN, stylesheet link, or remote resource. The only non-image data URI is a local favicon.
+- The layout uses a responsive card grid and a 640px media query. At a 360px viewport the card and image widths stay inside the viewport with zero horizontal overflow.
+
+**Verification commands and results**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/reporting/html.test.ts` | exit 0; 1 file / 11 tests passed. |
+| `npm exec -- vitest run tests/reporting/metrics.test.ts tests/reporting/export.test.ts` | exit 0; 2 files / 13 tests passed after the shared fixture changes. |
+| `npm run check` | exit 0; ESLint clean, `tsc --noEmit` clean, Vitest 40 files / 534 tests passed, build succeeded. |
+| `npm run --silent report -- --run 6732cab0-3f25-4183-acd9-4253cc9ada9f` | metrics unchanged: 20 planned/started/terminal/approved, 70 attempts, known/actual `0`, unknown `0`; printed `report.html /home/alex/ai-puzzle-factory/data/runs/6732cab0-3f25-4183-acd9-4253cc9ada9f/report.html`. |
+| Gallery artifact check | `report.html` 454,561 bytes, SHA-256 `11c8165ff5c980a678e3afb1a4a001aaf242f8e9c056bf1e3e465f5c40e86507`; 20 cards; 80 closed reveal sections; 20 image files (10 PNG + 10 SVG). |
+| Headless Chrome `file://` check | 20 cards, 80 details closed on load, SVG card PNG loaded at 1024x1024, modality filter left 10 SVG cards, reveal-all opened 80, zoom dialog opened a 1024px image and closed, no console errors, 360px horizontal overflow `0`. |
+
+The focused suite asserts card-per-planned-slot coverage, failure visibility, closed reveal sections, CSP hash equality for the inline CSS/JS, hostile `</script>`/attribute escaping, parseable embedded JSON, local image paths and files, all six filters, keyboard controls, mock/live/incomplete banners, per-card cost/status/provenance, alignment-versus-disagreement separation, zero-attempt cost semantics, deterministic rewrite, and invalid/unknown run rejection. It does not assert browser layout or CSP enforcement; those were checked manually in headless Chrome.
+
+**Manual acceptance steps**
+
+1. Run the exact commands below and open the printed `report.html` directly from the filesystem (not through a server).
+2. Confirm the header shows the mock banner, 20 planned/terminal/approved cards, cost status `known`, and no incomplete banner.
+3. Reveal key/hint/explanation on an approved text card and on an SVG card; confirm the key/hint/explanation appear only after opening the section.
+4. Filter modality to `svg`, confirm 10 cards remain; reset; filter family, lane, status, difficulty, and disagreement and confirm card membership changes.
+5. Zoom an SVG card image; confirm the full-size PNG opens and Escape or Close returns to the gallery.
+6. Scroll to `text-ranking-02` (generation error) and `text-truth-01` (rejected) and confirm their failure codes and evidence are visible without opening a reveal section.
+7. Resize the window to 360px wide and confirm there is no horizontal scrolling and images stay inside cards.
+
+**Exact non-UI acceptance script**
+
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.22.2
+cd /home/alex/ai-puzzle-factory
+RUN_ID=6732cab0-3f25-4183-acd9-4253cc9ada9f
+npm run --silent report -- --run "$RUN_ID" > /tmp/p38-report.json 2>/tmp/p38-report.err
+cat /tmp/p38-report.err
+node -e "const m=require('/tmp/p38-report.json'); console.log({planned:m.counts.planned,started:m.counts.started,terminal:m.counts.terminal,approved:m.counts.approved,attempts:m.cost.attempts,known:m.cost.knownActualUsd,actual:m.cost.actualCostUsd,unknown:m.cost.unknownAttempts});"
+DIR="data/runs/$RUN_ID"
+test -f "$DIR/report.html"
+test "$(ls "$DIR/images" | wc -l)" -eq 20
+node -e "const fs=require('fs'); const html=fs.readFileSync(process.argv[1],'utf8'); const count=(re)=>(html.match(re)||[]).length; const script=html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/)[1]; const hash=require('crypto').createHash('sha256').update(script,'utf8').digest('base64'); console.log({cards:count(/<article class=\"card\"/g),details:count(/<details class=\"reveal\"/g),open:count(/<details class=\"reveal\"[^>]* open/g),filters:count(/data-filter=/g),pngPaths:count(/src=\"images\/[^\"]+\.png\"/g),cspHash:html.includes('sha256-'+hash),remote:/https?:\/\//.test(html),fetch:html.includes('fetch(')});" "$DIR/report.html"
+```
+
+Expected: metrics `planned 20`, `started 20`, `terminal 20`, `approved 20`, `attempts 70`, `known 0`, `actual 0`, `unknown 0`; `report.html` exists; 20 image files; card count `20`, details `80`, open `0`, filters `6`, PNG paths `10`, `cspHash true`, `remote false`, `fetch false`.
+
+**Decision-reviewer:** the first static pass found three Low implementation findings and one Medium verification-record gap. The implementation findings were: the disagreement filter conflated alignment failure with blind reviewer disagreement; the report CLI emitted metrics only after the gallery write, so an unwritable output root suppressed the P37 stdout contract; and the run header rendered a zero-attempt known-zero cost as `unknown`. The fixes restrict disagreement to blind `disagreed`/`REVIEWER_DISAGREES`, add a separate alignment badge, emit metrics before the gallery write, and render `not applicable` plus an explicit cost-status item for zero attempts. The verification-record gap was the absence of a P38 entry and of direct `file://` evidence; this entry records the headless Chrome `file://` check above. A verification pass confirmed all four fixes and found no material findings; it noted only a non-material per-card cost wording inconsistency, now removed by sharing the cost formatter. Focused suite: 11 tests; full `npm run check`: 40 files / 534 tests.
+
+**Acceptance:** accepted by the user on 2026-11-06 after the focused suite, the exact non-UI script, the full `npm run check` evidence, and the direct `file://` browser check.
+
+**Out of scope, unchanged:** automated Playwright/browser acceptance (P39), full/live runs, calibration scoring, audit labels, business success claims, and any paid provider request.

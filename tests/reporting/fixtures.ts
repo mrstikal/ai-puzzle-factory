@@ -96,6 +96,7 @@ function presentationPayload(
     svgHash: null,
     pngHash: null,
   },
+  hostile = false,
 ): unknown {
   return {
     presentation: {
@@ -104,9 +105,18 @@ function presentationPayload(
         family: planSlot.family,
         modality: planSlot.modality,
         question,
-        rules: ["Fixture rule"],
+        rules: [
+          hostile
+            ? `</style><script>alert("rule")</script>`
+            : "Fixture rule",
+        ],
         options: [
-          { label: "A", text: "Option A" },
+          {
+            label: "A",
+            text: hostile
+              ? `Option A "><img src=x onerror=alert(1)>`
+              : "Option A",
+          },
           { label: "B", text: "Option B" },
           { label: "C", text: "Option C" },
           { label: "D", text: "Option D" },
@@ -116,8 +126,14 @@ function presentationPayload(
       reveal: {
         correctLabel: "A",
         hint,
-        explanationSteps: ["Fixture explanation."],
-        proof: "Fixture proof.",
+        explanationSteps: [
+          hostile
+            ? `</script><script>alert("explanation")</script>`
+            : "Fixture explanation.",
+        ],
+        proof: hostile
+          ? `</script>proof<script>alert(1)</script>`
+          : "Fixture proof.",
       },
     },
   };
@@ -353,7 +369,13 @@ function addCall(
 
 export function createSyntheticRun(
   db: Database.Database,
-  options: { readonly includeVisual?: boolean } = {},
+  options: {
+    readonly includeVisual?: boolean;
+    readonly hostileHtml?: boolean;
+    readonly blindDisagreement?: boolean;
+    readonly alignmentOutcome?: "pass" | "fail" | "uncertain";
+    readonly evidenceKind?: "mock" | "live";
+  } = {},
 ): SyntheticFixture {
   const plan = buildPlanManifest({ runKind: "smoke" });
   const runId = FIXTURE_RUN_ID;
@@ -361,7 +383,7 @@ export function createSyntheticRun(
   createRun(db, {
     runId,
     plan,
-    evidenceKind: "mock",
+    evidenceKind: options.evidenceKind ?? "mock",
     createdAt: FIXTURE_CREATED_AT,
   });
   createBudgetAccount(db, {
@@ -388,13 +410,43 @@ export function createSyntheticRun(
     runId,
     a.slotId,
     "presentation_ready",
-    presentationPayload(a, "=cmd|' /C calc'!A0", "  +SUM(1,1)"),
+    presentationPayload(
+      a,
+      options.hostileHtml === true
+        ? `</script><script>alert("question")</script><img src=x onerror="alert(1)">`
+        : "=cmd|' /C calc'!A0",
+      options.hostileHtml === true
+        ? `" onmouseover="alert(1)" <svg onload=alert(1)>`
+        : "  +SUM(1,1)",
+      { svgHash: null, pngHash: null },
+      options.hostileHtml === true,
+    ),
     50,
     30,
   );
   insertStage(db, runId, a.slotId, "duplicate_checked", duplicatePayload(a, "unique"), 90, 5);
-  insertStage(db, runId, a.slotId, "blind_reviewed", blindPayload(true, "agreed", "none"), 100, 40);
-  insertStage(db, runId, a.slotId, "alignment_reviewed", alignmentPayload(true, "pass"), 150, 50);
+  insertStage(
+    db,
+    runId,
+    a.slotId,
+    "blind_reviewed",
+    blindPayload(
+      true,
+      options.blindDisagreement === true ? "disagreed" : "agreed",
+      "none",
+    ),
+    100,
+    40,
+  );
+  insertStage(
+    db,
+    runId,
+    a.slotId,
+    "alignment_reviewed",
+    alignmentPayload(true, options.alignmentOutcome ?? "pass"),
+    150,
+    50,
+  );
   insertStage(db, runId, a.slotId, "terminal", terminalPayload("approved", []), 210, 5, "approved");
   addCall(db, {
     runId,

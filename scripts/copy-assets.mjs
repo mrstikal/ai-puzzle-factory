@@ -14,6 +14,11 @@ const promptsDestination = join(projectRoot, "dist", "ai", "prompts");
 mkdirSync(promptsDestination, { recursive: true });
 cpSync(promptsSource, promptsDestination, { recursive: true });
 
+const reportingSource = join(projectRoot, "src", "reporting", "assets");
+const reportingDestination = join(projectRoot, "dist", "reporting", "assets");
+mkdirSync(reportingDestination, { recursive: true });
+cpSync(reportingSource, reportingDestination, { recursive: true });
+
 const assetsSource = join(projectRoot, "assets");
 const assetsDestination = join(projectRoot, "dist", "assets");
 mkdirSync(assetsDestination, { recursive: true });

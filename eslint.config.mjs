@@ -24,6 +24,14 @@ export default tseslint.config(
     },
   },
   {
+    files: ["src/reporting/assets/*.js"],
+    languageOptions: {
+      globals: {
+        document: "readonly",
+      },
+    },
+  },
+  {
     files: ["tests/**/*.ts"],
     rules: {
       "@typescript-eslint/no-non-null-assertion": "off",

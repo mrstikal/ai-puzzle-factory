@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
+import { writeHtmlReport } from "../reporting/html.js";
 import { computeRunMetrics } from "../reporting/metrics.js";
 import { openDatabase } from "../storage/database.js";
 
@@ -13,7 +14,7 @@ interface ReportOptions {
 export function createReportProgram(): Command {
   return new Command()
     .name(PROGRAM_NAME)
-    .description("Print exact metrics for a committed run as JSON.")
+    .description("Print exact metrics for a committed run and write its offline HTML gallery.")
     .requiredOption("--run <run-id>", "run UUID to report")
     .option("--db <path>", "SQLite path (default: data/experiment.sqlite)")
     .showHelpAfterError()
@@ -25,6 +26,8 @@ export function createReportProgram(): Command {
       try {
         const metrics = computeRunMetrics(db, options.run);
         process.stdout.write(`${JSON.stringify(metrics, null, 2)}\n`);
+        const html = writeHtmlReport(db, options.run);
+        process.stderr.write(`report.html ${html.htmlPath}\n`);
       } finally {
         db.close();
       }

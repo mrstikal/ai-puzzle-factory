@@ -370,6 +370,27 @@ function buildCandidateRow(
   });
 }
 
+export function buildCandidateRows(
+  db: Database.Database,
+  runId: string,
+): CandidateExportRow[] {
+  const slots = listSlots(db, runId);
+  const stagesBySlot = new Map<string, Map<WorkflowStage, StageResultRecord>>();
+  for (const stage of listStageResults(db, runId)) {
+    const map = stagesBySlot.get(stage.slotId) ?? new Map();
+    map.set(stage.stage, stage);
+    stagesBySlot.set(stage.slotId, map);
+  }
+  return slots.map((slot) =>
+    buildCandidateRow(
+      db,
+      runId,
+      slot,
+      stagesBySlot.get(slot.slotId) ?? new Map(),
+    ),
+  );
+}
+
 function hasCalls(db: Database.Database, runId: string, slotId: string): boolean {
   return (
     db
@@ -396,7 +417,7 @@ function hasArtifact(
   }
 }
 
-function buildRequestRows(
+export function buildRequestRows(
   db: Database.Database,
   runId: string,
 ): RequestExportRow[] {
@@ -616,7 +637,7 @@ function buildResultsCsv(rows: readonly CandidateExportRow[]): string {
   return `${lines.join("\n")}\n`;
 }
 
-function resolveRunDirectory(runId: string, outputRoot: string): string {
+export function resolveRunDirectory(runId: string, outputRoot: string): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(runId)) {
     throw new ExportError("UNSAFE_PATH", `invalid run UUID: ${runId}`);
   }
@@ -628,7 +649,7 @@ function resolveRunDirectory(runId: string, outputRoot: string): string {
   return directory;
 }
 
-function writeAtomic(path: string, data: string | Buffer): void {
+export function writeAtomicFile(path: string, data: string | Buffer): void {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   writeFileSync(temporary, data);
@@ -654,7 +675,6 @@ export function exportRun(
   const directory = resolveRunDirectory(runId, outputRoot);
   mkdirSync(directory, { recursive: true });
   const files: string[] = [];
-  const slots = listSlots(db, runId);
   const stageRows = listStageResults(db, runId);
   const stagesBySlot = new Map<string, Map<WorkflowStage, StageResultRecord>>();
   for (const stage of stageRows) {
@@ -662,19 +682,12 @@ export function exportRun(
     map.set(stage.stage, stage);
     stagesBySlot.set(stage.slotId, map);
   }
-  const candidateRows = slots.map((slot) =>
-    buildCandidateRow(
-      db,
-      runId,
-      slot,
-      stagesBySlot.get(slot.slotId) ?? new Map(),
-    ),
-  );
+  const candidateRows = buildCandidateRows(db, runId);
   const requestRows = buildRequestRows(db, runId);
   const metrics: RunMetrics = computeRunMetrics(db, runId);
 
   const manifestPath = join(directory, "manifest.json");
-  writeAtomic(
+  writeAtomicFile(
     manifestPath,
     `${JSON.stringify(
       {
@@ -697,18 +710,18 @@ export function exportRun(
   );
   files.push(manifestPath);
   const summaryPath = join(directory, "summary.json");
-  writeAtomic(summaryPath, `${JSON.stringify(metrics, null, 2)}\n`);
+  writeAtomicFile(summaryPath, `${JSON.stringify(metrics, null, 2)}\n`);
   files.push(summaryPath);
 
   if (format === "all" || format === "jsonl") {
     const candidatesPath = join(directory, "candidates.jsonl");
-    writeAtomic(
+    writeAtomicFile(
       candidatesPath,
       `${candidateRows.map((row) => JSON.stringify(row)).join("\n")}\n`,
     );
     files.push(candidatesPath);
     const requestsPath = join(directory, "requests.jsonl");
-    writeAtomic(
+    writeAtomicFile(
       requestsPath,
       `${requestRows.map((row) => JSON.stringify(row)).join("\n")}\n`,
     );
@@ -716,7 +729,7 @@ export function exportRun(
   }
   if (format === "all" || format === "csv") {
     const resultsPath = join(directory, "results.csv");
-    writeAtomic(resultsPath, buildResultsCsv(candidateRows));
+    writeAtomicFile(resultsPath, buildResultsCsv(candidateRows));
     files.push(resultsPath);
   }
   if (format === "all") {
@@ -724,7 +737,7 @@ export function exportRun(
     const imageDirectory = join(directory, "images");
     for (const row of candidateRows) {
       const puzzlePath = join(puzzleDirectory, `${row.slotId}.json`);
-      writeAtomic(puzzlePath, `${JSON.stringify(row, null, 2)}\n`);
+      writeAtomicFile(puzzlePath, `${JSON.stringify(row, null, 2)}\n`);
       files.push(puzzlePath);
       const formal = objectValue(
         stagesBySlot.get(row.slotId)?.get("formal_checked")?.payload,
@@ -736,7 +749,7 @@ export function exportRun(
         try {
           const artifact = getArtifact(db, svgHash, "svg");
           const path = join(imageDirectory, `${row.slotId}.svg`);
-          writeAtomic(path, artifact.bytes);
+          writeAtomicFile(path, artifact.bytes);
           files.push(path);
         } catch (error) {
           if (!(error instanceof StorageError) || error.code !== "NOT_FOUND") {
@@ -748,7 +761,7 @@ export function exportRun(
         try {
           const artifact = getArtifact(db, pngHash, "png");
           const path = join(imageDirectory, `${row.slotId}.png`);
-          writeAtomic(path, artifact.bytes);
+          writeAtomicFile(path, artifact.bytes);
           files.push(path);
         } catch (error) {
           if (!(error instanceof StorageError) || error.code !== "NOT_FOUND") {
