@@ -2878,3 +2878,53 @@ The fresh copy completed with 47 files / 606 tests, the same full-run counts (`2
 **Acceptance:** accepted by the user on 2026-11-06 after the three live probes succeeded 3/3 with valid strict schemas, vision interpretation, observed providers OpenAI/Mistral/Alibaba, and known final-run cost USD 0.0251434 (total known spend USD 0.071628282 under the USD 0.50 cap). No further live call is required.
 
 **Out of scope, unchanged:** calibration, all-family generation smoke, primary experiment, and any live claim beyond these three compatibility probes.
+
+## P47. Human Verification of All Calibration Labels — 2026-11-06
+
+**State:** `HUMAN-VERIFIED / ACCEPTED BY USER ON 2026-11-06`. The auditor Lexa completed all 40 labels and `--verify-labels` accepted the file; the agent did not inspect/solve fixtures on behalf of the auditor or fill observations. P46 and P47 are accepted.
+
+**Files**
+
+- `data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/pack.json` (unchanged)
+- `data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/labels.pending.csv` (preserved pending template)
+- `data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/labels.human.csv` (human-completed: 40/40 verified, labels hash `be359e39350c6e79dc4aeea36651c512726151d569f39a6b35f5ce935730948b`, auditor Lexa, time `2026-11-06T21:01:19.685Z`)
+- `data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/gallery.html` (visible-only gallery for human inspection)
+- `docs/calibration-labeling.md` (P47 human gate instructions)
+- `docs/PROGRESS.md` (this entry)
+
+**Observable behavior**
+
+- `npm run calibration -- --prepare` deterministically rebuilt the current pack: 40 fixtures, 20 sound/20 defective, pack hash `b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f`.
+- The preserved `labels.pending.csv` still has the header plus 40 pending rows and SHA-256 `c976ff71e8acc7aca581dc25149526f6019739c5fdf32efdd0e52a71317a673a`. The human file has 40/40 completed rows: 20 sound / 20 defective, 20 text / 20 SVG, all 10 families, provenance `human`, `human_verified=true`, auditor `Lexa`, one auditor time, and no empty observed blind/alignment results. All 40 observed blind and alignment results match the proposed evidence, so no P40 revision was required.
+- `npm run calibration -- --verify-labels .../labels.human.csv --auditor Lexa` now exits 0 with `labels_verified:true`, `fixtures:40`, labels hash `be359e...`, provenance `human`, and `human_verified:true`.
+- The human must inspect/solve all 40 actual presentations, including rasterized PNGs, and verify proposed ground truth and mutation evidence. To avoid 240 manual cells, the human fills only `observed_blind_result` for each of the 40 rows as the per-row attestation. `npm run calibration -- --accept-proposed --labels <labels.human.csv> --auditor Lexa` then fills the remaining dependent `observed_*` cells from proposed evidence (40 human-attested / 108 machine-filled / 92 empty in the current pack), and marks `provenance=human`, `human_verified=true`, and the auditor/time. The helper refuses the pending template, mock fixtures, already-attested files, and any row without a human blind result. The human must run it only after review; the agent must not run it on the real file. Any faulty/ambiguous fixture must return to P40 for a new pack hash and fresh human verification; a disagreeing observed value cannot be forced through `--verify-labels`.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm run calibration -- --prepare` | exit 0; 40 fixtures, 20 sound/20 defective, pack hash `b2de955...` |
+| `npm exec -- vitest run tests/calibration/fixtures.test.ts tests/calibration/score.test.ts` | exit 0; 2 files / 25 tests passed |
+| `npm run calibration -- --verify-labels .../labels.human.csv --auditor Lexa` | exit 0; 40/40 verified, labels hash `be359e...`, auditor Lexa, human provenance |
+| `npm run calibration -- --accept-proposed --labels /tmp/p47-helper-test.csv --auditor Lexa` | exit 0; 40 reviewed rows, 40 human-attested cells, 108 machine-filled cells, 92 empty cells; temp copy verified by `--verify-labels` |
+| `npm exec -- vitest run tests/calibration/score.test.ts` | exit 0; 15 tests passed, including accept-proposed helper |
+| `npm run check` | exit 0; 47 files / 613 tests passed after the accept-proposed helper was added. |
+
+**Manual acceptance:** the human auditor explicitly accepted all 40 sound/defective labels and expected blind/alignment outcomes for the displayed pack version; `--verify-labels` accepted the file with one auditor/time and human provenance. The agent validated completeness, hashes, and structural consistency only.
+
+**Exact human verification commands**
+
+```bash
+npm run calibration -- --verify-labels \
+  data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/labels.human.csv \
+  --auditor Lexa
+npm exec -- vitest run tests/calibration/fixtures.test.ts tests/calibration/score.test.ts
+```
+
+Expected after human completion: `labels_verified: true`, 40 fixtures, matching pack hash, stable label-set hash, one auditor/time, and human provenance. Missing/uncertain labels or a disagreement with the pack remain blocked; do not overwrite proposed truth.
+
+**Decision-reviewer:** the first static pass found seven issues in the initial convenience helper: it could stamp unreviewed rows as human-verified; it accepted mock/pending inputs and could overwrite the pending template; fill/preserve counts were row-level; per-row auditor/time was overwritten; an explicit empty correct label was treated as blank; the printed labels hash could differ from the serialized file; and the docs described a disagreement override that `--verify-labels` rejects. All were fixed: the helper now requires a non-empty `observed_blind_result` on every row, rejects pending/mock/already-attested inputs, writes through a temporary file and validates the re-parsed artifact, computes the printed hash from the re-parsed file, preserves non-empty dependent cells and per-row times, uses the single required auditor, handles defective rows without a correct label, and documents that disagreements block and require a new P40 pack. A verification pass then found two Low residuals: the counters did not distinguish human-authored from machine-filled cells, and a human-entered defect code on a `correct` row was silently discarded. The counters now report human-attested / machine-filled / empty cells, and a contradictory defect-code entry is preserved so `--verify-labels` rejects it. The focused helper test and a temp reviewed-copy CLI run pass; the real human file remains empty. A final verification pass found no material findings. P47 is accepted.
+
+**Acceptance:** accepted by the user on 2026-11-06 after the human-completed 40/40 label file, `--verify-labels` exit 0 with labels hash `be359e39350c6e79dc4aeea36651c512726151d569f39a6b35f5ce935730948b`, focused 25 tests, and full `npm run check` 47 files / 613 tests. No further human label work is required.
+
+**Out of scope, unchanged:** automatic human approval, reviewer calls, tuning to reviewer answers, live calibration qualification (P48), and any live claim beyond the human-verified label file.

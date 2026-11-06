@@ -1,10 +1,18 @@
-import { readFileSync } from "node:fs";
+import {
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
 import { buildCalibrationPack } from "../calibration/fixtures.js";
 import {
+  acceptProposedLabels,
   calibrationLabelsHash,
   parseCalibrationLabelsCsv,
+  renderCalibrationLabelsCsv,
   validateCalibrationLabels,
 } from "../calibration/labels.js";
 import { writeCalibrationPack } from "../calibration/pack.js";
@@ -23,7 +31,9 @@ interface CalibrationOptions {
   readonly mockMode?: string;
   readonly labels?: string;
   readonly verifyLabels?: string;
+  readonly acceptProposed?: boolean;
   readonly auditor?: string;
+  readonly auditorTime?: string;
   readonly out?: string;
 }
 
@@ -66,31 +76,173 @@ export function createProgram(): Command {
     .option("--mock-mode <mode>", "mock reviewer mode: oracle, agree, or reject", "oracle")
     .option("--labels <path>", "calibration label CSV")
     .option("--verify-labels <path>", "validate a human-verified label CSV without running reviews")
-    .option("--auditor <name>", "auditor identity required with --verify-labels")
+    .option("--accept-proposed", "after human review, fill blank observed_* fields from proposed_* and mark the file human-verified")
+    .option("--auditor <name>", "auditor identity required with --verify-labels or --accept-proposed")
+    .option("--auditor-time <iso>", "auditor timestamp for --accept-proposed (default: now)")
     .option("--out <dir>", "output root for --prepare (default: data/calibration)")
     .action(async (options: CalibrationOptions) => {
       const modes = [
         options.prepare === true,
         options.mock === true,
         options.verifyLabels !== undefined,
+        options.acceptProposed === true,
       ].filter(Boolean);
       if (modes.length !== 1) {
         program.error(
-          "choose exactly one of --prepare, --mock, or --verify-labels",
+          "choose exactly one of --prepare, --mock, --verify-labels, or --accept-proposed",
           { exitCode: 1 },
         );
         return;
       }
       if (options.prepare === true) {
-        if (options.labels !== undefined || options.auditor !== undefined) {
-          program.error("--prepare does not accept --labels or --auditor", {
-            exitCode: 1,
-          });
+        if (
+          options.labels !== undefined ||
+          options.auditor !== undefined ||
+          options.auditorTime !== undefined
+        ) {
+          program.error(
+            "--prepare does not accept --labels, --auditor, or --auditor-time",
+            { exitCode: 1 },
+          );
           return;
         }
         const built = buildCalibrationPack();
         const paths = writeCalibrationPack(built, options.out ?? "data/calibration");
         printPackSummary(built, paths);
+        return;
+      }
+      if (options.acceptProposed === true) {
+        const auditor = options.auditor;
+        if (auditor === undefined || auditor.trim() === "") {
+          program.error("--accept-proposed requires --auditor", { exitCode: 1 });
+          return;
+        }
+        if (options.labels === undefined) {
+          program.error("--accept-proposed requires --labels <path>", {
+            exitCode: 1,
+          });
+          return;
+        }
+        if (options.mock === true || options.verifyLabels !== undefined) {
+          program.error(
+            "--accept-proposed cannot be combined with --mock or --verify-labels",
+            { exitCode: 1 },
+          );
+          return;
+        }
+        const labelsPath = resolve(options.labels);
+        const labelsName = basename(labelsPath);
+        if (
+          labelsName === "labels.pending.csv" ||
+          labelsName.includes("mock-labels")
+        ) {
+          program.error(
+            "--accept-proposed refuses the pending template or a mock label fixture; use a human workspace copy",
+            { exitCode: 1 },
+          );
+          return;
+        }
+        const built = buildCalibrationPack();
+        const labels = readLabels(labelsPath);
+        const nonPending = labels.rows.filter(
+          (row) => row.provenance !== "" || row.humanVerified,
+        );
+        if (nonPending.length > 0) {
+          program.error(
+            `--accept-proposed requires pending rows; already attested: ${nonPending
+              .map((row) => row.fixtureId)
+              .join(", ")}`,
+            { exitCode: 1 },
+          );
+          return;
+        }
+        const auditorTime = options.auditorTime ?? new Date().toISOString();
+        const nonEmpty = (value: unknown): boolean =>
+          Array.isArray(value)
+            ? value.length > 0
+            : value !== null && value !== "";
+        const cellValues = (row: (typeof labels.rows)[number]): unknown[] => [
+          row.observedBlindResult,
+          row.observedCorrectLabel,
+          row.observedDefectCodes,
+          row.observedAlignmentResult,
+          row.observedFailingFields,
+          row.observedFactIds,
+        ];
+        let humanAttestedCells = 0;
+        let machineFilledCells = 0;
+        let emptyCells = 0;
+        const acceptedForCounts = acceptProposedLabels(labels, {
+          auditor,
+          auditorTime,
+        });
+        for (let index = 0; index < labels.rows.length; index += 1) {
+          const before = cellValues(labels.rows[index] as (typeof labels.rows)[number]);
+          const after = cellValues(
+            acceptedForCounts.rows[index] as (typeof acceptedForCounts.rows)[number],
+          );
+          for (let cell = 0; cell < before.length; cell += 1) {
+            if (nonEmpty(before[cell])) {
+              humanAttestedCells += 1;
+            } else if (nonEmpty(after[cell])) {
+              machineFilledCells += 1;
+            } else {
+              emptyCells += 1;
+            }
+          }
+        }
+        const accepted = acceptProposedLabels(labels, {
+          auditor,
+          auditorTime,
+        });
+        validateCalibrationLabels({
+          labels: accepted,
+          pack: built.pack,
+          mode: "verify",
+          auditor,
+        });
+        const temporaryPath = `${labelsPath}.tmp-${process.pid}`;
+        try {
+          writeFileSync(
+            temporaryPath,
+            renderCalibrationLabelsCsv(accepted.rows),
+          );
+          const reparsed = parseCalibrationLabelsCsv(
+            readFileSync(temporaryPath, "utf8"),
+          );
+          validateCalibrationLabels({
+            labels: reparsed,
+            pack: built.pack,
+            mode: "verify",
+            auditor,
+          });
+          renameSync(temporaryPath, labelsPath);
+          process.stdout.write(
+            `${JSON.stringify(
+              {
+                labels_accepted: true,
+                path: labelsPath,
+                pack_hash: reparsed.packHash,
+                labels_hash: calibrationLabelsHash(reparsed),
+                fixtures: reparsed.rows.length,
+                reviewed_rows: reparsed.rows.length,
+                human_attested_cells: humanAttestedCells,
+                machine_filled_cells: machineFilledCells,
+                empty_cells: emptyCells,
+                auditor,
+                auditor_time: [
+                  ...new Set(reparsed.rows.map((row) => row.auditorTime)),
+                ],
+                provenance: "human",
+                human_verified: true,
+              },
+              null,
+              2,
+            )}\n`,
+          );
+        } finally {
+          rmSync(temporaryPath, { force: true });
+        }
         return;
       }
       if (options.verifyLabels !== undefined) {

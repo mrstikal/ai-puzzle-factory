@@ -93,3 +93,45 @@ npm run check
 ```
 
 The focused suite checks composition, family/modality balance, seed disjointness, deterministic hashes, pending human fields, duplicate/option consequences, the family-specific corruption evidence, local artifact hashes, gallery/label generation, and rejection of a defective mutation that still leaves one clear valid offered answer.
+
+## P47 human verification gate (completed and accepted 2026-11-06)
+
+P47 is a human-only gate. The auditor Lexa completed the review and `--verify-labels` accepted the file on 2026-11-06. The agent prepared the workspace and validated structure/hashes; it did not fill the observations.
+
+Current pack:
+
+- Pack hash: `b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f`
+- Pack: `data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/pack.json`
+- Pending template (unchanged): `data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/labels.pending.csv`
+- Human-completed file: `data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/labels.human.csv` (40/40 verified, labels hash `be359e39350c6e79dc4aeea36651c512726151d569f39a6b35f5ce935730948b`, auditor `Lexa`, time `2026-11-06T21:01:19.685Z`)
+- Visible gallery: `data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/gallery.html`
+
+The human auditor must:
+
+1. Open the gallery and inspect/solve all 40 presentations, including every rasterized PNG.
+2. Compare the visible presentation and mutation evidence with the proposed blind/alignment outcome. `proposed_*` fields are agent evidence, not approval.
+3. Do **not** type 240 observed cells by hand. After reviewing each fixture, fill its `observed_blind_result` (`correct`, `defect`, or `no_unique`) in `labels.human.csv`; that is the per-row human review attestation. The helper refuses any row whose blind result is blank.
+4. Run the explicit acceptance helper below. It fills only the remaining blank dependent `observed_*` cells from the proposed evidence, preserves non-empty values, sets `provenance=human`, `human_verified=true`, `auditor=Lexa`, and the current/non-future `auditor_time` (per-row times are preserved).
+5. If you disagree with the proposed blind/alignment outcome, do not edit the file to force acceptance: `--verify-labels` rejects any observed value that differs from the pack. Stop and report the fixture; P40 must be corrected, a new pack hash generated, offline tests rerun, and human verification repeated.
+6. Reject any negative that only corrupts a hidden answer or still leaves one clear valid visible question. Do not edit `pack.json` or `labels.pending.csv` to make a fixture pass.
+
+The helper records the human's explicit per-row acceptance via `observed_blind_result`; it is not a substitute for the review. It refuses the pending template, mock label fixtures, already-attested files, and any row without a human blind result. The coding agent must not run it on the real file.
+
+Acceptance helper (run only after the human review):
+
+```bash
+npm run calibration -- --accept-proposed \
+  --labels data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/labels.human.csv \
+  --auditor Lexa
+```
+
+Validation command after filling:
+
+```bash
+npm run calibration -- --verify-labels \
+  data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/labels.human.csv \
+  --auditor Lexa
+npm exec -- vitest run tests/calibration/fixtures.test.ts tests/calibration/score.test.ts
+```
+
+`--verify-labels` accepted exactly 40 verified, version-matching rows with matching pack/fixture/content/PNG/SVG hashes, complete observed labels, human provenance, auditor `Lexa`, and a non-future timestamp. All 40 observed blind/alignment results match the proposed evidence; no disagreement required a P40 pack revision. P47 is accepted; live calibration may now proceed to P48 after explicit budget authorization.

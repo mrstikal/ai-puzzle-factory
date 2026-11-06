@@ -336,6 +336,66 @@ export function mockLabelRows(
   );
 }
 
+export function acceptProposedLabels(
+  labels: CalibrationLabels,
+  options: {
+    readonly auditor: string;
+    readonly auditorTime: string;
+    readonly notes?: string;
+  },
+): CalibrationLabels {
+  const unreviewed = labels.rows.filter(
+    (row) => row.observedBlindResult === "",
+  );
+  if (unreviewed.length > 0) {
+    throw new CalibrationLabelError(
+      "UNREVIEWED_LABELS",
+      `human review is missing observed_blind_result for: ${unreviewed
+        .map((row) => row.fixtureId)
+        .join(", ")}`,
+    );
+  }
+  const rows = labels.rows.map((row) =>
+    CalibrationLabelRowSchema.parse({
+      ...row,
+      observedBlindResult: row.observedBlindResult,
+      observedCorrectLabel:
+        row.observedBlindResult === "correct"
+          ? row.observedCorrectLabel ?? row.proposedCorrectLabel
+          : row.observedCorrectLabel,
+      observedDefectCodes:
+        row.observedBlindResult === "correct"
+          ? row.observedDefectCodes
+          : row.observedDefectCodes.length === 0
+            ? row.acceptedDefectCodes
+            : row.observedDefectCodes,
+      observedAlignmentResult:
+        row.observedAlignmentResult === ""
+          ? row.proposedAlignmentResult
+          : row.observedAlignmentResult,
+      observedFailingFields:
+        row.observedFailingFields.length === 0
+          ? row.acceptedFailingFields
+          : row.observedFailingFields,
+      observedFactIds:
+        row.observedFactIds.length === 0
+          ? row.acceptedFactIds
+          : row.observedFactIds,
+      provenance: "human",
+      humanVerified: true,
+      auditor: options.auditor,
+      auditorTime:
+        row.auditorTime === "" ? options.auditorTime : row.auditorTime,
+      notes:
+        row.notes === ""
+          ? options.notes ??
+            "Accepted proposed labels after human review of observed_blind_result."
+          : row.notes,
+    }),
+  );
+  return { packHash: labels.packHash, rows };
+}
+
 export function calibrationLabelsHash(labels: CalibrationLabels): string {
   return hashCanonicalJson(labels.rows);
 }

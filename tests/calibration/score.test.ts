@@ -12,8 +12,10 @@ import {
   type BuiltCalibrationPack,
 } from "../../src/calibration/fixtures.js";
 import {
+  acceptProposedLabels,
   calibrationLabelsHash,
   parseCalibrationLabelsCsv,
+  pendingLabelRows,
   validateCalibrationLabels,
   type CalibrationLabelRow,
   type CalibrationLabels,
@@ -132,6 +134,98 @@ beforeAll(async () => {
 }, 120_000);
 
 describe("calibration runner and scoring", { timeout: 120_000 }, () => {
+  it("accepts proposed labels only after a per-row human blind result", () => {
+    const pending: CalibrationLabels = {
+      packHash: built.pack.packHash,
+      rows: pendingLabelRows(built.pack),
+    };
+    expect(pending.rows.every((row) => row.observedBlindResult === "")).toBe(true);
+    expect(() =>
+      acceptProposedLabels(pending, {
+        auditor: "Lexa",
+        auditorTime: FIXED_NOW.toISOString(),
+      }),
+    ).toThrow(/human review is missing observed_blind_result/);
+
+    const reviewed = structuredClone(pending) as CalibrationLabels & {
+      rows: CalibrationLabelRow[];
+    };
+    for (const row of reviewed.rows) {
+      row.observedBlindResult = row.proposedBlindResult;
+    }
+    const defective = reviewed.rows.find(
+      (row) => row.soundOrDefective === "defective",
+    );
+    const sound = reviewed.rows.find((row) => row.soundOrDefective === "sound");
+    if (defective === undefined || sound === undefined) {
+      throw new Error("calibration fixture mix is missing");
+    }
+    defective.auditor = "Row-Auditor";
+    defective.auditorTime = "2026-11-06T11:00:00.000Z";
+    const accepted = acceptProposedLabels(reviewed, {
+      auditor: "Lexa",
+      auditorTime: FIXED_NOW.toISOString(),
+    });
+    expect(
+      accepted.rows.every(
+        (row) =>
+          row.provenance === "human" &&
+          row.humanVerified &&
+          row.observedBlindResult !== "",
+      ),
+    ).toBe(true);
+    expect(accepted.rows[0]?.observedBlindResult).toBe(
+      accepted.rows[0]?.proposedBlindResult,
+    );
+    const acceptedDefective = accepted.rows.find(
+      (row) => row.fixtureId === defective.fixtureId,
+    );
+    const acceptedSound = accepted.rows.find(
+      (row) => row.fixtureId === sound.fixtureId,
+    );
+    expect(acceptedDefective?.observedCorrectLabel).toBeNull();
+    expect(acceptedDefective?.observedDefectCodes).toEqual(
+      acceptedDefective?.acceptedDefectCodes,
+    );
+    expect(acceptedDefective?.auditor).toBe("Lexa");
+    expect(acceptedDefective?.auditorTime).toBe(
+      "2026-11-06T11:00:00.000Z",
+    );
+    expect(acceptedSound?.observedCorrectLabel).not.toBeNull();
+    expect(() =>
+      validateCalibrationLabels({
+        labels: accepted,
+        pack: built.pack,
+        mode: "verify",
+        auditor: "Lexa",
+      }),
+    ).not.toThrow();
+    expect(calibrationLabelsHash(accepted)).toMatch(/^[0-9a-f]{64}$/);
+
+    const contradictory = structuredClone(reviewed) as CalibrationLabels & {
+      rows: CalibrationLabelRow[];
+    };
+    const soundRow = contradictory.rows.find(
+      (row) => row.fixtureId === sound.fixtureId,
+    );
+    if (soundRow === undefined) {
+      throw new Error("sound fixture is missing");
+    }
+    soundRow.observedDefectCodes = ["DUPLICATE_CORRECT_OPTION"];
+    const contradictoryAccepted = acceptProposedLabels(contradictory, {
+      auditor: "Lexa",
+      auditorTime: FIXED_NOW.toISOString(),
+    });
+    expect(() =>
+      validateCalibrationLabels({
+        labels: contradictoryAccepted,
+        pack: built.pack,
+        mode: "verify",
+        auditor: "Lexa",
+      }),
+    ).toThrow(/correct blind result/);
+  });
+
   it("runs exactly 80 blind+alignment calls with zero generations", () => {
     expect(oracleRun.reviewCalls).toBe(80);
     expect(oracleRun.generationCalls).toBe(0);
