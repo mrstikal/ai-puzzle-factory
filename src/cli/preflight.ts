@@ -5,7 +5,12 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
 import { createBudgetAccount } from "../ai/budget.js";
-import { readLiveEnvironment, type LiveEnvironmentConfig } from "../ai/config.js";
+import {
+  defaultMaxOutputTokensFor,
+  readLiveEnvironment,
+  type AiRoleSettings,
+  type LiveEnvironmentConfig,
+} from "../ai/config.js";
 import { loadLocalEnv } from "../ai/local-env.js";
 import { createOpenRouterTransport } from "../ai/openrouter.js";
 import { Resvg } from "@resvg/resvg-js";
@@ -36,6 +41,7 @@ const SCOPE_NOTE = [
   "  --allow-paid           required with --live",
   "  --max-cost <usd>       required with --live",
   "  --routing-confirmation <path>  operator account check JSON required with --live",
+  "  --vision-reasoning-effort <effort>  optional low|medium|high for vision probes",
   "  --db <path>            SQLite path for preflight ledger (default: data/experiment.sqlite)",
 ].join("\n");
 
@@ -46,6 +52,7 @@ interface PreflightOptions {
   readonly allowPaid?: boolean;
   readonly maxCost?: string;
   readonly routingConfirmation?: string;
+  readonly visionReasoningEffort?: string;
   readonly db?: string;
 }
 
@@ -127,14 +134,38 @@ function livePngDataUrl(): string {
   return `data:image/png;base64,${png.toString("base64")}`;
 }
 
-function liveRoleRequests(config: LiveEnvironmentConfig): RolePreflightRequest[] {
+function visionSettings(
+  effort: string | undefined,
+): AiRoleSettings | undefined {
+  if (effort === undefined) {
+    return undefined;
+  }
+  if (effort !== "low" && effort !== "medium" && effort !== "high") {
+    programError("--vision-reasoning-effort must be low, medium, or high");
+  }
+  return { reasoningEffort: effort };
+}
+
+function liveRoleRequests(
+  config: LiveEnvironmentConfig,
+  visionReasoningEffort?: string,
+): RolePreflightRequest[] {
+  const vision = visionSettings(visionReasoningEffort);
   return [
     { role: "spec", model: config.generator.model },
     { role: "wording", model: config.generator.model },
     { role: "blind_text", model: config.reviewer.model },
-    { role: "alignment_text", model: config.reviewer.model },
-    { role: "blind_vision", model: config.visionReviewer.model },
-    { role: "alignment_vision", model: config.visionReviewer.model },
+    { role: "alignment_text", model: config.alignmentText.model },
+    {
+      role: "blind_vision",
+      model: config.visionReviewer.model,
+      ...(vision === undefined ? {} : { settings: vision }),
+    },
+    {
+      role: "alignment_vision",
+      model: config.visionReviewer.model,
+      ...(vision === undefined ? {} : { settings: vision }),
+    },
   ];
 }
 
@@ -195,13 +226,14 @@ async function runLive(options: PreflightOptions): Promise<number> {
   const modelIds = [
     config.generator.model,
     config.reviewer.model,
+    config.alignmentText.model,
     config.visionReviewer.model,
   ];
   const catalog = await fetchCatalogForModels({
     modelIds,
     apiKey: config.apiKey,
   });
-  const roles = liveRoleRequests(config);
+  const roles = liveRoleRequests(config, options.visionReasoningEffort);
   const preflightId = randomUUID();
   const report = runPreflightOnCatalog(catalog, roles, {
     mode: "live",
@@ -224,8 +256,10 @@ async function runLive(options: PreflightOptions): Promise<number> {
     probeKeyPrefix: `preflight:${preflightId}`,
     probeMaxOutputTokensByRole: {
       spec: 2048,
-      blind_text: 8192,
-      blind_vision: 8192,
+      blind_text: defaultMaxOutputTokensFor("blind_text"),
+      alignment_text: defaultMaxOutputTokensFor("alignment_text"),
+      blind_vision: defaultMaxOutputTokensFor("blind_vision"),
+      alignment_vision: defaultMaxOutputTokensFor("alignment_vision"),
     },
   });
   const dbPath = resolve(options.db ?? "data/experiment.sqlite");
@@ -378,6 +412,7 @@ export function createProgram(): Command {
     .option("--allow-paid", "acknowledge paid execution for --live")
     .option("--max-cost <usd>", "authorized maximum cost for --live")
     .option("--routing-confirmation <path>", "operator account routing check JSON for --live")
+    .option("--vision-reasoning-effort <effort>", "optional reasoning_effort for the vision probes (low, medium, high)")
     .option("--db <path>", "SQLite path for preflight ledger")
     .action(async (options: PreflightOptions) => {
       if (options.offline === true && options.live === true) {

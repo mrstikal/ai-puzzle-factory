@@ -111,7 +111,7 @@ export const Sha256Schema = z.string().regex(SHA256_PATTERN);
 export const UsdSchema = z.string().regex(/^(0|[1-9]\d*)(\.\d+)?$/);
 
 export const SLOT_ID_PATTERN =
-  /^(text|svg)-(ranking|matching|scheduling|truth|arithmetic|matrix|transforms|paths|symmetry|counting)-\d{2}$/;
+  /^(text|svg)-(ranking|matching|scheduling|truth|arithmetic|matrix|transforms|paths|symmetry|counting)-\d{2,3}$/;
 
 export const SlotPlanSchema = z.strictObject({
   slotId: z.string().regex(SLOT_ID_PATTERN),

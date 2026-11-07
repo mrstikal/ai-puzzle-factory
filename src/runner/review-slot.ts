@@ -16,7 +16,7 @@ import {
 import { ReviewTextError, reviewText } from "../ai/review-text.js";
 import { ReviewVisionError, reviewVision } from "../ai/review-vision.js";
 import {
-  ALIGNMENT_REVIEW_RESPONSE_SCHEMA,
+  ALIGNMENT_REVIEW_STORED_SCHEMA,
   BLIND_REVIEW_RESPONSE_SCHEMA,
 } from "../ai/schemas.js";
 import { ChoiceLabelSchema, type ChoiceLabel } from "../domain/answers.js";
@@ -189,7 +189,7 @@ export const AlignmentReviewStagePayloadSchema = z
     completed: z.boolean(),
     logicalCallId: z.uuid().nullable(),
     attemptIds: z.array(z.uuid()),
-    review: ALIGNMENT_REVIEW_RESPONSE_SCHEMA.nullable(),
+    review: ALIGNMENT_REVIEW_STORED_SCHEMA.nullable(),
     modelOverall: z.enum(["pass", "fail", "uncertain"]).nullable(),
     derivedOverall: z.enum(["pass", "fail", "uncertain"]).nullable(),
     overallMismatch: z.boolean().nullable(),
@@ -208,7 +208,6 @@ export const AlignmentReviewStagePayloadSchema = z
       if (
         payload.review === null ||
         payload.logicalCallId === null ||
-        payload.modelOverall === null ||
         payload.derivedOverall === null ||
         payload.overallMismatch === null ||
         payload.deterministicEvidence === null ||

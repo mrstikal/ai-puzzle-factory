@@ -70,11 +70,19 @@ import {
 export const CALIBRATION_MOCK_MODES = ["oracle", "agree", "reject"] as const;
 export type CalibrationMockMode = (typeof CALIBRATION_MOCK_MODES)[number];
 
-type CalibrationRole =
+export type CalibrationRole =
   | "blind_text"
   | "blind_vision"
   | "alignment_text"
   | "alignment_vision";
+
+export interface CalibrationReviewRequest {
+  readonly role: CalibrationRole;
+  readonly body: Readonly<Record<string, unknown>>;
+  readonly schemaHash: string;
+  readonly png: Buffer | null;
+  readonly inventoryIds: ReadonlySet<string> | null;
+}
 
 interface MockPlan {
   readonly role: CalibrationRole;
@@ -267,10 +275,10 @@ function alignmentContent(plan: MockPlan): AlignmentReviewResponse {
     if (fixture.modality === "svg") {
       fields.image = failField("Mock reject-all scenario.", []);
     }
-    return { overall: "fail", fields };
+    return { fields };
   }
   if (mode === "agree" || label.observedAlignmentResult === "pass") {
-    return { overall: "pass", fields };
+    return { fields };
   }
   const mapped = new Set<AlignmentFieldName>();
   for (const field of label.observedFailingFields) {
@@ -287,12 +295,7 @@ function alignmentContent(plan: MockPlan): AlignmentReviewResponse {
       factIds,
     );
   }
-  return {
-    overall: Object.values(fields).some((field) => field.status === "fail")
-      ? "fail"
-      : "pass",
-    fields,
-  };
+  return { fields };
 }
 
 function validatePng(fixture: CalibrationFixture, bytes: Buffer | null): Buffer {
@@ -432,25 +435,25 @@ export function buildBlindPayload(
   });
 }
 
-async function runBlind(input: {
-  readonly db: Database.Database;
-  readonly accountId: string;
-  readonly transport: CalibrationMockTransport;
-  readonly clock: { now(): Date };
-  readonly fixture: CalibrationFixture;
-  readonly entry: BuiltCalibrationPack["fixtures"][number];
-  readonly label: CalibrationLabelRow;
-  readonly mode: CalibrationMockMode;
-  readonly routes: ReturnType<typeof buildMockRoutes>;
-}): Promise<{ readonly response: unknown | null; readonly error: string | null }> {
-  const payload = buildBlindPayload(input.fixture);
-  const svg = input.fixture.modality === "svg";
+function assertRouteRole(route: ResolvedRoute, role: CalibrationRole): void {
+  if (route.role !== role) {
+    throw new Error(`calibration route ${route.role} cannot serve ${role}`);
+  }
+}
+
+export function buildBlindReviewRequest(
+  fixture: CalibrationFixture,
+  entry: BuiltCalibrationPack["fixtures"][number],
+  route: ResolvedRoute,
+): CalibrationReviewRequest {
+  const svg = fixture.modality === "svg";
   const role: CalibrationRole = svg ? "blind_vision" : "blind_text";
-  const route = svg ? input.routes.blindVision : input.routes.blindText;
+  assertRouteRole(route, role);
   const metadata = svg ? blindVisionPromptMetadata() : blindTextPromptMetadata();
   const png = svg
-    ? validatePng(input.fixture, input.entry.artifacts.visible.png)
+    ? validatePng(fixture, entry.artifacts.visible.png)
     : null;
+  const payload = buildBlindPayload(fixture);
   const messages = svg
     ? buildBlindVisionMessages(payload, metadata, png as Buffer)
     : buildBlindTextMessages(payload, metadata);
@@ -464,18 +467,149 @@ async function runBlind(input: {
     responseFormat: BLIND_REVIEW_JSON_SCHEMA,
     ...(settings === undefined ? {} : { settings }),
   });
+  return {
+    role,
+    body: built.body,
+    schemaHash: built.schemaHash,
+    png,
+    inventoryIds: null,
+  };
+}
+
+export function buildAlignmentReviewRequest(
+  fixture: CalibrationFixture,
+  entry: BuiltCalibrationPack["fixtures"][number],
+  route: ResolvedRoute,
+): CalibrationReviewRequest {
+  const svg = fixture.modality === "svg";
+  const role: CalibrationRole = svg ? "alignment_vision" : "alignment_text";
+  assertRouteRole(route, role);
+  const { payload, inventoryIds } = buildAlignmentPayload(fixture);
+  const metadata = alignmentPromptMetadata(fixture.modality);
+  const png = svg
+    ? validatePng(fixture, entry.artifacts.visible.png)
+    : null;
+  const messages = buildAlignmentMessages(payload, metadata, png);
+  const settings = settingsFor(route);
+  const built = buildChatRequest({
+    role,
+    model: route.model,
+    outputCapField: route.outputCapField,
+    maxOutputTokens: route.maxOutputTokens,
+    messages,
+    responseFormat: ALIGNMENT_REVIEW_JSON_SCHEMA,
+    ...(settings === undefined ? {} : { settings }),
+  });
+  return {
+    role,
+    body: built.body,
+    schemaHash: built.schemaHash,
+    png,
+    inventoryIds,
+  };
+}
+
+export function formatZodIssues(
+  issues: readonly {
+    readonly path: readonly PropertyKey[];
+    readonly message: string;
+  }[],
+): string {
+  return issues
+    .map(
+      (issue) =>
+        `${issue.path.length === 0 ? "$" : issue.path.map(String).join(".")}: ${issue.message}`,
+    )
+    .join("; ");
+}
+
+export function parseBlindReviewResponse(
+  fixture: CalibrationFixture,
+  response: unknown,
+): { readonly response: BlindReviewResponse | null; readonly error: string | null } {
+  const parsed = BLIND_REVIEW_RESPONSE_SCHEMA.safeParse(response);
+  if (!parsed.success) {
+    return {
+      response: null,
+      error: `blind response does not satisfy the strict schema: ${formatZodIssues(parsed.error.issues)}`,
+    };
+  }
+  if (
+    fixture.modality === "text" &&
+    parsed.data.visualLegibility !== "not_applicable"
+  ) {
+    return { response: null, error: "text blind response has an image legibility status" };
+  }
+  if (
+    fixture.modality === "svg" &&
+    parsed.data.visualLegibility === "not_applicable"
+  ) {
+    return { response: null, error: "SVG blind response has no image legibility status" };
+  }
+  return { response: parsed.data, error: null };
+}
+
+export function parseAlignmentReviewResponse(
+  fixture: CalibrationFixture,
+  response: unknown,
+  inventoryIds: ReadonlySet<string>,
+): { readonly response: AlignmentReviewResponse | null; readonly error: string | null } {
+  const parsed = ALIGNMENT_REVIEW_RESPONSE_SCHEMA.safeParse(response);
+  if (!parsed.success) {
+    return {
+      response: null,
+      error: `alignment response does not satisfy the strict schema: ${formatZodIssues(parsed.error.issues)}`,
+    };
+  }
+  for (const field of Object.values(parsed.data.fields)) {
+    for (const factId of field.factIds) {
+      if (!inventoryIds.has(factId)) {
+        return {
+          response: null,
+          error: `alignment response cites unknown fact ${factId}`,
+        };
+      }
+    }
+  }
+  try {
+    deriveAlignmentOverall(parsed.data.fields, fixture.modality);
+  } catch (error) {
+    return {
+      response: null,
+      error: error instanceof Error ? error.message : "invalid alignment field applicability",
+    };
+  }
+  return { response: parsed.data, error: null };
+}
+
+async function runBlind(input: {
+  readonly db: Database.Database;
+  readonly accountId: string;
+  readonly transport: CalibrationMockTransport;
+  readonly clock: { now(): Date };
+  readonly fixture: CalibrationFixture;
+  readonly entry: BuiltCalibrationPack["fixtures"][number];
+  readonly label: CalibrationLabelRow;
+  readonly mode: CalibrationMockMode;
+  readonly routes: ReturnType<typeof buildMockRoutes>;
+}): Promise<{ readonly response: unknown | null; readonly error: string | null }> {
+  const route =
+    input.fixture.modality === "svg"
+      ? input.routes.blindVision
+      : input.routes.blindText;
+  const request = buildBlindReviewRequest(input.fixture, input.entry, route);
   const result = await executeCalibrationCall({
     db: input.db,
     accountId: input.accountId,
     transport: input.transport,
     clock: input.clock,
     probeKey: input.fixture.fixtureId,
-    role,
+    role: request.role,
     route,
-    requestBody: built.body,
-    schemaHash: metadata.schemaHash,
+    requestBody: request.body,
+    schemaHash: request.schemaHash,
     plan: {
-      role,
+      role: request.role,
       fixture: input.fixture,
       label: input.label,
       mode: input.mode,
@@ -484,23 +618,7 @@ async function runBlind(input: {
   if (result.error !== null || result.response === null) {
     return result;
   }
-  const parsed = BLIND_REVIEW_RESPONSE_SCHEMA.safeParse(result.response);
-  if (!parsed.success) {
-    return { response: null, error: "blind response does not satisfy the strict schema" };
-  }
-  if (
-    input.fixture.modality === "text" &&
-    parsed.data.visualLegibility !== "not_applicable"
-  ) {
-    return { response: null, error: "text blind response has an image legibility status" };
-  }
-  if (
-    input.fixture.modality === "svg" &&
-    parsed.data.visualLegibility === "not_applicable"
-  ) {
-    return { response: null, error: "SVG blind response has no image legibility status" };
-  }
-  return { response: parsed.data, error: null };
+  return parseBlindReviewResponse(input.fixture, result.response);
 }
 
 async function runAlignment(input: {
@@ -514,37 +632,26 @@ async function runAlignment(input: {
   readonly mode: CalibrationMockMode;
   readonly routes: ReturnType<typeof buildMockRoutes>;
 }): Promise<{ readonly response: unknown | null; readonly error: string | null }> {
-  const { payload, inventoryIds } = buildAlignmentPayload(input.fixture);
-  const svg = input.fixture.modality === "svg";
-  const role: CalibrationRole = svg ? "alignment_vision" : "alignment_text";
-  const route = svg ? input.routes.alignmentVision : input.routes.alignmentText;
-  const metadata = alignmentPromptMetadata(input.fixture.modality);
-  const png = svg
-    ? validatePng(input.fixture, input.entry.artifacts.visible.png)
-    : null;
-  const messages = buildAlignmentMessages(payload, metadata, png);
-  const settings = settingsFor(route);
-  const built = buildChatRequest({
-    role,
-    model: route.model,
-    outputCapField: route.outputCapField,
-    maxOutputTokens: route.maxOutputTokens,
-    messages,
-    responseFormat: ALIGNMENT_REVIEW_JSON_SCHEMA,
-    ...(settings === undefined ? {} : { settings }),
-  });
+  const route =
+    input.fixture.modality === "svg"
+      ? input.routes.alignmentVision
+      : input.routes.alignmentText;
+  const request = buildAlignmentReviewRequest(input.fixture, input.entry, route);
+  if (request.inventoryIds === null) {
+    throw new Error(`${input.fixture.fixtureId} alignment request has no fact inventory`);
+  }
   const result = await executeCalibrationCall({
     db: input.db,
     accountId: input.accountId,
     transport: input.transport,
     clock: input.clock,
     probeKey: input.fixture.fixtureId,
-    role,
+    role: request.role,
     route,
-    requestBody: built.body,
-    schemaHash: metadata.schemaHash,
+    requestBody: request.body,
+    schemaHash: request.schemaHash,
     plan: {
-      role,
+      role: request.role,
       fixture: input.fixture,
       label: input.label,
       mode: input.mode,
@@ -553,35 +660,11 @@ async function runAlignment(input: {
   if (result.error !== null || result.response === null) {
     return result;
   }
-  const parsed = ALIGNMENT_REVIEW_RESPONSE_SCHEMA.safeParse(result.response);
-  if (!parsed.success) {
-    return { response: null, error: "alignment response does not satisfy the strict schema" };
-  }
-  for (const field of Object.values(parsed.data.fields)) {
-    for (const factId of field.factIds) {
-      if (!inventoryIds.has(factId)) {
-        return {
-          response: null,
-          error: `alignment response cites unknown fact ${factId}`,
-        };
-      }
-    }
-  }
-  try {
-    const derived = deriveAlignmentOverall(parsed.data.fields, input.fixture.modality);
-    if (parsed.data.overall !== derived) {
-      return {
-        response: null,
-        error: "alignment overall contradicts derived field statuses",
-      };
-    }
-  } catch (error) {
-    return {
-      response: null,
-      error: error instanceof Error ? error.message : "invalid alignment field applicability",
-    };
-  }
-  return { response: parsed.data, error: null };
+  return parseAlignmentReviewResponse(
+    input.fixture,
+    result.response,
+    request.inventoryIds,
+  );
 }
 
 export async function runCalibrationMock(

@@ -67,6 +67,14 @@ function writeFixtureFile(
 function createFixtureRoot(): string {
   const root = mkdtempSync(join(tempDirectory, "source-"));
   const promptContents: Record<string, string> = {
+    "src/ai/prompts/v2/alignment-text.txt":
+      "PUZZLE_ALIGNMENT_TEXT_PROMPT_VERSION: v2\n",
+    "src/ai/prompts/v2/alignment-vision.txt":
+      "PUZZLE_ALIGNMENT_VISION_PROMPT_VERSION: v2\n",
+    "src/ai/prompts/v3/alignment-vision.txt":
+      "PUZZLE_ALIGNMENT_VISION_PROMPT_VERSION: v3\n",
+    "src/ai/prompts/v3/blind-vision.txt":
+      "PUZZLE_BLIND_VISION_PROMPT_VERSION: v3\n",
     "src/ai/prompts/v1/alignment-text.txt":
       "PUZZLE_ALIGNMENT_TEXT_PROMPT_VERSION: v1\n",
     "src/ai/prompts/v1/alignment-vision.txt":

@@ -61,9 +61,9 @@ import {
 import { SCENE_SIZE } from "../render/scene.js";
 import { hashCanonicalJson, sha256Hex } from "../util/hash.js";
 
-export const ALIGNMENT_TEXT_PROMPT_VERSION = "v1";
-export const ALIGNMENT_VISION_PROMPT_VERSION = "v1";
-export const ALIGNMENT_SCHEMA_VERSION = "v1";
+export const ALIGNMENT_TEXT_PROMPT_VERSION = "v2";
+export const ALIGNMENT_VISION_PROMPT_VERSION = "v3";
+export const ALIGNMENT_SCHEMA_VERSION = "v2";
 
 const ALIGNMENT_TEXT_PROMPT_HEADER =
   /^PUZZLE_ALIGNMENT_TEXT_PROMPT_VERSION: (v\d+)\n/;
@@ -186,9 +186,9 @@ function readPromptAsset(relativePath: string): string {
   }
 }
 
-const ALIGNMENT_TEXT_PROMPT = readPromptAsset("./prompts/v1/alignment-text.txt");
+const ALIGNMENT_TEXT_PROMPT = readPromptAsset("./prompts/v2/alignment-text.txt");
 const ALIGNMENT_VISION_PROMPT = readPromptAsset(
-  "./prompts/v1/alignment-vision.txt",
+  "./prompts/v3/alignment-vision.txt",
 );
 const TEXT_HEADER = ALIGNMENT_TEXT_PROMPT_HEADER.exec(ALIGNMENT_TEXT_PROMPT);
 if (TEXT_HEADER?.[1] !== ALIGNMENT_TEXT_PROMPT_VERSION) {
@@ -326,7 +326,7 @@ export interface ReviewAlignmentResult {
   readonly family: Family;
   readonly modality: Modality;
   readonly review: AlignmentReviewResponse;
-  readonly modelOverall: AlignmentOverall;
+  readonly modelOverall: AlignmentOverall | null;
   readonly derivedOverall: AlignmentOverall;
   readonly overallMismatch: boolean;
   readonly concerns: readonly AlignmentConcern[];
@@ -790,7 +790,6 @@ export async function reviewAlignment(
     }
     throw error;
   }
-  const modelOverall = parsed.data.overall;
   const concerns: AlignmentConcern[] = ALIGNMENT_FIELD_NAMES.filter(
     (field) =>
       parsed.data.fields[field].status !== "pass" &&
@@ -825,12 +824,11 @@ export async function reviewAlignment(
         ? {}
         : { pngHash: png.pngHash, pngByteLength: png.byteLength }),
       modelEvidence: {
-        overall: modelOverall,
         fields: parsed.data.fields,
         concerns,
       },
       derivedOverall,
-      overallMismatch: modelOverall !== derivedOverall,
+      overallMismatch: false,
       deterministicEvidence,
       ...metadata,
     },
@@ -843,9 +841,9 @@ export async function reviewAlignment(
     family: slot.family,
     modality: slot.modality,
     review: parsed.data,
-    modelOverall,
+    modelOverall: null,
     derivedOverall,
-    overallMismatch: modelOverall !== derivedOverall,
+    overallMismatch: false,
     concerns,
     deterministicEvidence,
     publicPayload,

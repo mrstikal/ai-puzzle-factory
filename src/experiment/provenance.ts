@@ -54,10 +54,10 @@ export const PROVENANCE_FONT_PATH = "assets/fonts/DejaVuSans.ttf";
 export const PROVENANCE_LICENSE_PATH = "assets/fonts/LICENSE.txt";
 
 export const REQUIRED_PROMPT_FILES = [
-  "src/ai/prompts/v1/alignment-text.txt",
-  "src/ai/prompts/v1/alignment-vision.txt",
+  "src/ai/prompts/v2/alignment-text.txt",
+  "src/ai/prompts/v3/alignment-vision.txt",
   "src/ai/prompts/v1/blind-text.txt",
-  "src/ai/prompts/v1/blind-vision.txt",
+  "src/ai/prompts/v3/blind-vision.txt",
   "src/ai/prompts/v1/family-guidance.json",
   "src/ai/prompts/v1/spec.txt",
   "src/ai/prompts/v1/wording.txt",

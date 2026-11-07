@@ -17,6 +17,7 @@
     "experiment": "tsx src/cli/experiment.ts",
     "preview": "tsx src/cli/preview.ts",
     "calibration": "tsx src/cli/calibration.ts",
+    "paths-diagnostic": "tsx src/cli/paths-diagnostic.ts",
     "audit": "tsx src/cli/audit.ts",
     "freeze": "tsx src/cli/freeze.ts",
     "preflight": "tsx src/cli/preflight.ts",

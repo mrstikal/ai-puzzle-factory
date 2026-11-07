@@ -18,6 +18,7 @@ export type StrictSchemaErrorCode =
   | "INVALID_SCHEMA_NAME"
   | "UNREPRESENTABLE_SCHEMA"
   | "UNSUPPORTED_SCHEMA_KEYWORD"
+  | "UNSUPPORTED_SCHEMA_PATTERN"
   | "INVALID_OBJECT_SCHEMA"
   | "INVALID_REF"
   | "INVALID_DEFINITIONS";
@@ -268,6 +269,83 @@ function definitionNames(schema: JsonObject): ReadonlySet<string> {
   return new Set(Object.keys(definitions));
 }
 
+function unsupportedPatternConstruct(pattern: string): string | null {
+  let index = 0;
+  while (index < pattern.length) {
+    const char = pattern[index];
+    if (char === "\\") {
+      const next = pattern[index + 1] ?? "";
+      if (/[1-9]/.test(next)) {
+        return "backreferences are not supported";
+      }
+      if (next === "k" || next === "g") {
+        return "named backreferences and subroutines are not supported";
+      }
+      if (next === "p" || next === "P") {
+        return "Unicode property escapes are not supported";
+      }
+      if (next === "Q" || next === "E") {
+        return "quoted literals are not supported";
+      }
+      if (next === "A" || next === "Z" || next === "z" || next === "G") {
+        return `the \\${next} anchor is not supported`;
+      }
+      index += 2;
+      continue;
+    }
+    if (char === "[") {
+      index += 1;
+      while (index < pattern.length) {
+        if (pattern[index] === "\\") {
+          index += 2;
+          continue;
+        }
+        if (pattern[index] === "]") {
+          index += 1;
+          break;
+        }
+        index += 1;
+      }
+      continue;
+    }
+    if (char === "(" && pattern[index + 1] === "?") {
+      const marker = pattern.slice(index + 2, index + 4);
+      if (marker.startsWith("=") || marker.startsWith("!")) {
+        return "lookahead is not supported";
+      }
+      if (marker.startsWith("<=") || marker.startsWith("<!")) {
+        return "lookbehind is not supported";
+      }
+      if (marker.startsWith("<") || marker.startsWith("P<") || marker.startsWith("'")) {
+        return "named capturing groups are not supported";
+      }
+      if (marker.startsWith("P=")) {
+        return "named backreferences are not supported";
+      }
+      if (marker.startsWith(">")) {
+        return "atomic groups are not supported";
+      }
+      if (marker.startsWith("(")) {
+        return "conditional groups are not supported";
+      }
+      if (/^[imsx-]/.test(marker)) {
+        return "inline regex flags are not supported";
+      }
+    }
+    if (
+      (char === "*" || char === "+" || char === "?") &&
+      pattern[index + 1] === "+"
+    ) {
+      return "possessive quantifiers are not supported";
+    }
+    if (char === "}" && pattern[index + 1] === "+") {
+      return "possessive quantifiers are not supported";
+    }
+    index += 1;
+  }
+  return null;
+}
+
 export function assertStrictJsonSchema(schema: unknown, path = "schema"): void {
   if (!isJsonObject(schema)) {
     throw new StrictSchemaError(
@@ -305,6 +383,27 @@ export function assertStrictJsonSchema(schema: unknown, path = "schema"): void {
     }
     if (!isJsonObject(node)) {
       return;
+    }
+    if (typeof node.pattern === "string") {
+      const unsupported = unsupportedPatternConstruct(node.pattern);
+      if (unsupported !== null) {
+        throw new StrictSchemaError(
+          "UNSUPPORTED_SCHEMA_PATTERN",
+          `${nodePath}.pattern uses an unsupported regex construct: ${unsupported}`,
+        );
+      }
+    }
+    if (isJsonObject(node.patternProperties)) {
+      for (const [pattern, child] of Object.entries(node.patternProperties)) {
+        const unsupported = unsupportedPatternConstruct(pattern);
+        if (unsupported !== null) {
+          throw new StrictSchemaError(
+            "UNSUPPORTED_SCHEMA_PATTERN",
+            `${nodePath}.patternProperties uses an unsupported regex construct: ${unsupported}`,
+          );
+        }
+        visit(child, `${nodePath}.patternProperties[${JSON.stringify(pattern)}]`);
+      }
     }
     if (node.type === "object" || node.properties !== undefined) {
       const properties = node.properties;
@@ -362,7 +461,7 @@ export function assertStrictJsonSchema(schema: unknown, path = "schema"): void {
         for (const [name, definition] of Object.entries(child)) {
           visit(definition, `${nodePath}.$defs.${name}`);
         }
-      } else if (key !== "required" && key !== "$ref") {
+      } else if (key !== "required" && key !== "$ref" && key !== "patternProperties") {
         visit(child, `${nodePath}.${key}`);
       }
     }
@@ -588,11 +687,26 @@ export const ALIGNMENT_FIELDS_SCHEMA = z.strictObject({
 export type AlignmentFields = z.infer<typeof ALIGNMENT_FIELDS_SCHEMA>;
 
 export const ALIGNMENT_REVIEW_RESPONSE_SCHEMA = z.strictObject({
-  overall: z.enum(["pass", "fail", "uncertain"]),
   fields: ALIGNMENT_FIELDS_SCHEMA,
 });
 export type AlignmentReviewResponse = z.infer<
   typeof ALIGNMENT_REVIEW_RESPONSE_SCHEMA
+>;
+
+export const LEGACY_ALIGNMENT_REVIEW_RESPONSE_SCHEMA = z.strictObject({
+  overall: z.enum(["pass", "fail", "uncertain"]),
+  fields: ALIGNMENT_FIELDS_SCHEMA,
+});
+export type LegacyAlignmentReviewResponse = z.infer<
+  typeof LEGACY_ALIGNMENT_REVIEW_RESPONSE_SCHEMA
+>;
+
+export const ALIGNMENT_REVIEW_STORED_SCHEMA = z.union([
+  ALIGNMENT_REVIEW_RESPONSE_SCHEMA,
+  LEGACY_ALIGNMENT_REVIEW_RESPONSE_SCHEMA,
+]);
+export type AlignmentReviewStored = z.infer<
+  typeof ALIGNMENT_REVIEW_STORED_SCHEMA
 >;
 
 export const ALIGNMENT_REVIEW_JSON_SCHEMA = compileStrictJsonSchema(

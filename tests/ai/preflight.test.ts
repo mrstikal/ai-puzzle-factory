@@ -32,6 +32,7 @@ import {
   AiConfigError,
   assertNoForbiddenRequestFields,
   buildChatRequest,
+  defaultMaxOutputTokensFor,
   readLiveEnvironment,
   type LiveEnvironmentConfig,
 } from "../../src/ai/config.js";
@@ -384,12 +385,11 @@ describe("strict provider JSON schemas", () => {
     ).toBe(false);
   });
 
-  it("computes alignment overall from fields and ignores model-reported overall", () => {
+  it("derives alignment overall from fields and rejects a model-reported overall", () => {
     const passing = alignmentFields("pass", "not_applicable");
     expect(deriveAlignmentOverall(passing, "text")).toBe("pass");
 
     const parsed = ALIGNMENT_REVIEW_RESPONSE_SCHEMA.safeParse({
-      overall: "pass",
       fields: alignmentFields("fail", "not_applicable"),
     });
     expect(parsed.success).toBe(true);
@@ -397,16 +397,12 @@ describe("strict provider JSON schemas", () => {
       expect(deriveAlignmentOverall(parsed.data.fields, "text")).toBe("fail");
     }
 
-    const modelSaysFail = ALIGNMENT_REVIEW_RESPONSE_SCHEMA.safeParse({
-      overall: "fail",
-      fields: alignmentFields("pass", "not_applicable"),
-    });
-    expect(modelSaysFail.success).toBe(true);
-    if (modelSaysFail.success) {
-      expect(deriveAlignmentOverall(modelSaysFail.data.fields, "text")).toBe(
-        "pass",
-      );
-    }
+    expect(
+      ALIGNMENT_REVIEW_RESPONSE_SCHEMA.safeParse({
+        overall: "pass",
+        fields: alignmentFields("pass", "not_applicable"),
+      }).success,
+    ).toBe(false);
 
     const improperTextImage = captureError(() =>
       deriveAlignmentOverall(alignmentFields("pass", "pass"), "text"),
@@ -426,7 +422,6 @@ describe("strict provider JSON schemas", () => {
 
     expect(
       ALIGNMENT_REVIEW_RESPONSE_SCHEMA.safeParse({
-        overall: "pass",
         fields: alignmentFields("pass", "not_applicable"),
         extra: "forbidden",
       }).success,
@@ -460,6 +455,8 @@ describe("live configuration", () => {
     const config = readLiveEnvironment(validEnvironment());
     expect(config.generator.model).toBe("fixture/generator-text");
     expect(config.reviewer.model).toBe("fixture/reviewer-text");
+    expect(config.alignmentText.model).toBe("fixture/reviewer-text");
+    expect(config.correlations).toContain("alignment_text_uses_reviewer_model");
     expect(config.visionReviewer.model).toBe("fixture/reviewer-vision");
   });
 
@@ -488,6 +485,26 @@ describe("live configuration", () => {
     expect(visionSeparation).toBeInstanceOf(AiConfigError);
     expect((visionSeparation as AiConfigError).code).toBe(
       "ROLE_SEPARATION_VIOLATION",
+    );
+
+    const sameGeneratorAndAlignment = validEnvironment();
+    sameGeneratorAndAlignment.ALIGNMENT_TEXT_MODEL = "fixture/generator-text";
+    const alignmentSeparation = captureError(() =>
+      readLiveEnvironment(sameGeneratorAndAlignment),
+    );
+    expect(alignmentSeparation).toBeInstanceOf(AiConfigError);
+    expect((alignmentSeparation as AiConfigError).code).toBe(
+      "ROLE_SEPARATION_VIOLATION",
+    );
+  });
+
+  it("routes alignment_text to a separate model and discloses correlations", () => {
+    const env = validEnvironment();
+    env.ALIGNMENT_TEXT_MODEL = "fixture/alignment-text";
+    const config = readLiveEnvironment(env);
+    expect(config.alignmentText.model).toBe("fixture/alignment-text");
+    expect(config.correlations).not.toContain(
+      "alignment_text_uses_reviewer_model",
     );
   });
 
@@ -554,6 +571,20 @@ describe("live configuration", () => {
     );
     expect(floor).toBeInstanceOf(AiConfigError);
     expect((floor as AiConfigError).code).toBe("INVALID_REQUEST");
+  });
+
+  it("serializes reasoning effort without a boolean reasoning field", () => {
+    const built = buildChatRequest({
+      role: "blind_text",
+      model: "fixture/vision",
+      maxOutputTokens: 4096,
+      messages: [{ role: "user", content: "Return JSON." }],
+      responseFormat: BLIND_REVIEW_JSON_SCHEMA,
+      outputCapField: "max_tokens",
+      settings: { reasoningEffort: "low" },
+    });
+    expect(built.body.reasoning_effort).toBe("low");
+    expect(built.body).not.toHaveProperty("reasoning");
   });
 
   it("rejects provider selectors in a hand-built request", () => {
@@ -1081,7 +1112,7 @@ describe("live probe authorization", () => {
     expect((noPng as PreflightError).code).toBe("MISSING_PROBE_PNG");
   });
 
-  it("builds three bounded probes without executing them", () => {
+  it("builds five bounded probes for all four review contracts without executing them", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const plan = buildLiveProbePlan({
       allowPaid: true,
@@ -1090,11 +1121,13 @@ describe("live probe authorization", () => {
       routes: routes(),
       visionPngDataUrl: PNG_DATA_URL,
     });
-    expect(plan.probes).toHaveLength(3);
+    expect(plan.probes).toHaveLength(5);
     expect(plan.probes.map((probe) => probe.role)).toEqual([
       "spec",
       "blind_text",
+      "alignment_text",
       "blind_vision",
+      "alignment_vision",
     ]);
     const prefixed = buildLiveProbePlan({
       allowPaid: true,
@@ -1107,11 +1140,20 @@ describe("live probe authorization", () => {
     expect(prefixed.probes.map((probe) => probe.probeKey)).toEqual([
       "preflight:test-id:spec",
       "preflight:test-id:blind_text",
+      "preflight:test-id:alignment_text",
       "preflight:test-id:blind_vision",
+      "preflight:test-id:alignment_vision",
     ]);
     const generator = plan.probes[0];
-    const vision = plan.probes[2];
-    if (generator === undefined || vision === undefined) {
+    const alignmentText = plan.probes[2];
+    const vision = plan.probes[3];
+    const alignmentVision = plan.probes[4];
+    if (
+      generator === undefined ||
+      alignmentText === undefined ||
+      vision === undefined ||
+      alignmentVision === undefined
+    ) {
       throw new Error("live probe plan is incomplete");
     }
     expect(generator.body).toHaveProperty("max_tokens", 8192);
@@ -1120,8 +1162,75 @@ describe("live probe authorization", () => {
     expect(vision.body).not.toHaveProperty("max_tokens");
     expect(JSON.stringify(vision.body)).toContain("image_url");
     expect(JSON.stringify(vision.body)).toContain("data:image/png;base64,");
+    expect(alignmentText.responseFormat.name).toBe("puzzle_alignment_review");
+    expect(JSON.stringify(alignmentText.body)).not.toContain("image_url");
+    expect(JSON.stringify(alignmentText.body)).toContain("not_applicable");
+    expect(
+      alignmentText.body.max_completion_tokens ?? alignmentText.body.max_tokens,
+    ).toBe(4096);
+    expect(alignmentVision.responseFormat.name).toBe("puzzle_alignment_review");
+    expect(JSON.stringify(alignmentVision.body)).toContain("image_url");
+    expect(JSON.stringify(alignmentVision.body)).toContain(
+      "data:image/png;base64,",
+    );
+    expect(
+      alignmentVision.body.max_completion_tokens ??
+        alignmentVision.body.max_tokens,
+    ).toBe(4096);
+    const promptText = (probe: typeof alignmentText): string => {
+      const messages = probe.body.messages as readonly {
+        readonly content: unknown;
+      }[];
+      const content = messages[1]?.content;
+      if (!Array.isArray(content)) {
+        throw new Error("alignment probe has no content parts");
+      }
+      const part = (
+        content as readonly { readonly type: string; readonly text?: string }[]
+      ).find((candidate) => candidate.type === "text");
+      return part?.text ?? "";
+    };
+    expect(promptText(alignmentText)).toContain(
+      "the text image field must be not_applicable",
+    );
+    expect(promptText(alignmentText)).not.toContain(
+      "the image field must be pass or uncertain",
+    );
+    expect(promptText(alignmentVision)).toContain(
+      "the image field must be pass or uncertain",
+    );
+    expect(promptText(alignmentVision)).not.toContain(
+      "the text image field must be not_applicable",
+    );
+    const productionCaps = buildLiveProbePlan({
+      allowPaid: true,
+      maxCostUsd: "0.50",
+      apiKey: "inference-key",
+      routes: routes(),
+      visionPngDataUrl: PNG_DATA_URL,
+      probeMaxOutputTokensByRole: {
+        spec: 2048,
+        blind_text: defaultMaxOutputTokensFor("blind_text"),
+        alignment_text: defaultMaxOutputTokensFor("alignment_text"),
+        blind_vision: defaultMaxOutputTokensFor("blind_vision"),
+        alignment_vision: defaultMaxOutputTokensFor("alignment_vision"),
+      },
+    });
+    for (const probe of productionCaps.probes) {
+      const cap =
+        probe.body.max_completion_tokens ?? probe.body.max_tokens;
+      expect(cap).toBe(
+        probe.role === "spec" ? 2048 : defaultMaxOutputTokensFor(probe.role),
+      );
+    }
     for (const probe of plan.probes) {
       expect(probe.schemaHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(() =>
+        assertStrictJsonSchema(
+          probe.responseFormat.schema,
+          `${probe.role}.responseFormat`,
+        ),
+      ).not.toThrow();
     }
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
@@ -1345,5 +1454,127 @@ describe("live probe response validation", () => {
       schemaValid: false,
       visionInterpreted: false,
     });
+    expect(
+      validateProbeContent("blind_text", {
+        ...blind,
+        visualLegibility: "not_applicable",
+      }),
+    ).toMatchObject({
+      schemaValid: true,
+      visionInterpreted: false,
+    });
+    expect(
+      validateProbeContent("blind_text", {
+        ...blind,
+        visualLegibility: "legible",
+      }),
+    ).toMatchObject({
+      schemaValid: false,
+      visionInterpreted: false,
+    });
+  });
+
+  it("validates text and vision alignment field applicability without a model overall", () => {
+    const pass = { status: "pass" as const, factIds: [], reason: "Looks right." };
+    const fields: AlignmentFields = {
+      question: pass,
+      rulesAndClues: { ...pass, factIds: ["f001", "f002"] },
+      options: pass,
+      hint: { status: "pass", factIds: [], reason: "No hint is present, which is acceptable." },
+      explanation: { ...pass, factIds: ["f001", "f002"] },
+      image: { status: "not_applicable", factIds: [], reason: "Text presentation." },
+    };
+    const textAlignment = { fields };
+    expect(validateProbeContent("alignment_text", textAlignment)).toMatchObject({
+      schemaValid: true,
+      visionInterpreted: false,
+    });
+    expect(
+      validateProbeContent("alignment_text", {
+        fields: {
+          ...fields,
+          image: { status: "pass", factIds: [], reason: "Image present." },
+        },
+      }),
+    ).toMatchObject({
+      schemaValid: false,
+      visionInterpreted: false,
+    });
+    expect(
+      validateProbeContent("alignment_text", {
+        fields,
+        overall: "fail",
+      }),
+    ).toMatchObject({
+      schemaValid: false,
+      visionInterpreted: false,
+    });
+
+    const visionFields: AlignmentFields = {
+      ...fields,
+      image: { status: "pass", factIds: [], reason: "The image is legible." },
+    };
+    expect(
+      validateProbeContent("alignment_vision", {
+        fields: visionFields,
+      }),
+    ).toMatchObject({
+      schemaValid: true,
+      visionInterpreted: true,
+    });
+    expect(
+      validateProbeContent("alignment_vision", {
+        fields: {
+          ...visionFields,
+          image: {
+            status: "not_applicable",
+            factIds: [],
+            reason: "No image.",
+          },
+        },
+      }),
+    ).toMatchObject({
+      schemaValid: false,
+      visionInterpreted: false,
+    });
+  });
+
+  it("rejects regex lookaround and other provider-incompatible pattern constructs", () => {
+    const schemaWithPattern = (pattern: string) => ({
+      type: "object",
+      additionalProperties: false,
+      properties: { id: { type: "string", pattern } },
+      required: ["id"],
+    });
+    for (const pattern of [
+      "^(?!0+$)\\d+$",
+      "^(?=a)a$",
+      "^(?<=a)b$",
+      "^(?<!a)b$",
+      "^(a)\\1$",
+      "^(?>a)$",
+      "^(?i)a$",
+      "^\\p{Letter}+$",
+      "^a*+$",
+    ]) {
+      expect(() =>
+        assertStrictJsonSchema(schemaWithPattern(pattern), "test"),
+      ).toThrow(StrictSchemaError);
+    }
+    expect(() =>
+      assertStrictJsonSchema(schemaWithPattern("^[a-z]+$"), "test"),
+    ).not.toThrow();
+    expect(() =>
+      assertStrictJsonSchema(
+        BLIND_REVIEW_JSON_SCHEMA.schema,
+        "blindReview.responseFormat",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertStrictJsonSchema(
+        ALIGNMENT_REVIEW_JSON_SCHEMA.schema,
+        "alignmentReview.responseFormat",
+      ),
+    ).not.toThrow();
   });
 });

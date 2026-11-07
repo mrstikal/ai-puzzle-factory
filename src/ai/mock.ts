@@ -290,7 +290,6 @@ export function buildMockContent(
       }
       return {
         ...base,
-        overall: "fail" as const,
         fields: {
           ...base.fields,
           options: {

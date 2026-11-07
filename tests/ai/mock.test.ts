@@ -26,6 +26,7 @@ import {
   BLIND_REVIEW_JSON_SCHEMA,
   BLIND_REVIEW_RESPONSE_SCHEMA,
   FAMILY_SPEC_JSON_SCHEMAS,
+  deriveAlignmentOverall,
 } from "../../src/ai/schemas.js";
 import {
   FamilySpecEnvelopeSchema,
@@ -302,7 +303,9 @@ describe("deterministic mock transport", () => {
     });
     const wrongAlignmentReview =
       ALIGNMENT_REVIEW_RESPONSE_SCHEMA.parse(wrongAlignment);
-    expect(wrongAlignmentReview.overall).toBe("fail");
+    expect(
+      deriveAlignmentOverall(wrongAlignmentReview.fields, "text"),
+    ).toBe("fail");
     expect(wrongAlignmentReview.fields.options.status).toBe("fail");
 
     const schemaInvalid = buildMockContent({

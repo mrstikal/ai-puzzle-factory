@@ -46,6 +46,8 @@ Every family therefore has difficulty totals `(7,7,6)`, and both lanes cover eve
 
 `--seed` may only restate the fixed root seed for the selected run kind. Any other value, including the reserved `puzzle-calibration-v1` seed, is rejected for full and smoke plans. The shared `PlanManifestSchema` enforces the same rule, so a manifest loaded or reconstructed outside the builder cannot bypass it. Calibration construction uses a separate future run kind and must remain disjoint from smoke/full streams.
 
+**Calibration pack v2 (2026-11-07):** the version-1 pack remains at slots 91-94 / fixture IDs 01-04. The new version-2 validation set uses slots 101-104 / fixture IDs 05-08, the same fixed construction seed, and a separate `data/calibration-v2/` root; it is disjoint from the v1 pack, the 95-99 development pilot, and the full/smoke slots. The v2 pending labels require the P47-like human verification before a P48 calibration. `SLOT_ID_PATTERN` accepts two- or three-digit ordinals so the v2 slots remain valid.
+
 ## 4. Random streams and PRNG
 
 Independent streams are derived as:
@@ -518,6 +520,8 @@ Out of scope: generator vision, external image URLs, and live route assumptions.
 
 P30 implements section 5.2 as a new stateless request. It does not reuse the blind conversation and does not write a workflow stage; P34 owns the `alignment_reviewed` stage and the final verdict path.
 
+**Current contract (P48 v2, 2026-11-07):** the model returns only `fields`; the application derives `overall`. A model-supplied `overall` is an extra-property schema error. The earlier P30 v1 wording is superseded; the current contract is fields-only.
+
 ### Inputs and boundary
 
 - The adapter accepts `presentation_ready`, `duplicate_checked`, or `blind_reviewed`, requires the stored `formal_checked` and `presentation_ready` stage results, and rejects `alignment_reviewed` or later.
@@ -529,21 +533,22 @@ P30 implements section 5.2 as a new stateless request. It does not reuse the bli
 
 ### Review contract and code checks
 
-- The response uses the P25 `puzzle_alignment_review` strict schema: per-field `pass|fail|uncertain|not_applicable` for question, rulesAndClues, options, hint, explanation, image, plus fact IDs and reasons.
+- The response uses the P25 `puzzle_alignment_review` strict schema: per-field `pass|fail|uncertain|not_applicable` for question, rulesAndClues, options, hint, explanation, image, plus fact IDs and reasons. The model returns only the `fields` object; it does not return `overall`.
 - Code validates cited fact IDs against the supplied inventory. Unknown citations are `INVALID_ALIGNMENT`.
-- `deriveAlignmentOverall` enforces applicability: text image must be `not_applicable`; every other field and SVG image must be pass/fail/uncertain, and all other fields reject `not_applicable`. The derived overall is authoritative. A model `overall: pass` with a failed field yields derived `fail` and `overallMismatch: true`; it is never accepted as pass.
+- `deriveAlignmentOverall` enforces applicability: text image must be `not_applicable`; every other field and SVG image must be pass/fail/uncertain, and all other fields reject `not_applicable`. The application derives the overall: fail if any applicable field fails, else uncertain if any is uncertain, else pass. A model-supplied `overall` is rejected by the strict schema; new reviews store `modelOverall: null` and `overallMismatch: false`.
 - `concerns` lists non-pass, non-N/A fields as model evidence. `deterministicEvidence` separately stores the inventory fact IDs, proof, correct label/value, and option values. The report data therefore identifies model allegations as model evidence, not formal proof.
-- The exact request is saved in the logical call; raw response is saved before parsing; a `alignment_review` event stores input hash, model evidence, derived overall, mismatch flag, deterministic evidence, PNG hash/length when applicable, and prompt/schema provenance.
+- The exact request is saved in the logical call; raw response is saved before parsing; a `alignment_review` event stores input hash, the v2 fields-only model evidence, derived overall, deterministic evidence, PNG hash/length when applicable, and prompt/schema provenance.
 - Refusal, invalid JSON, invalid schema, unknown citations, and improper N/A retain the raw response/attempt/cost where a call was made; no second content prompt is sent. No workflow stage is written.
 
 ### Prompt/version inventory
 
-- `alignment-text.txt` declares `PUZZLE_ALIGNMENT_TEXT_PROMPT_VERSION: v1`; `alignment-vision.txt` declares `PUZZLE_ALIGNMENT_VISION_PROMPT_VERSION: v1`. Both use schema name `puzzle_alignment_review` and schema version `v1`.
-- System prompts carry prompt/schema version/hash metadata. The build copies both prompts into `dist/ai/prompts/v1/`.
+- `prompts/v2/alignment-text.txt` declares `PUZZLE_ALIGNMENT_TEXT_PROMPT_VERSION: v2`; `prompts/v3/alignment-vision.txt` declares `PUZZLE_ALIGNMENT_VISION_PROMPT_VERSION: v3`. The alignment response uses schema name `puzzle_alignment_review` and schema version `v2`.
+- `prompts/v3/blind-vision.txt` declares `PUZZLE_BLIND_VISION_PROMPT_VERSION: v3`; the blind review schema remains `puzzle_blind_review` version v1. The v3 vision prompts require all-option route tracing, pairwise tile comparison, route-vs-wall verification, duplicate/no-valid handling, and short final reasoning. This is a new configuration: it invalidates the earlier vision calibration evidence and requires the corresponding P45/P46/pilot/P48 repeat.
+- System prompts carry prompt/schema version/hash metadata. The build copies the prompt tree, including `dist/ai/prompts/v2/alignment-text.txt` and `dist/ai/prompts/v3/alignment-vision.txt`.
 
 ### Tests
 
-`npm exec -- vitest run tests/ai/review-alignment.test.ts` covers text and SVG valid reviews, actual PNG input, model-authored contradiction retained as model evidence, changed visual option, SVG rules/observation mismatch with empty clueTexts, model overall pass with a failed field, improper N/A, uncertain status, unknown fact citations, refusal/invalid JSON/invalid schema, missing formal evidence, wrong routes, already-reviewed slots, blind request hash preservation, and prompt/schema provenance. Full gate: `npm run check`.
+`npm exec -- vitest run tests/ai/review-alignment.test.ts` covers text and SVG valid reviews, actual PNG input, field-level contradiction evidence, changed visual option, SVG rules/observation mismatch with empty clueTexts, model-supplied overall rejection, legacy stored overall ignored by scoring, improper N/A, uncertain status, unknown fact citations, refusal/invalid JSON/invalid schema, missing formal evidence, wrong routes, already-reviewed slots, blind request hash preservation, and prompt/schema provenance. Full gate: `npm run check`.
 
 Out of scope: adjudication, rewriting the presentation, and changing the primary answer.
 

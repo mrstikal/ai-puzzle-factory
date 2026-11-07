@@ -36,6 +36,10 @@ import { deriveStreamSeed } from "../util/random.js";
 import { buildDuplicateDefect, buildFamilyDefect } from "./mutations.js";
 
 export const CALIBRATION_PACK_VERSION = 1 as const;
+export const CALIBRATION_PACK_VERSION_V2 = 2 as const;
+export type CalibrationPackVersion =
+  | typeof CALIBRATION_PACK_VERSION
+  | typeof CALIBRATION_PACK_VERSION_V2;
 export const CALIBRATION_VARIANTS = ["sound", "defective"] as const;
 export type CalibrationVariant = (typeof CALIBRATION_VARIANTS)[number];
 
@@ -130,7 +134,7 @@ export interface CalibrationFixture {
 }
 
 export interface CalibrationPack {
-  readonly version: typeof CALIBRATION_PACK_VERSION;
+  readonly version: CalibrationPackVersion;
   readonly rootSeed: typeof CALIBRATION_ROOT_SEED;
   readonly fixtures: readonly CalibrationFixture[];
   readonly packHash: string;
@@ -260,7 +264,10 @@ export const CalibrationFixtureSchema = z.strictObject({
 });
 
 export const CalibrationPackSchema = z.strictObject({
-  version: z.literal(CALIBRATION_PACK_VERSION),
+  version: z.union([
+    z.literal(CALIBRATION_PACK_VERSION),
+    z.literal(CALIBRATION_PACK_VERSION_V2),
+  ]),
   rootSeed: z.literal(CALIBRATION_ROOT_SEED),
   fixtures: z.array(CalibrationFixtureSchema).length(40),
   packHash: z.string().regex(/^[0-9a-f]{64}$/),
@@ -782,6 +789,150 @@ function fixtureIdFor(family: Family, index: number): string {
   return `cal-${family}-${String(index).padStart(2, "0")}`;
 }
 
+export function buildCalibrationPilotPack(): BuiltCalibrationPack {
+  const built: BuiltCalibrationFixture[] = [];
+  for (const family of ["ranking", "paths"] as const) {
+    const base = buildSoundBase(family, slotIdFor(family, 97), 1);
+    const sound = soundFixture(base, fixtureIdFor(family, 97));
+    const familyDefect = defectiveFixture(
+      base,
+      buildFamilyDefect(base),
+      fixtureIdFor(family, 98),
+      slotIdFor(family, 98),
+      sound.fixture.fixtureId,
+    );
+    const duplicate = defectiveFixture(
+      base,
+      buildDuplicateDefect(base),
+      fixtureIdFor(family, 99),
+      slotIdFor(family, 99),
+      sound.fixture.fixtureId,
+    );
+    built.push(sound, familyDefect, duplicate);
+  }
+  const fixtures = built.map((entry) => entry.fixture);
+  const base = {
+    version: CALIBRATION_PACK_VERSION,
+    rootSeed: CALIBRATION_ROOT_SEED,
+    fixtures,
+  } as const;
+  const pack: CalibrationPack = {
+    ...base,
+    packHash: hashCanonicalJson(base),
+  };
+  return { pack, fixtures: built };
+}
+
+export function buildPathsPilotPack(): BuiltCalibrationPack {
+  const base = buildSoundBase("paths", slotIdFor("paths", 105), 1);
+  const sound = soundFixture(base, fixtureIdFor("paths", 9));
+  const closed = defectiveFixture(
+    base,
+    buildFamilyDefect(base),
+    fixtureIdFor("paths", 10),
+    slotIdFor("paths", 106),
+    sound.fixture.fixtureId,
+  );
+  const duplicate = defectiveFixture(
+    base,
+    buildDuplicateDefect(base),
+    fixtureIdFor("paths", 11),
+    slotIdFor("paths", 107),
+    sound.fixture.fixtureId,
+  );
+  const built = [sound, closed, duplicate];
+  const fixtures = built.map((entry) => entry.fixture);
+  const basePack = {
+    version: CALIBRATION_PACK_VERSION,
+    rootSeed: CALIBRATION_ROOT_SEED,
+    fixtures,
+  } as const;
+  const pack: CalibrationPack = {
+    ...basePack,
+    packHash: hashCanonicalJson(basePack),
+  };
+  return { pack, fixtures: built };
+}
+
+export function buildPathsPilotPackV2(): BuiltCalibrationPack {
+  const base = buildSoundBase("paths", slotIdFor("paths", 108), 1);
+  const sound = soundFixture(base, fixtureIdFor("paths", 12));
+  const closed = defectiveFixture(
+    base,
+    buildFamilyDefect(base),
+    fixtureIdFor("paths", 13),
+    slotIdFor("paths", 109),
+    sound.fixture.fixtureId,
+  );
+  const duplicate = defectiveFixture(
+    base,
+    buildDuplicateDefect(base),
+    fixtureIdFor("paths", 14),
+    slotIdFor("paths", 110),
+    sound.fixture.fixtureId,
+  );
+  const built = [sound, closed, duplicate];
+  const fixtures = built.map((entry) => entry.fixture);
+  const basePack = {
+    version: CALIBRATION_PACK_VERSION,
+    rootSeed: CALIBRATION_ROOT_SEED,
+    fixtures,
+  } as const;
+  const pack: CalibrationPack = {
+    ...basePack,
+    packHash: hashCanonicalJson(basePack),
+  };
+  return { pack, fixtures: built };
+}
+
+export function buildPathsDuplicatePilotPack(): BuiltCalibrationPack {
+  const base = buildSoundBase("paths", slotIdFor("paths", 108), 1);
+  const sound = soundFixture(base, fixtureIdFor("paths", 12));
+  const duplicate = defectiveFixture(
+    base,
+    buildDuplicateDefect(base),
+    fixtureIdFor("paths", 14),
+    slotIdFor("paths", 110),
+    sound.fixture.fixtureId,
+  );
+  const built = [sound, duplicate];
+  const fixtures = built.map((entry) => entry.fixture);
+  const basePack = {
+    version: CALIBRATION_PACK_VERSION,
+    rootSeed: CALIBRATION_ROOT_SEED,
+    fixtures,
+  } as const;
+  const pack: CalibrationPack = {
+    ...basePack,
+    packHash: hashCanonicalJson(basePack),
+  };
+  return { pack, fixtures: built };
+}
+
+export function buildPathsDuplicateOnlyPilotPack(): BuiltCalibrationPack {
+  const base = buildSoundBase("paths", slotIdFor("paths", 108), 1);
+  const sound = soundFixture(base, fixtureIdFor("paths", 12));
+  const duplicate = defectiveFixture(
+    base,
+    buildDuplicateDefect(base),
+    fixtureIdFor("paths", 14),
+    slotIdFor("paths", 110),
+    sound.fixture.fixtureId,
+  );
+  const built = [duplicate];
+  const fixtures = built.map((entry) => entry.fixture);
+  const basePack = {
+    version: CALIBRATION_PACK_VERSION,
+    rootSeed: CALIBRATION_ROOT_SEED,
+    fixtures,
+  } as const;
+  const pack: CalibrationPack = {
+    ...basePack,
+    packHash: hashCanonicalJson(basePack),
+  };
+  return { pack, fixtures: built };
+}
+
 export function buildCalibrationPack(): BuiltCalibrationPack {
   const built: BuiltCalibrationFixture[] = [];
   for (const family of FAMILIES) {
@@ -824,6 +975,59 @@ export function buildCalibrationPack(): BuiltCalibrationPack {
   const fixtures = built.map((entry) => entry.fixture);
   const base: Omit<CalibrationPack, "packHash"> = {
     version: CALIBRATION_PACK_VERSION,
+    rootSeed: CALIBRATION_ROOT_SEED,
+    fixtures,
+  };
+  const pack: CalibrationPack = {
+    ...base,
+    packHash: hashCanonicalJson(base),
+  };
+  assertCalibrationPack(pack);
+  return { pack, fixtures: built };
+}
+
+export function buildCalibrationPackV2(): BuiltCalibrationPack {
+  const built: BuiltCalibrationFixture[] = [];
+  for (const family of FAMILIES) {
+    const soundA = buildSoundBase(family, slotIdFor(family, 101), 1);
+    const soundB = buildSoundBase(
+      family,
+      slotIdFor(family, 102),
+      family === "counting" || family === "transforms" ? 1 : 2,
+      family === "transforms"
+        ? (spec) =>
+            TransformsSpecSchema.parse(spec).operations.some(
+              (operation) =>
+                operation === "rotate90" || operation === "rotate270",
+            )
+        : undefined,
+    );
+    const fixtureA = soundFixture(soundA, fixtureIdFor(family, 5));
+    const fixtureB = soundFixture(soundB, fixtureIdFor(family, 6));
+    const textFamily = MODALITY_BY_FAMILY[family] === "text";
+    const duplicateBase = textFamily ? soundB : soundA;
+    const familyDefectBase = textFamily ? soundA : soundB;
+    const duplicateSource = textFamily ? fixtureB : fixtureA;
+    const familyDefectSource = textFamily ? fixtureA : fixtureB;
+    const duplicate = defectiveFixture(
+      duplicateBase,
+      buildDuplicateDefect(duplicateBase),
+      fixtureIdFor(family, 7),
+      slotIdFor(family, 103),
+      duplicateSource.fixture.fixtureId,
+    );
+    const familyDefect = defectiveFixture(
+      familyDefectBase,
+      buildFamilyDefect(familyDefectBase),
+      fixtureIdFor(family, 8),
+      slotIdFor(family, 104),
+      familyDefectSource.fixture.fixtureId,
+    );
+    built.push(fixtureA, fixtureB, duplicate, familyDefect);
+  }
+  const fixtures = built.map((entry) => entry.fixture);
+  const base: Omit<CalibrationPack, "packHash"> = {
+    version: CALIBRATION_PACK_VERSION_V2,
     rootSeed: CALIBRATION_ROOT_SEED,
     fixtures,
   };

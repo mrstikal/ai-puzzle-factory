@@ -30,7 +30,7 @@ export type FactKind = (typeof FACT_KINDS)[number];
 export const FactKindSchema = z.enum(FACT_KINDS);
 
 export const FACT_ID_PATTERN =
-  /^(?:[fps](?!0+$)\d{3,6}|r-(?:domain|closed|target|operations|conventions))$/;
+  /^(?:[fps](?:[1-9]\d{2,5}|\d[1-9]\d{1,4}|\d{2}[1-9]\d{0,3}|\d{3}[1-9]\d{0,2}|\d{4}[1-9]\d?|\d{5}[1-9])|r-(?:domain|closed|target|operations|conventions))$/;
 
 export const FactIdSchema = z.string().regex(FACT_ID_PATTERN);
 

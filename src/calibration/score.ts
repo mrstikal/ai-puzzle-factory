@@ -8,7 +8,7 @@ import type {
 } from "../ai/schemas.js";
 import {
   ALIGNMENT_FIELD_NAMES,
-  ALIGNMENT_REVIEW_RESPONSE_SCHEMA,
+  ALIGNMENT_REVIEW_STORED_SCHEMA,
   BLIND_REVIEW_RESPONSE_SCHEMA,
   deriveAlignmentOverall,
 } from "../ai/schemas.js";
@@ -151,8 +151,8 @@ export interface CalibrationCombinationScore {
 
 export interface CalibrationScoreReport {
   readonly version: 1;
-  readonly evidenceKind: "mock";
-  readonly liveEligible: false;
+  readonly evidenceKind: "mock" | "live" | "pilot";
+  readonly liveEligible: boolean;
   readonly provenance: "mock_test_only" | "human" | "mixed";
   readonly packHash: string;
   readonly labelsHash: string;
@@ -165,6 +165,8 @@ export interface CalibrationScoreReport {
   readonly coverage: {
     readonly reviewed: number;
     readonly expected: number;
+    readonly blindReviewed: number;
+    readonly alignmentReviewed: number;
     readonly errors: number;
     readonly abstentions: number;
   };
@@ -190,9 +192,9 @@ function alignmentResponse(value: unknown): {
   readonly response: AlignmentReviewResponse | null;
   readonly error: string | null;
 } {
-  const parsed = ALIGNMENT_REVIEW_RESPONSE_SCHEMA.safeParse(value);
+  const parsed = ALIGNMENT_REVIEW_STORED_SCHEMA.safeParse(value);
   return parsed.success
-    ? { response: parsed.data, error: null }
+    ? { response: { fields: parsed.data.fields }, error: null }
     : { response: null, error: "invalid alignment response schema" };
 }
 
@@ -211,7 +213,7 @@ function blindPrediction(response: BlindReviewResponse | null, error: string | n
   }
   const explicitDefect =
     !selected &&
-    response.ambiguity === "present" &&
+    response.ambiguity !== "uncertain" &&
     response.issues.length > 0;
   if (explicitDefect) {
     return { bucket: "defective", conservative: false, error: null };
@@ -237,7 +239,7 @@ function conservativeBlind(
   }
   if (
     response.answerStatus === "selected" ||
-    response.ambiguity !== "present"
+    response.ambiguity === "uncertain"
   ) {
     return false;
   }
@@ -280,13 +282,6 @@ function alignmentPrediction(
   if (result.error !== null || result.derived === null || response === null) {
     return { bucket: "error", conservative: false, error: result.error };
   }
-  if (response.overall !== result.derived) {
-    return {
-      bucket: "abstention",
-      conservative: false,
-      error: "alignment overall contradicts derived field statuses",
-    };
-  }
   if (result.derived === "pass") {
     return { bucket: "sound", conservative: true, error: null };
   }
@@ -307,9 +302,6 @@ function conservativeAlignment(
   try {
     derived = deriveAlignmentOverall(response.fields, row.modality);
   } catch {
-    return false;
-  }
-  if (response.overall !== derived) {
     return false;
   }
   if (row.soundOrDefective === "sound") {
@@ -463,6 +455,18 @@ export interface ScoreCalibrationInput {
   readonly observations: readonly CalibrationObservation[];
   readonly reviewCalls: number;
   readonly generationCalls: number;
+  readonly evidenceKind?: "mock" | "live" | "pilot";
+  readonly liveEligible?: boolean;
+}
+
+function observationExecuted(value: {
+  readonly response: unknown | null;
+  readonly error: string | null;
+}): boolean {
+  return (
+    value.response !== null ||
+    (value.error !== null && value.error !== "not executed")
+  );
 }
 
 export function scoreCalibration(
@@ -530,14 +534,34 @@ export function scoreCalibration(
     0,
   );
   const provenance = new Set(input.labels.rows.map((row) => row.provenance));
+  const provenanceValue: CalibrationScoreReport["provenance"] =
+    provenance.size === 1
+      ? (input.labels.rows[0]?.provenance === "human" ? "human" : "mock_test_only")
+      : "mixed";
+  const evidenceKind = input.evidenceKind ?? "mock";
+  const blindReviewed = input.observations.filter(
+    (observation) => observationExecuted(observation.blind),
+  ).length;
+  const alignmentReviewed = input.observations.filter(
+    (observation) => observationExecuted(observation.alignment),
+  ).length;
+  const reviewed = input.observations.filter(
+    (observation) =>
+      observationExecuted(observation.blind) ||
+      observationExecuted(observation.alignment),
+  ).length;
   return {
     version: 1,
-    evidenceKind: "mock",
-    liveEligible: false,
-    provenance:
-      provenance.size === 1
-        ? (input.labels.rows[0]?.provenance === "human" ? "human" : "mock_test_only")
-        : "mixed",
+    evidenceKind,
+    liveEligible:
+      evidenceKind === "live" &&
+      input.liveEligible === true &&
+      provenanceValue === "human" &&
+      input.reviewCalls === 80 &&
+      reviewed === input.labels.rows.length &&
+      blindReviewed === input.labels.rows.length &&
+      alignmentReviewed === input.labels.rows.length,
+    provenance: provenanceValue,
     packHash: input.labels.packHash,
     labelsHash: calibrationLabelsHash(input.labels),
     auditor: [...new Set(input.labels.rows.map((row) => row.auditor))],
@@ -547,8 +571,10 @@ export function scoreCalibration(
     generationCalls: 0,
     observations: input.observations.length,
     coverage: {
-      reviewed: input.observations.length,
+      reviewed,
       expected: input.labels.rows.length,
+      blindReviewed,
+      alignmentReviewed,
       errors,
       abstentions,
     },

@@ -12,7 +12,6 @@
       "issues": []
     },
     "alignmentText": {
-      "overall": "pass",
       "fields": {
         "question": { "status": "pass", "factIds": ["r-domain"], "reason": "The question matches the visible rules." },
         "rulesAndClues": { "status": "pass", "factIds": ["r-domain"], "reason": "The rules and clues match the DSL." },
@@ -23,7 +22,6 @@
       }
     },
     "alignmentVision": {
-      "overall": "pass",
       "fields": {
         "question": { "status": "pass", "factIds": ["r-domain"], "reason": "The question matches the visible rules." },
         "rulesAndClues": { "status": "pass", "factIds": ["r-domain"], "reason": "The rules and clues match the rendered diagram." },

@@ -135,3 +135,57 @@ npm exec -- vitest run tests/calibration/fixtures.test.ts tests/calibration/scor
 ```
 
 `--verify-labels` accepted exactly 40 verified, version-matching rows with matching pack/fixture/content/PNG/SVG hashes, complete observed labels, human provenance, auditor `Lexa`, and a non-future timestamp. All 40 observed blind/alignment results match the proposed evidence; no disagreement required a P40 pack revision. P47 is accepted; live calibration may now proceed to P48 after explicit budget authorization.
+
+## P48 authorized live calibration
+
+The live path uses the same frozen prompt/schema builders, model IDs, Balanced routing policy, and primary review limits as the mock/primary path. It runs exactly one blind and one alignment request per fixture (80 logical review calls, zero generation calls) and refuses to start unless the labels are human-verified, the pack/label hashes match, every route resolves, and `--allow-paid` plus a positive `--max-cost` are supplied.
+
+```bash
+npm run calibration -- --live --allow-paid \
+  --labels data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/labels.human.csv \
+  --max-cost 2
+```
+
+The run writes an immutable directory under `data/calibration/<pack-hash>/live/<calibration-id>/`:
+
+- `calibration.json` — run identity, pack/label hashes, models, routes, Balanced policy, catalog snapshot, configuration/provenance, authorized cap, budget/cost, provider mix, coverage, gates, observations, limitations;
+- `score.json` — the full conservative score report, matrices, Wilson intervals, abstentions/errors, and fixed gates;
+- `requests.jsonl` / `responses.jsonl` — 80 rows each, with logical-call IDs, request hashes, request bodies (PNG base64 redacted to a placeholder), validated responses, errors, attempts, provider identities, and costs;
+- `labels.csv` — the verified human labels used for scoring;
+- `calibration.sqlite` — the raw ledger, budget, attempts, raw response artifacts, and request events;
+- `images/` — the 20 actual PNGs and 20 SVGs sent for SVG fixtures;
+- `manifest.json` — SHA-256 and byte count for every file, plus a manifest hash.
+
+Use `npm run report -- --run <calibration-id>` to print the artifact. If the run used a custom `--out`, the live stdout includes the matching `reportCommand` with `--calibration-root`.
+
+A completed run is `liveEligible` only when it has 80 review calls, 40/40 blind and 40/40 alignment outcomes, human provenance, no fatal error, and no budget breach. Freeze eligibility additionally requires all four conservative sensitivity/specificity gates to pass. A budget pause, admission refusal, post-loop overshoot/pause event, incomplete run, missing outcome, or failed gate is never converted into a pass.
+
+The first authorized run (`962b114c-b685-4d29-b846-606fc13fbabf`) completed all 80 calls with known cost USD 1.3060874628 and 2 unknown-cost timeouts, but 40 calls ended with `finish_reason:"length"` at the primary 4096-token review cap. All four gates failed; the full evidence is preserved and P48 is not accepted. A revised reviewer/configuration (for example, a higher primary review output cap or a different reviewer model) requires a new explicit authorization and a new calibration; do not overwrite the prior result or relabel fixtures to obtain a pass.
+
+## V2 validation pack
+
+`npm run calibration -- --prepare-v2` builds the version-2 40-fixture validation pack offline, without any paid call:
+
+```bash
+npm run calibration -- --prepare-v2
+```
+
+The default output is `data/calibration-v2/<pack-hash>/` with `pack.json`, `gallery.html`, `images/`, and `labels.pending.csv`. The current pack hash is `c8bacdf030974d1c4c56fc3ec79cf2d43e19c8c21514da63bd26eb01cf1442dc`; it uses slots 101-104 / fixture IDs 05-08, is disjoint from the v1 pack (slots 91-94) and the 95-99 development pilot, and contains 20 sound / 20 defective and 20 text / 20 SVG fixtures. The pending labels require the same human verification as P47 (complete observed labels/codes/fields/fact IDs, auditor, timestamp) before a v2 P48 calibration; the v1 pack and all prior artifacts remain preserved.
+
+Copy `labels.pending.csv` to a human workspace file, review/fill the observed fields, then use the version-2 selector for every label-consuming mode:
+
+```bash
+cp data/calibration-v2/<pack-hash>/labels.pending.csv \
+   data/calibration-v2/<pack-hash>/labels.human.csv
+# human review/fill observed_* in labels.human.csv
+npm run calibration -- --accept-proposed --pack-version 2 \
+  --labels data/calibration-v2/<pack-hash>/labels.human.csv --auditor <name>
+npm run calibration -- --verify-labels \
+  data/calibration-v2/<pack-hash>/labels.human.csv --pack-version 2 --auditor <name>
+npm run calibration -- --live --allow-paid --pack-version 2 \
+  --labels data/calibration-v2/<pack-hash>/labels.human.csv --max-cost 2
+```
+
+`--accept-proposed` refuses the pending template itself, so use the human workspace copy. `--pack-version 2` selects the v2 pack for `--accept-proposed`, `--verify-labels`, `--mock`, and `--live`; the default remains version 1.
+
+The current v2 `labels.human.csv` was reviewed by Kilo on the operator's explicit delegation, audited against the pack truth and visible artifacts, accepted with `--accept-proposed --pack-version 2 --auditor "Lexa (delegated to Kilo)"`, and verified. It has 40 rows, pack hash `c8bacdf...`, labels hash `2c4e2e45728a0d48492e905137ab9de2be76509f3c8dff0e4726e9ec0237fec5`, provenance `human`, `human_verified:true`, and per-row notes disclosing that this was not independent human inspection. The calibration artifact labels block records `reviewMethod` (`independent_human`, `operator_delegated_ai`, or `code_derived`; the v2 labels are `operator_delegated_ai`, the pilot labels are `code_derived`) and the unique notes. A freeze that requires independent human verification must reject or explicitly caveat a non-`independent_human` method and re-review these labels; the provenance limitation is recorded in the notes, the artifact, and the P48 progress entry.

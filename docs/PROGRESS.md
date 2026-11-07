@@ -1609,6 +1609,8 @@ Expected: the focused suite exits 0 with 7 passing tests; `npm run check` exits 
 
 **State:** implemented, offline-verified, and accepted by the user on 2026-11-05. This phase adds the stateless informed alignment reviewer for text and SVG. It makes no live provider call, paid request, stage commit, blind-review reuse, wording rewrite, adjudication, or primary-answer change.
 
+**Superseded contract (2026-11-07):** the P48 alignment contract v2 removes the model-generated `overall`; the model returns fields only and the application derives the overall. The v1 prompt/schema and `overallMismatch` behavior below are historical. Current behavior is documented in the P48 alignment contract v2 entry and `docs/experiment-protocol.md`.
+
 **Files**
 
 - Adapter: `src/ai/review-alignment.ts`
@@ -2928,3 +2930,333 @@ Expected after human completion: `labels_verified: true`, 40 fixtures, matching 
 **Acceptance:** accepted by the user on 2026-11-06 after the human-completed 40/40 label file, `--verify-labels` exit 0 with labels hash `be359e39350c6e79dc4aeea36651c512726151d569f39a6b35f5ce935730948b`, focused 25 tests, and full `npm run check` 47 files / 613 tests. No further human label work is required.
 
 **Out of scope, unchanged:** automatic human approval, reviewer calls, tuning to reviewer answers, live calibration qualification (P48), and any live claim beyond the human-verified label file.
+
+## P48. Authorized Live Reviewer Calibration — 2026-11-06
+
+**State:** `LIVE-RUN COMPLETE / ALL FOUR GATES FAILED / NOT ACCEPTED`. The live runner, immutable artifact, CLI guards, report lookup, and tests are implemented. The first authorized live calibration executed exactly 80 review calls and 0 generation calls, produced 40/40 fixture outcomes, and preserved the full evidence, but the fixed conservative gates failed in all four combinations. P48 is therefore not accepted and cannot qualify a primary freeze. P46 and P47 remain accepted; the prior P47 label file is unchanged.
+
+**Files**
+
+- Live runner: `src/calibration/live.ts` (shared request builders/validators, 80-call preparation, budget/ledger execution, provider mix, coverage, budget-breach detection, incomplete/paused handling)
+- Artifacts: `src/calibration/live-artifacts.ts` (immutable `calibration.json`, `score.json`, `requests.jsonl`, `responses.jsonl`, `labels.csv`, `calibration.sqlite`, 20 PNG + 20 SVG, verified `manifest.json`)
+- Shared calibration path: `src/calibration/run.ts` (exported builders/parsers used by both mock and live), `src/calibration/score.ts` (`evidenceKind=live`, `liveEligible`, executed-role coverage)
+- CLI/report: `src/cli/calibration.ts` (`--live`, `--allow-paid`, `--max-cost`, `--labels`, `--auditor`, `--out`, human-label validation before spend, full-route preflight, provenance before spend, `reportCommand`), `src/cli/report.ts` (`--calibration-root`, live artifact lookup)
+- Preflight helper: `src/ai/preflight.ts` (exported prompt-token estimate)
+- Tests: `tests/calibration/live.test.ts` (11 tests: 80-call execution, budget pause, overshoot, invalid content without retry, text/SVG legibility rejection, missing provider identity, artifact manifest, live score eligibility, report root, CLI guards), `tests/calibration/score.test.ts` (unchanged mock coverage plus live eligibility)
+- Live evidence: `data/calibration/b2de95516799894e5fe5c5b4e6eb1376c772efb14981146797004ab99877eb5f/live/962b114c-b685-4d29-b846-606fc13fbabf/`
+- Docs: `docs/PROVIDER_SMOKE_TESTS.md` (P48 actual results), `docs/calibration-labeling.md` (live command/artifact/gate instructions), `README.md` (live command and status), this entry
+
+**Observable behavior**
+
+- `npm run calibration -- --live --allow-paid --labels <verified-labels-path> --max-cost <usd>` validates the human labels, fetches the live catalog, runs the full six-role preflight, requires every route to resolve, builds the provenance snapshot, then creates a fresh UUID run directory and SQLite ledger under `data/calibration/<pack-hash>/live/<calibration-id>/`.
+- Exactly 80 logical calls are prepared before any dispatch: one blind and one alignment request per fixture, in pack order, using the same prompt/schema builders, model IDs, Balanced routing policy, and primary limits as the mock/primary path. A non-80 preparation, missing label, missing/mismatched PNG/SVG, or route mismatch fails before spending.
+- Each call is a separate request; the blind payload contains only the visible presentation. Labels never enter the blind request. The runner does not retry wrong content and never drops a fixture; transport retries remain limited to the certified unprocessed-refusal path.
+- The budget account is created with the authorized cap. A budget pause, admission refusal, or post-loop overshoot/pause event marks the run `paused_budget` and `liveEligible=false`. The artifact records known cost, unknown calls/attempts, provider/model mix including missing-identity entries, and the budget summary.
+- The artifact is written after the ledger is checkpointed and closed; `manifest.json` hashes every file. `npm run report -- --run <calibration-id>` reads `calibration.json`; a custom `--out` root is reported as `reportCommand` and can be resolved with `--calibration-root`.
+- The first live run (`962b114c-b685-4d29-b846-606fc13fbabf`) executed 80/80 review calls, 0 generation calls, 80 transport attempts, and 40/40 observations. Known cost was USD 1.3060874628; 2 calls had unknown cost (network timeouts). No budget pause or overshoot occurred.
+- 38 calls were transport-validated; 7 of those were rejected by calibration content validation, leaving 31 fully valid calibration responses. 40 calls ended with `finish_reason:"length"` at the primary 4096-token review cap; 2 calls were uncertain network timeouts. The score reports 49 role-level errors and 3 abstentions. All four conservative gates failed:
+  - text blind: sensitivity 0/10, specificity 7/10;
+  - text alignment: sensitivity 3/10, specificity 3/10;
+  - SVG blind: sensitivity 2/10, specificity 6/10;
+  - SVG alignment: sensitivity 0/10, specificity 4/10.
+- The dominant cause is output truncation under the primary 4096 cap. P46 had already observed a reasoning reviewer exhausting a 2048/4096 cap and used an 8192-token probe cap for its review probes; the primary route remains 4096, and P48 correctly exercised the primary limit. A different reviewer model, output cap, or other configuration requires a new explicitly authorized calibration and a preserved prior result; the current artifact must not be overwritten or relabeled.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/calibration/live.test.ts tests/calibration/score.test.ts` | exit 0; 27 tests passed. |
+| `npm run typecheck` | exit 0. |
+| `npm run lint` | exit 0. |
+| `npm run calibration -- --live --allow-paid --labels data/calibration/b2de955.../labels.human.csv --max-cost 2` | exit 1 as expected for failed gates; 80 review calls, 0 generation calls, 40 observations, known cost USD 1.3060874628, 2 unknown calls, all four gates false; full artifact written. |
+| `npm run report -- --run 962b114c-b685-4d29-b846-606fc13fbabf` | exit 0; prints the live calibration artifact. |
+| Manifest re-hash of all 46 files | 0 mismatches; 20 PNG, 20 SVG, 80 request rows, 80 response rows; manifest hash `541f7326e1c1f1fb551a018c1a8239e4b1ebf5a014888be107109931d181e4c3`. |
+
+**Decision-reviewer:** the first static pass found five Low findings: a final-call budget overshoot was not reflected in the success verdict; provider-mix null identities were dropped and totals did not reconcile; `coverage.reviewed` counted observation rows rather than executed role reviews; the report CLI could not locate a non-default `--out` artifact; and a budget-refused prepared attempt was counted as unknown-cost exposure. All five were fixed (post-loop budget events, unknown-identity mix entries, executed-role coverage, `--calibration-root`, prepared-state exclusion) and covered by tests. The verification pass confirmed four fixes and one Low residual on the report-root workflow; the residual was fixed with a `reportCommand` hint, documented `--out`/`--calibration-root` pairing, and an offline report-root test. The final verification pass found no material findings.
+
+**Revised-model attempt:** after the failed P48 run, the operator replaced the reviewers with `deepseek/deepseek-v4.1-flash-1017` and `minimax/minimax-m3.1-flash`. Two fresh P46 live preflights were run with a new operator confirmation (`data/p48-routing-confirmation.json`) and a USD 0.50 cap. Both failed 3/3: `9e0c974b-f843-4c9f-8b73-f4fda6981a58` had a text-reviewer schema violation (`answerStatus:"no_unique_answer"` with `chosenOption:"D"` and `visualLegibility:"legible"` on a text probe); `4d0ecd1f-ef50-449a-bd5f-c3b01aadd809` had a valid text response but the vision reviewer ended `failed_known` with `LENGTH` at the primary 4096 cap. Known cost was USD 0.012721156 under the USD 0.50 cap. No P48 calibration was started with the new models; the previous P48 artifact remains the only calibration result. The new models are not P46-qualified.
+
+**Newest-model attempt:** the operator then supplied `openai/gpt-6-luna` (text) and `google/gemini-3.5-flash-lite` (vision). P46 `732ba854-43bd-41ec-a190-708be62f01d3` passed 3/3 (strict schemas valid, vision interpreted; total USD 0.0026845). P48 `1c9b373e-97ce-42a8-a078-75b341347501` then completed 80/80 review calls, 0 generation calls, and 40/40 observations with known cost USD 0.1052989 and 20 unknown-cost calls; no budget pause/overshoot. All four gates failed: text blind 7/10 sensitivity, 10/10 specificity (3 abstentions); text alignment 20/20 provider errors; SVG blind 0/10 sensitivity, 3/10 specificity (4 strict-schema errors); SVG alignment 0/10 sensitivity, 9/10 specificity (1 strict-schema error). The text-alignment errors are the provider rejection `Invalid JSON schema: regex lookaround is not supported. Found at $.properties.fields.properties.explanation.properties.factIds.items.pattern.` (`invalid_json_schema`); `FACT_ID_PATTERN` contains a negative lookahead that OpenAI structured outputs reject. Even with that pattern fixed, the text-blind and SVG sensitivities are below the fixed 9/10 gate, so this model pair is not viable. The artifact is `data/calibration/b2de955.../live/1c9b373e-97ce-42a8-a078-75b341347501/` with manifest hash `82b44d5fdcb2dd2dd6616de4649ed98da3daa43ef9eca5304f172010f8df39d3`; prior artifacts remain unchanged.
+
+**Manual acceptance:** not granted. The human must confirm the actual scores and limitations, and all four sensitivity/specificity gates must pass before a primary freeze. The current run fails all four gates; P48 remains open. The next step requires an explicit user decision and authorization for a revised reviewer/configuration calibration (for example, a higher primary review output cap or a different reviewer model) while preserving this result; do not edit the fixture labels or thresholds.
+
+**Out of scope, unchanged:** primary-candidate generation, remediation, claims of precise reviewer accuracy, and any live run beyond the authorized P48 calibration.
+
+## P48 contract hardening and offline diagnostics — 2026-11-07
+
+**State:** `CONTRACT-HARDENED / P46-QUALIFIED FOR HAIKU 5.5 + GEMINI 3.8 FLASH / PILOT PENDING`. The original P48 artifacts remain unchanged. P48 is still not accepted because the SVG and text-alignment gates have not been calibrated with the new model pair.
+
+**Files**
+
+- Contract/schema: `src/families/contracts.ts` (lookaround-free `FACT_ID_PATTERN`), `src/ai/schemas.ts` (`UNSUPPORTED_SCHEMA_PATTERN`, recursive pattern compatibility checks, `patternProperties` handling).
+- P46: `src/ai/preflight.ts` (five live probes: spec + blind_text + alignment_text + blind_vision + alignment_vision; real alignment probe payloads; corrected `validateProbeContent` for `fields.image`, modality legibility, alignment overall/applicability), `src/cli/preflight.ts` (alignment probe caps).
+- Calibration scoring: `src/calibration/score.ts` (explicit defects with `ambiguity:"none"` or `"present"` now count; `"uncertain"` remains abstention).
+- Tests: `tests/ai/preflight.test.ts` (39 tests, including five-probe plan, alignment contracts, pattern rejection), `tests/calibration/score.test.ts` (17 tests, including SVG request/image fidelity and the ambiguity fix).
+- Evidence/docs: `docs/PROVIDER_SMOKE_TESTS.md`, `README.md`, this entry.
+
+**Observable behavior**
+
+- `FACT_ID_PATTERN` is now lookaround-free and exactly equivalent to the previous pattern: an exhaustive comparison found 0 mismatches over 3,332,988 accepted `f`/`p`/`s` IDs and the five `r-` IDs. `assertStrictJsonSchema` rejects lookaround, backreferences, named groups, atomic groups, conditionals, inline flags, Unicode property escapes, quoted literals, unsupported anchors, and possessive quantifiers before any paid call.
+- P46 now exercises all four actual review contracts. The live plan has five probes; `alignment_text` uses the real alignment payload/schema with text image `not_applicable`, and `alignment_vision` requires an applicable image field and a consistent overall. The previous `data.image` path bug and the missing text-legibility check are fixed.
+- P46 probes the four review roles at the production 4096 cap (spec stays at 2048, stricter than the production 8192). The earlier 5/5 run `77304e8f-18a8-4e7d-9074-d08e44887456` used 8192 review caps and is superseded because it did not certify the production limit. The first production-cap attempt `95646c16-6bdb-412f-b8e0-c12995d443fc` paused on the spec probe (the conservative 8192 spec reservation was USD 1.536, above the USD 0.50 cap); keeping the spec probe at 2048 kept it under the cap. The final production-cap run `a1ea6c1e-da12-4288-a9cf-b0d6e50440d2` passed 5/5 under USD 0.50: spec `openai/gpt-6.1-sol`/OpenAI USD 0.001572; blind_text `anthropic/claude-haiku-5.5`/Azure USD 0.0002214; alignment_text Haiku/Azure USD 0.0006208; blind_vision `google/gemini-3.8-flash`/Google USD 0.00286425; alignment_vision Gemini/Google USD 0.00567525; total USD 0.0109537. The alignment_text probe proves the lookaround-free schema is accepted; the alignment_vision probe proves the PNG is processed and the alignment contract is valid.
+- Reviewer follow-up: the probe caps now match the production review caps; the diagnostic re-scores were moved outside the immutable live artifact directories and both manifests re-verified at 46/46 files with 0 hash mismatches; the alignment-vision prompt's contradictory `not_applicable` instruction is fixed and asserted for both variants.
+- Offline SVG audit of P48 `1c9b373e...`: all 20 visible PNG/SVG hashes match the pack and run artifact, all SVG option labels A-D are present, blind/alignment requests contain the visible presentation and no truth labels, and alignment requests contain the original DSL/proof plus the corrupted visible presentation. `cal-symmetry-04` has an unchanged image because its mutation changes only `rules`; the contradictory rule is in the visible text, and the model ignored it.
+- Scoring correction: explicit `no_unique_answer`/`cannot_determine` responses with accepted issue codes but `ambiguity:"none"` were being dropped as abstentions. After the fix, re-scoring the stored newest P48 observations without new calls yields text blind **10/10 sensitivity, 10/10 specificity, 0 abstentions, gate PASS** (previously 7/10, 3 abstentions). The original P48 text blind improves from 0/10 to 2/10 because its responses were dominated by `LENGTH`. Text alignment remains 20/20 provider errors; SVG blind remains 0/10 sensitivity / 3/10 specificity; SVG alignment remains 0/10 sensitivity / 9/10 specificity. Corrected scores are diagnostic-only at `data/calibration/b2de955.../diagnostics/<run-id>/score-fixed.json`, outside the immutable live artifact directories; original `score.json` files and manifests are unchanged.
+- The audit separates implementation from model behavior: text blind is not model-limited (the scoring was), text alignment was a schema-portability error (now fixed), and the SVG 0/10 results survive the audit (the model ignored a text-only contradiction and missed image defects), so the vision model replacement is justified.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/preflight.test.ts` | 39 passed. |
+| `npm exec -- vitest run tests/calibration/score.test.ts` | 17 passed. |
+| `npm exec -- vitest run tests/experiment/full-mock.test.ts` | 4 passed (P45 repeat after the request-contract change). |
+| `npm run check` | 48 files / 629 tests passed; lint, typecheck, build passed. |
+| `npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation data/p46-routing-confirmation-0010.json --db /tmp/p46-preflight-haiku-gemini-prodcap2.sqlite` | exit 0; five probes at the production review caps, all schema valid, vision interpreted, total USD 0.0109537. |
+| Offline P48 re-score | no API calls; newest text blind 10/10, text alignment 0/10 (provider errors), SVG blind 0/10, SVG alignment 0/10; original artifacts unchanged. |
+
+**Manual acceptance:** P46 is qualified for the Haiku 5.5 / Gemini 3.8 Flash pair. The separate development pilot and any new P48 validation set/protocol remain pending explicit user authorization and recording. P48 is not accepted.
+
+**Out of scope, unchanged:** primary-candidate generation, remediation, claims of precise reviewer accuracy, and any live run beyond the authorized P46 preflight.
+
+## P48 development pilot — 2026-11-07
+
+**State:** `PILOT INCOMPLETE / NOT ACCEPTED / NOT FREEZE EVIDENCE`. The operator approved 8 cases / 16 calls with a USD 0.10 cap. The pilot ran 14/16 calls and recorded 8/8 observations; it paused before the `cal-paths-95` alignment_vision dispatch because the next conservative vision reservation plus the known actual cost exceeded the cap. The two `cal-paths-96` calls were not executed. P48 remains not accepted.
+
+**Files**
+
+- Pilot pack/labels: `src/calibration/fixtures.ts` (`buildCalibrationPilotPack`, new slots 95/96, `ranking`/`matching`/`matrix`/`paths`), `src/calibration/pilot.ts` (`buildCalibrationPilotLabels`, `calibrationPilotPass`).
+- Runner/artifact: `src/calibration/live.ts` (`expectedCalls` support), `src/calibration/live-artifacts.ts` (`mode:"pilot"`, `pilot.json`, pilot limitations, `freezeEligible:false`).
+- CLI/tests: `src/cli/calibration.ts` (`--pilot`, cap enforcement at USD 0.10, separate `data/calibration-pilot/<id>/`), `tests/calibration/pilot.test.ts` (3 tests), `tests/calibration/live.test.ts` (pilot guards).
+- Evidence: `data/calibration-pilot/c970ee24-600d-4008-9466-91ff353713e5/` with `pilot.json`, `score.json`, `requests.jsonl`, `responses.jsonl`, `labels.csv`, `pilot.sqlite`, 4 PNG + 4 SVG, and `manifest.json` (14 files, manifest hash `02a655be5545c1df1e4dd0eaef749e2e237503de182ae0524e3fb6c3f98079e6`, 0 hash mismatches).
+
+**Observable behavior**
+
+- Pilot cases are code-derived development cases, disjoint from the 40 calibration fixtures and from any future v2 set. Truth is code-derived (`provenance:"mock_test_only"`, `humanVerified:false`) and the artifact is explicitly `freezeEligible:false`.
+- Text blind: 2 TP / 2 TN / 0 errors, PASS (2/2 defective, 2/2 sound).
+- Text alignment: 1 TP / 0 TN / 3 errors. `cal-ranking-95`, `cal-matching-95`, and `cal-matching-96` returned `overall:"pass"` while `explanation` (and once `hint`) was `uncertain`; the validator rejected the contradiction. The v1 prompt says "The overall field is advisory; code computes the authoritative overall status," while the strict schema rejects an inconsistent overall; this is a prompt/schema contradiction, so the errors are not purely model inability. A v2 prompt that states the derived overall rule explicitly is the proposed fix. The first pilot also used independent slot-95/96 bases; the code now derives each defective pilot case from the same base as its sound twin, so the existing artifact's 2/2 contrast is confounded by the base difference and future pilots will use true twins.
+- SVG blind/alignment: `cal-matrix-95` and `cal-matrix-96` both passed in both modes (1 TP / 1 TN each); the vision model detected the contradictory-XOR matrix defect. `cal-paths-95` blind ended `finish_reason:"length"` at the 4096 cap; its alignment was budget-refused; both `cal-paths-96` calls were not executed. The paths cases are unresolved.
+- Known cost: **USD 0.0535287**, 0 unknown calls, no budget breach. The pilot paused at 14/16 and therefore fails its 16/16 criterion. The cap was not exceeded; the conservative vision reservation plus known actual cost exceeded the approved USD 0.10 admission bound.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/calibration/pilot.test.ts` | 3 passed. |
+| `npm exec -- vitest run tests/calibration/live.test.ts tests/calibration/pilot.test.ts` | 16 passed. |
+| `npm run check` | 49 files / 635 tests passed; lint, typecheck, build passed. |
+| `npm run calibration -- --pilot --allow-paid --max-cost 0.10` | exit 1; 14/16 calls, 8/8 observations, known cost USD 0.0535287, status `paused_budget`, pilotPass false, artifact and manifest written. |
+| Pilot manifest re-hash | 14/14 files, 0 hash mismatches; 4 PNG + 4 SVG, 14 request/response rows. |
+
+**Manual acceptance:** not granted. The pilot is incomplete and does not resolve the paths cases. A supplemental budget above USD 0.10 (or a focused paths-only pilot) is required to finish the paths evidence; the text-alignment overall inconsistency needs a decision between a stronger prompt rule and a different text model. The pre-approved fallback P46 for Claude Sonnet 5.5 remains available if the SVG paths behavior cannot be established with Gemini 3.8 Flash.
+
+**Fallback P46:** the pre-approved Sonnet 5.5 fallback `1edc248c-25db-4924-b368-c39e9cf69572` (Haiku 5.5 text, Sonnet 5.5 SVG) passed spec, blind_text, alignment_text, and blind_vision but failed `alignment_vision` with `hint cannot be not_applicable`; Sonnet set the hint field to `not_applicable`, which the contract allows only for image. Known cost USD 0.0165117. Sonnet 5.5 is not P46-qualified; Gemini 3.8 Flash remains the qualified vision model. The fallback artifact is `data/preflight/1edc248c-25db-4924-b368-c39e9cf69572/`.
+
+**Out of scope, unchanged:** primary-candidate generation, remediation, claims of precise reviewer accuracy, and any live run beyond the approved pilot/P46 scope.
+
+## P48 alignment contract v2 and deterministic audit — 2026-11-07
+
+**State:** `ALIGNMENT CONTRACT V2 IMPLEMENTED / OFFLINE AUDIT COMPLETE / NEW PILOT PENDING BUDGET`. The model no longer generates `overall`; the application derives it from field statuses. The deterministic duplicate-option guard and the paths PNG/scoring audit are verified offline. The original pilot `c970ee24...` remains an incomplete diagnostic artifact and is not comparable to a new same-base pilot. P48 is still not accepted.
+
+**Files**
+
+- Alignment contract: `src/ai/schemas.ts` (fields-only `ALIGNMENT_REVIEW_RESPONSE_SCHEMA`, legacy stored union, v2 JSON schema), `src/ai/review-alignment.ts` (v2 prompt/schema versions, app-derived overall, no model overall, `modelOverall:null`, `overallMismatch:false` compatibility), `src/runner/review-slot.ts` (stored union; completed payload no longer requires a model overall), `src/calibration/run.ts` and `src/calibration/score.ts` (derive overall from fields; no model-overall check), `src/ai/preflight.ts` (fields-only alignment probes, derived overall/applicability).
+- Prompts: `src/ai/prompts/v2/alignment-text.txt`, `src/ai/prompts/v2/alignment-vision.txt`; `src/experiment/provenance.ts` requires the v2 alignment prompts.
+- Reasoning effort: `src/ai/config.ts` (`reasoningEffort: low|medium|high` -> `reasoning_effort`), `src/cli/preflight.ts` and `src/cli/calibration.ts` (`--vision-reasoning-effort`).
+- Tests: `tests/ai/review-alignment.test.ts`, `tests/ai/preflight.test.ts`, `tests/ai/mock.test.ts`, `tests/calibration/score.test.ts`, `tests/calibration/live.test.ts`, `tests/calibration/pilot.test.ts`, `tests/experiment/provenance.test.ts`.
+- Docs: `docs/PROVIDER_SMOKE_TESTS.md`, this entry, `README.md`.
+
+**Observable behavior**
+
+- The model returns only `fields`; a model-supplied `overall` is an extra property and is rejected. `deriveAlignmentOverall` is authoritative. Legacy stored alignment reviews with `overall` remain readable through the storage union, but new reviews never trust a model overall.
+- The v2 text prompt requires text `image:not_applicable`, forbids `not_applicable` on question/rulesAndClues/options/hint/explanation, and instructs the model not to return overall. The v2 vision prompt requires `image` applicable and forbids `not_applicable` on all other fields.
+- The deterministic audit proves `cal-matching-96` is a deliberate `duplicate_correct_option` mutation: `ChoiceSetSchema` rejects duplicate choice values and an ambiguous correct label, and `assertAssembledPresentation` rejects duplicate visible option texts. The production pipeline would reject such a question before AI review; the Haiku miss still counts against calibration.
+- The paths audit proves the `cal-paths-96` PNG/SVG hashes, visible A-D labels, corrupted alignment payload, original DSL/proof, and `CLOSED_ROUTE_EDGE` -> `assets` -> `image` scoring mapping are faithful. The `cal-paths-95` blind `LENGTH` used 4079 completion tokens, 3931 of them hidden reasoning and only about 148 content; the 4096 cap was consumed by reasoning.
+- Gemini 3.8 Flash advertises `reasoning_effort` on all active endpoints. The request builder now supports `reasoningEffort` and the P46/calibration CLIs expose `--vision-reasoning-effort`; a low-effort paths pilot is the targeted next test. Raising the cap to 8192 remains the second option because it increases the cost of all 80 calibration calls.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/review-alignment.test.ts tests/ai/preflight.test.ts tests/ai/mock.test.ts tests/calibration/score.test.ts tests/calibration/live.test.ts tests/calibration/pilot.test.ts` | 94 passed. |
+| `npm exec -- vitest run tests/calibration/pilot.test.ts` | 7 passed, including the duplicate-validator and paths-fidelity audits. |
+| `npm run check` | 49 files / 639 tests passed; lint, typecheck, build passed. |
+| No paid calls were made for the contract v2 or deterministic audit. | The original pilot and P46 artifacts remain unchanged. |
+
+**Manual acceptance:** the offline contract fix and deterministic audit are complete. P45/P46 must be repeated for the prompt/schema change, and a new same-base pilot with new development fixtures, the v2 contract, and `--vision-reasoning-effort low` requires a separately approved budget. P48 remains not accepted.
+
+**Out of scope, unchanged:** primary-candidate generation, remediation, claims of precise reviewer accuracy, and any live run beyond the approved pilot/P46 scope.
+
+## P48 v2 pack preparation and P46 v2 result — 2026-11-07
+
+**State:** `V2 PACK PREPARED / P46 V2 FAILED ON ALIGNMENT_TEXT / PILOT NOT RUN`. The version-2 40-fixture validation pack and pending labels are ready offline. The five-probe v2 P46 failed `alignment_text` because Haiku 5.5 set `hint:not_applicable` despite the v2 contract, so the new 6-case/12-call same-base pilot was not executed. P48 remains not accepted.
+
+**Files**
+
+- V2 pack: `src/calibration/fixtures.ts` (`CALIBRATION_PACK_VERSION_V2`, `buildCalibrationPackV2`, version union), `src/domain/experiment.ts` (two- or three-digit slot IDs), `src/cli/calibration.ts` (`--prepare-v2`), `tests/calibration/fixtures-v2.test.ts`.
+- New pilot: `src/calibration/fixtures.ts` (6 cases: ranking sound/no-valid/duplicate and paths sound/closed-route/duplicate, same-base twins at slots 97-99), `src/calibration/pilot.ts` (label-count-aware pass criterion), `src/cli/calibration.ts` (12 calls, USD 0.25 cap), `tests/calibration/pilot.test.ts`.
+- P46 artifact: `data/preflight/362cfedd-10de-42aa-b6e8-e7f4f281f633/`.
+- V2 pack artifacts: `data/calibration-v2/c8bacdf030974d1c4c56fc3ec79cf2d43e19c8c21514da63bd26eb01cf1442dc/`.
+- Docs: `docs/PROVIDER_SMOKE_TESTS.md`, `docs/experiment-protocol.md`, `README.md`, this entry.
+
+**Observable behavior**
+
+- `npm run calibration -- --prepare-v2` produced a 40-fixture version-2 pack at slots 101-104 / fixture IDs 05-08, 20 sound / 20 defective, 20 text / 20 SVG, with 60 image files, `gallery.html`, `pack.json`, and `labels.pending.csv`. It is disjoint from the v1 pack (slots 91-94) and the development pilot (slots 95-99). No paid call was made.
+- `--pack-version 1|2` now selects the pack for `--accept-proposed`, `--verify-labels`, `--mock`, and `--live`; the default remains version 1. The v2 pending labels can therefore be accepted, verified, mock-scored, or used by a v2 live calibration without another code change.
+- P46 `362cfedd-10de-42aa-b6e8-e7f4f281f633` used the v2 fields-only contract and `--vision-reasoning-effort low`. Spec, blind_text, blind_vision, and alignment_vision passed; alignment_text failed with `hint cannot be not_applicable` (Haiku 5.5 via Azure). Known cost USD 0.00963285 under the combined USD 0.25 authorization; the pilot budget remains unspent.
+- The new pilot was implemented; it was later run as `2ebf4403-947f-486a-b2e4-a2f924f05e0b` and failed the SVG paths combinations (see the next section): 6 development cases (3 text: sound/no-valid/duplicate; 3 paths: sound/closed-route/duplicate), same-base twins, 12 calls, v2 contract, low vision reasoning effort, USD 0.25 cap, separate `data/calibration-pilot/<id>/` artifact.
+- The v2 pending labels require P47-like human verification before a v2 P48 calibration.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/calibration/fixtures-v2.test.ts` | 1 passed; 40 fixtures, version 2, slots 101-104, IDs 05-08, disjoint from v1. |
+| `npm exec -- vitest run tests/calibration/pilot.test.ts` | 7 passed; 6 cases/12 calls, same-base twins, duplicate/paths audits, label-count-aware pass. |
+| `npm run check` | 50 files / 644 tests passed; lint, typecheck, build passed. |
+| `npm run calibration -- --prepare-v2` | exit 0; pack hash `c8bacdf030974d1c4c56fc3ec79cf2d43e19c8c21514da63bd26eb01cf1442dc`; pending labels written. |
+| `npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation data/p46-routing-confirmation-1709.json --vision-reasoning-effort low --db /tmp/p46-preflight-v2-low.sqlite` | exit 1; 4/5, alignment_text `hint cannot be not_applicable`, total USD 0.00963285. |
+| `npm run calibration -- --pilot ...` | at that point not run; later run as `2ebf4403...` (see next section). |
+
+**Manual acceptance:** the v2 pack is ready for human labeling. P46 is not qualified for `alignment_text` with Haiku 5.5; the next step is a separate `ALIGNMENT_TEXT_MODEL` (candidate: `google/gemini-3.8-flash`, which followed the hint rule in alignment_vision) and a new P46, then the approved 6-case/12-call pilot. The remaining combined budget is USD 0.24036715.
+
+**Out of scope, unchanged:** primary-candidate generation, remediation, claims of precise reviewer accuracy, and any live run beyond the approved pilot/P46 scope.
+
+## P48 separate alignment_text model and 6-case pilot — 2026-11-07
+
+**State:** `TEXT CONFIG PASSES / SVG PATHS FAILS / PILOT NOT ACCEPTED`. The separate `ALIGNMENT_TEXT_MODEL` fixes the Haiku applicability failure and the 6-case pilot passes both text combinations. Both SVG paths combinations fail; Gemini 3.8 Flash missed the closed-route and duplicate paths defects. P48 remains not accepted.
+
+**Files**
+
+- Live config: `src/ai/config.ts` (`alignmentText` model, `ALIGNMENT_TEXT_MODEL`, `alignment_text_reviewer` role, fallback to `REVIEWER_MODEL`, role separation/correlations), `src/cli/preflight.ts` and `src/cli/calibration.ts` (model IDs, alignment_text route), `src/calibration/live-artifacts.ts` (artifact records the alignment text model).
+- Tests: `tests/ai/preflight.test.ts` (alignment text override/fallback/separation), `tests/calibration/live.test.ts` (artifact model projection).
+- Evidence: P46 `data/preflight/d21d90c7-ab0d-4938-aff6-1912de82e93c/`; v2 labels `data/calibration-v2/c8bacdf.../labels.human.csv`; pilot `data/calibration-pilot/2ebf4403-947f-486a-b2e4-a2f924f05e0b/`; aborted pilot `data/calibration-pilot/3e1cb2e5-04f3-4eeb-8a82-c9bfe72d0888/`.
+- Docs: `docs/PROVIDER_SMOKE_TESTS.md`, `README.md`, this entry.
+
+**Observable behavior**
+
+- P46 `d21d90c7-ab0d-4938-aff6-1912de82e93c` passed 5/5 with Haiku blind_text, Gemini alignment_text, Gemini vision, and low vision reasoning effort; total USD 0.0135039. The alignment_text probe now follows the v2 hint/image applicability contract.
+- The v2 pending labels were reviewed by Kilo on the operator's explicit delegation, audited against the pack truth and visible artifacts, accepted with `--accept-proposed --pack-version 2 --auditor "Lexa (delegated to Kilo)"`, and verified. `labels.human.csv` has 40 rows, labels hash `2c4e2e45728a0d48492e905137ab9de2be76509f3c8dff0e4726e9ec0237fec5`, provenance `human`, `human_verified:true`, and per-row notes disclosing that this was not independent human inspection. The calibration artifact labels block records `reviewMethod` (`independent_human`, `operator_delegated_ai`, or `code_derived`; the v2 labels are `operator_delegated_ai`, the pilot labels are `code_derived`) and the unique notes. A freeze requiring independent human verification must reject or explicitly caveat a non-`independent_human` method; the operator can re-review the labels independently.
+- Pilot `2ebf4403-947f-486a-b2e4-a2f924f05e0b` completed 12/12 calls and 6/6 observations at USD 0.0629549. Text blind and text alignment both pass 2/2 defective and 1/1 sound. SVG paths fail: `cal-paths-97` sound passes; `cal-paths-98` `CLOSED_ROUTE_EDGE` is classified as sound in both blind and alignment; `cal-paths-99` `DUPLICATE_CORRECT_OPTION` has a blind strict-schema error (3316 completion tokens) and is classified as sound in alignment. `schemaValidCalls` is false, so the pilot is not accepted.
+- The earlier pilot attempt `3e1cb2e5-04f3-4eeb-8a82-c9bfe72d0888` was aborted by the shell timeout at 11/12 calls (known cost USD 0.05684915, one dispatching vision call with unknown exposure bounded by its reservation). It has no final manifest and is not used as a result.
+- Total known spend across the P46/pilot attempts at that point was USD 0.1429408; the later v3 experiment and current remaining budget are recorded in the next section.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/ai/preflight.test.ts tests/calibration/live.test.ts` | 56 passed. |
+| `npm run check` | 50 files / 644 tests passed; lint, typecheck, build passed. |
+| `npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation data/p46-routing-confirmation-1738.json --vision-reasoning-effort low --db /tmp/p46-preflight-alignment-gemini.sqlite` | exit 0; 5/5, total USD 0.0135039. |
+| `npm run calibration -- --accept-proposed --pack-version 2 --labels .../labels.human.csv --auditor "Lexa (delegated to Kilo)"` | exit 0; 40 rows, labels hash `2c4e2e...`, provenance human, human_verified true. |
+| `npm run calibration -- --verify-labels .../labels.human.csv --pack-version 2 --auditor "Lexa (delegated to Kilo)"` | exit 0; 40 fixtures verified. |
+| `npm run calibration -- --pilot --allow-paid --max-cost 0.18 --vision-reasoning-effort low` | exit 1; 12/12 calls, 6/6 observations, USD 0.0629549; text combinations pass, SVG combinations fail. |
+| Pilot manifest re-hash | 12/12 files, 0 hash mismatches. |
+
+**Manual acceptance:** the text configuration is accepted for the next stage; the SVG paths configuration is not. The next step is a stronger SVG reviewer (the previously mentioned Claude Sonnet 5.5 reserve) under the v2 P46 and a paths-focused pilot, or a paths prompt/image investigation. The v2 labels' operator-delegated provenance must be independently re-reviewed before any freeze that requires human verification.
+
+**Out of scope, unchanged:** primary-candidate generation, remediation, claims of precise reviewer accuracy, and any live run beyond the approved pilot/P46 scope.
+
+## P48 deterministic paths audit and vision prompt v3 — 2026-11-07
+
+**State:** `DETERMINISTIC AUDIT PASSES / V3 PROMPT-ONLY EXPERIMENT FAILED / NO MODEL SWAP`. The existing paths validator rejects both deliberate mutations when applied to the actual serialized SVG/PNG, and the new audit is separate from the model score. The v3 vision prompts passed P46 but the prompt-only paths pilot did not fix the behavior: the sound blind selected the wrong option, the closed-route case was still classified as sound in both modes, and the duplicate case was budget-refused. The pilot remains FAIL; no model swap was performed.
+
+**Files**
+
+- Deterministic audit: `src/calibration/asset-audit.ts` (parse serialized SVG, `pathsRenderer.assertScene`, raster equivalence, normalized option crop hashes, duplicate groups, valid-option count), `tests/calibration/asset-audit.test.ts`, `src/cli/calibration.ts` (`--audit-assets`).
+- Exact diagnostics: `src/calibration/run.ts` (`formatZodIssues`; blind/alignment schema errors now include the exact issue path/message).
+- Vision prompt v3: `src/ai/prompts/v3/blind-vision.txt`, `src/ai/prompts/v3/alignment-vision.txt`, `src/ai/review-vision.ts`, `src/ai/review-alignment.ts`, `src/experiment/provenance.ts`, tests `review-vision`, `review-alignment`, `provenance`.
+- Paths-only pilot: `src/calibration/fixtures.ts` (`buildPathsPilotPack`, slots 105-107 / IDs 09-11), `src/calibration/pilot.ts` (skip empty combinations), `src/cli/calibration.ts` (`--pilot-set paths`, 6 calls), `src/calibration/live-artifacts.ts` (`pilotSet`).
+- Evidence: P46 v3 `data/preflight/2082fa49-994b-4e45-85c4-7b59a11da941/`; paths pilot `data/calibration-pilot/7fad3123-4b0b-4912-b043-7c03b11b6c3c/`.
+- Docs: `docs/SVG_PATHS_FAILURE_ANALYSIS.md`, `docs/PROVIDER_SMOKE_TESTS.md`, `docs/experiment-protocol.md`, `README.md`, this entry.
+
+**Observable behavior**
+
+- `npm run calibration -- --audit-assets` and `tests/calibration/asset-audit.test.ts` reproduce the existing-validator results on the actual assets: `cal-paths-97` PASS with 4 distinct crops and 1 valid option; `cal-paths-98` `UNEXPECTED_WALL` with 4 distinct crops and 0 valid options; `cal-paths-99` `WRONG_ROUTE` with 3 distinct crops, duplicate A/B, and 2 valid options; all three are raster-equivalent (0 pixel difference). The audit is a separate deterministic evidence channel and does not rewrite the model's false negatives.
+- The vision prompts are versioned v3. The blind prompt requires all-option route tracing, pairwise tile comparison, route-vs-wall verification, distractor tolerance, duplicate/no-valid handling, and a short final reasoning field. The alignment prompt requires exactly one valid option, allows intentional wall-crossing distractors, fails `options`/`image` for an invalid or duplicated correct option, and clarifies that reporting a defective image is not adjudication. The fields-only alignment schema and image/hint applicability rules are unchanged.
+- P46 v3 `2082fa49-994b-4e45-85c4-7b59a11da941` passed 5/5 with the same models and low vision effort; total USD 0.01422115.
+- The prompt-only paths pilot `7fad3123-4b0b-4912-b043-7c03b11b6c3c` used new same-base paths cases at slots 105-107 and the v3 prompts. It ran 5/6 calls and 3/3 observations at USD 0.01868025, paused on the `cal-paths-11` blind budget reservation, and failed: `cal-paths-09` sound blind selected A while the alignment named D as the unique valid route; `cal-paths-10` closed-route was classified as sound in both modes; `cal-paths-11` duplicate blind was budget-refused and its alignment was not executed. The pilot pass is false.
+- The v3 prompt change invalidates the earlier vision calibration evidence under the reviewer-change rule. The full suite passed 51 files / 646 tests at that point; the later medium/Sonnet changes passed 51 files / 649 tests.
+- At that point total known spend was USD 0.1758422 (USD 0.1429408 + P46 v3 USD 0.01422115 + paths pilot USD 0.01868025); the later medium/Sonnet experiments are recorded in the next section.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/calibration/asset-audit.test.ts` | 1 passed; 97 pass, 98 `UNEXPECTED_WALL`, 99 `WRONG_ROUTE` + duplicate A/B, all raster-equivalent. |
+| `npm run calibration -- --audit-assets` | exit 0; pack `7b93c87f...`; 97 pass, 98 fail/0 valid, 99 fail/3 distinct/duplicate A,B/2 valid. |
+| `npm exec -- vitest run tests/calibration/pilot.test.ts tests/ai/review-vision.test.ts tests/ai/review-alignment.test.ts tests/experiment/provenance.test.ts` | 35 passed. |
+| `npm run check` | 51 files / 646 tests passed; lint, typecheck, build passed. |
+| `npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation data/p46-routing-confirmation-1920.json --vision-reasoning-effort low --db /tmp/p46-preflight-v3.sqlite` | exit 0; 5/5, total USD 0.01422115. |
+| `npm run calibration -- --pilot --pilot-set paths --allow-paid --max-cost 0.08 --vision-reasoning-effort low` | exit 1; 5/6 calls, 3/3 observations, USD 0.01868025, `paused_budget`, pilot pass false. |
+
+**Manual acceptance:** the deterministic audit is accepted as a separate production-hardening/diagnostic channel; it does not change the model score. The v3 prompt-only experiment is recorded as a failed/incomplete paths experiment; at that point no model swap had been performed. The later medium-effort and Sonnet 5.5 experiments are recorded in the next section. Any prompt/schema/fixture change requires the corresponding P45/P46/pilot/P48 repeat. The v2 labels' operator-delegated provenance must be independently re-reviewed before a freeze that requires human verification.
+
+**Out of scope, unchanged:** primary-candidate generation, remediation, claims of precise reviewer accuracy, and any live run beyond the approved pilot/P46 scope.
+
+## P48 medium-effort and Sonnet 5.5 paths experiments — 2026-11-07
+
+**State:** `CLOSED-ROUTE STILL MISSED / DUPLICATE DETECTED BY SONNET / PATHS PILOT FAIL / NO V2 P48`. The medium-effort Gemini experiment and the Sonnet 5.5 model experiment both missed the closed-route defect in both modes. Sonnet 5.5 detected the duplicate defect in both blind and alignment in a focused duplicate-only diagnostic. The deterministic audit still catches both mutations independently of the model. The current paths pilot remains FAIL and no v2 P48 calibration was run.
+
+**Files**
+
+- New development cases: `src/calibration/fixtures.ts` (`buildPathsPilotPackV2` slots 108-110 / IDs 12-14; `buildPathsDuplicatePilotPack` sound+duplicate; `buildPathsDuplicateOnlyPilotPack` duplicate-only), `src/cli/calibration.ts` (`--pilot-set paths-medium`, `--pilot-set paths-duplicate`, `--pilot-set paths-duplicate-only`, `--audit-set`), `tests/calibration/pilot.test.ts`, `tests/calibration/asset-audit.test.ts`.
+- Evidence: medium P46 `data/preflight/54e397f7-e62e-4091-bb89-fd4ba22e9a86/`; medium paths pilot `data/calibration-pilot/94c76bf7-28e0-49d0-b594-1efa45cb347c/`; Sonnet P46 `data/preflight/5684cc06-24d5-46e5-8711-94630f6bf903/`; Sonnet paths pilot `data/calibration-pilot/a39eed3c-b171-49e9-be03-810a2dd7586e/`; Sonnet duplicate-only `data/calibration-pilot/38798cfa-15bb-46ec-adfc-aed80d326ae1/`.
+- Docs: `docs/PROVIDER_SMOKE_TESTS.md`, `docs/SVG_PATHS_FAILURE_ANALYSIS.md`, `README.md`, this entry.
+
+**Observable behavior**
+
+- Medium-effort Gemini P46 `54e397f7...` passed 5/5 at USD 0.0171879. The paths-medium pilot `94c76bf7...` ran 4/6 calls at USD 0.035466 and paused: `cal-paths-12` sound was correct, `cal-paths-13` closed-route was classified as sound in blind (alignment budget-refused), and `cal-paths-14` duplicate was not executed.
+- Sonnet 5.5 P46 `5684cc06...` passed 5/5 at USD 0.0223404. The paths-medium pilot `a39eed3c...` ran 5/6 calls at USD 0.109458 and paused: `cal-paths-12` sound was correct, `cal-paths-13` closed-route was classified as sound in both blind and alignment, and `cal-paths-14` duplicate was budget-refused.
+- The focused Sonnet duplicate-only diagnostic `38798cfa...` completed 2/2 calls at USD 0.046904. `cal-paths-14` blind returned `no_unique_answer` with `duplicate_options`; alignment returned `options:fail` and `image:fail`; both score buckets are `defective`/conservative true. The pilot pass is false only because the focused pack intentionally has no sound case; this is a diagnostic, not a calibration pass.
+- The closed-route defect remains undetected by both Gemini 3.8 Flash and Sonnet 5.5 in both modes. The duplicate defect is detectable by Sonnet 5.5 under the v3 prompts. The deterministic audit catches both mutations and remains separate from the model score.
+- At that point total known spend was USD 0.4071985 (USD 0.1758422 + medium P46/pilot USD 0.0526539 + Sonnet P46/pilot USD 0.1787024); the combined authorization is USD 0.55 (USD 0.25 + USD 0.30), leaving USD 0.1428015. The full suite passed 51 files / 649 tests at that point; the targeted diagnostic is in the next section.
+- No v2 P48 calibration was run. The next step is a paths-specific closed-edge asset/prompt experiment or a new calibration contract that assigns structural defects to the deterministic validator and narrows the AI reviewer role; the current paths pilot remains FAIL.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation data/p46-routing-confirmation-1938.json --vision-reasoning-effort medium --db /tmp/p46-preflight-v3-medium.sqlite` | exit 0; 5/5, USD 0.0171879. |
+| `npm run calibration -- --pilot --pilot-set paths-medium --allow-paid --max-cost 0.10 --vision-reasoning-effort medium` | exit 1; 4/6 calls, USD 0.035466, paused; paths-13 closed-route missed. |
+| `npm run preflight -- --live --allow-paid --max-cost 0.50 --routing-confirmation data/p46-routing-confirmation-1941.json --db /tmp/p46-preflight-sonnet-v3.sqlite` | exit 0; 5/5, USD 0.0223404. |
+| `npm run calibration -- --pilot --pilot-set paths-medium --allow-paid --max-cost 0.25` | exit 1; 5/6 calls, USD 0.109458, paused; paths-13 closed-route missed. |
+| `npm run calibration -- --pilot --pilot-set paths-duplicate-only --allow-paid --max-cost 0.18` | exit 0; 2/2 calls, USD 0.046904; duplicate blind and alignment both `defective`/conservative true. |
+| `npm run check` | 51 files / 649 tests passed; lint, typecheck, build passed. |
+
+**Manual acceptance:** the deterministic audit is accepted as the production-hardening/diagnostic channel. At that point the paths reviewer was not accepted: visual closed-route detection failed with both tested models; the duplicate was detected by Sonnet 5.5. The targeted four-variant diagnostic is in the next section. No v2 P48 calibration has been run; any new prompt/model/fixture/contract change requires a new authorized experiment and the corresponding P45/P46/pilot/P48 repeat.
+
+**Out of scope, unchanged:** primary-candidate generation, remediation, claims of precise reviewer accuracy, and any live run beyond the approved pilot/P46 scope.
+
+## P48 targeted four-variant paths diagnostic — 2026-11-07
+
+**State:** `VISUAL INTERPRETATION / RULES LOGIC OK / PATHS PILOT FAIL / NO V2 P48`. The targeted diagnostic on `cal-paths-13` with Sonnet 5.5 shows that the text-only open-edge variant D correctly returns `no_unique_answer`/`no_correct_option`, while the original image control A, the explicit per-edge procedure B, and the zoomed-crop variant C all select an offered route. The rules/logic formulation is sound; the remaining failure is visual interpretation of the closed edge. The diagnostic is not calibration evidence and the paths pilot remains FAIL.
+
+**Files**
+
+- Diagnostic implementation: `src/calibration/paths-diagnostic.ts` (four variant requests, crops, runner, classification, artifact writer), `src/cli/paths-diagnostic.ts`, `tests/calibration/paths-diagnostic.test.ts`, `package.json` (`paths-diagnostic` script).
+- Evidence: `data/paths-diagnostic/03992846-9d26-4588-b00d-edbf08cbb5f7/` (A/B, paused at C on the admission reservation), `data/paths-diagnostic/64877ad9-8b6c-48fa-81ed-c001e6f77e0e/` (C/D, completed), and the combined report `data/paths-diagnostic/combined-2026-11-07.json`.
+- Docs: `docs/SVG_PATHS_FAILURE_ANALYSIS.md`, `docs/PROVIDER_SMOKE_TESTS.md`, `README.md`, this entry.
+
+**Observable behavior**
+
+- Variant A: original PNG + original v3 blind prompt, Sonnet 5.5, `selected C`; the original failure is reproduced.
+- Variant B: original PNG + explicit per-edge verification procedure, `selected D`; the procedure does not fix the visual failure.
+- Variant C: full original PNG + 4x zoom of the source edge (1,1)-(2,1) and option C edge, `selected D`; the visual detail does not fix it.
+- Variant D: text-only open-edge list, no image, `no_unique_answer` with issue `no_correct_option`; the logical decision is correct.
+- Combined classification: **visual interpretation** (D succeeds, A fails; B/C fail). The rules/logic are not the blocker; the model does not visually resolve the closed edge even with the explicit procedure or zoomed crops.
+- The first diagnostic run paused at C because the three-image reservation plus the known A/B cost exceeded the USD 0.25 admission cap; the focused C/D run completed under the same cap with no additional model or prompt change. The first artifact labels that C as `schema_error`; new runs use the distinct `budget_refused`/`transport_error` buckets, and the CLI now caps new runs at the remaining envelope (USD 0.05 admission/actual). The diagnostic artifacts are separate from calibration and are `calibrationEligible:false`/`freezeEligible:false`.
+- Costs: A/B USD 0.040836; C/D USD 0.044802; diagnostic total USD 0.085638. Total known spend is USD 0.4928365 (USD 0.4071985 + USD 0.085638); the combined authorization is USD 0.55, leaving USD 0.0571635. The full suite passed 52 files / 651 tests. No v2 P48 calibration was run.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm exec -- vitest run tests/calibration/paths-diagnostic.test.ts` | 2 passed; four variants/crops/classification. |
+| `npm run paths-diagnostic -- --allow-paid --max-cost 0.25` | first run; A `selected C`, B `selected D`, C budget-refused, D not executed; USD 0.040836. |
+| `npm run paths-diagnostic -- --allow-paid --max-cost 0.25 --max-actual-cost 0.10 --variants C,D` | exit 0; C `selected D`, D `no_unique_answer`/`no_correct_option`; USD 0.044802. |
+| `npm run check` | 52 files / 651 tests passed; lint, typecheck, build passed. |
+
+**Manual acceptance:** the four-variant diagnostic is accepted as a separate diagnostic; it is not calibration evidence. The classification is visual interpretation; the rules/logic are sound. The next step is a closed-edge visual-representation experiment (larger/contrast/zoom as a new fixture configuration) or a new calibration contract that assigns structural defects to the deterministic validator and narrows the AI reviewer role. No v2 P48 calibration has been run.
+
+**Out of scope, unchanged:** primary-candidate generation, remediation, claims of precise reviewer accuracy, and any live run beyond the approved pilot/P46/diagnostic scope.

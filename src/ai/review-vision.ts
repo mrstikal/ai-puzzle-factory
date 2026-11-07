@@ -43,7 +43,7 @@ import {
 import { SCENE_SIZE } from "../render/scene.js";
 import { hashCanonicalJson, sha256Hex } from "../util/hash.js";
 
-export const BLIND_VISION_PROMPT_VERSION = "v1";
+export const BLIND_VISION_PROMPT_VERSION = "v3";
 export const BLIND_VISION_SCHEMA_VERSION = "v1";
 
 const BLIND_VISION_PROMPT_HEADER = /^PUZZLE_BLIND_VISION_PROMPT_VERSION: (v\d+)\n/;
@@ -114,7 +114,7 @@ function readPromptAsset(relativePath: string): string {
   }
 }
 
-const BLIND_VISION_PROMPT = readPromptAsset("./prompts/v1/blind-vision.txt");
+const BLIND_VISION_PROMPT = readPromptAsset("./prompts/v3/blind-vision.txt");
 const PROMPT_HEADER = BLIND_VISION_PROMPT_HEADER.exec(BLIND_VISION_PROMPT);
 if (PROMPT_HEADER?.[1] !== BLIND_VISION_PROMPT_VERSION) {
   throw new ReviewVisionError(

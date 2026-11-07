@@ -261,7 +261,6 @@ function validFields(modality: "text" | "svg"): AlignmentFields {
 }
 
 interface AlignmentResponseOverrides {
-  readonly overall?: AlignmentReviewResponse["overall"];
   readonly fields?: Partial<AlignmentFields>;
 }
 
@@ -270,7 +269,6 @@ function alignmentResponse(
   overrides: AlignmentResponseOverrides = {},
 ): AlignmentReviewResponse {
   return {
-    overall: overrides.overall ?? "pass",
     fields: {
       ...validFields(modality),
       ...(overrides.fields ?? {}),
@@ -472,7 +470,7 @@ describe("informed alignment reviewer", () => {
     const result = await callAlignment(fixture);
     expect(result.role).toBe("alignment_text");
     expect(result.modality).toBe("text");
-    expect(result.modelOverall).toBe("pass");
+    expect(result.modelOverall).toBeNull();
     expect(result.derivedOverall).toBe("pass");
     expect(result.overallMismatch).toBe(false);
     expect(result.concerns).toEqual([]);
@@ -508,10 +506,10 @@ describe("informed alignment reviewer", () => {
       modality: "text",
       derivedOverall: "pass",
       overallMismatch: false,
-      modelEvidence: { overall: "pass", concerns: [] },
-      promptVersion: "v1",
+      modelEvidence: { concerns: [] },
+      promptVersion: "v2",
       schemaName: "puzzle_alignment_review",
-      schemaVersion: "v1",
+      schemaVersion: "v2",
     });
     expect(fake.requests).toHaveLength(1);
   });
@@ -560,7 +558,7 @@ describe("informed alignment reviewer", () => {
     expect(fake.requests).toHaveLength(1);
   });
 
-  it("retains a model-authored contradiction as model evidence and computes fail", async () => {
+  it("retains field-level contradiction evidence and computes fail", async () => {
     const fixture = fixtureForSlot(textSlotFor("ranking"), {
       hint: "The correct answer is not A.",
       explanationSteps: [
@@ -571,7 +569,6 @@ describe("informed alignment reviewer", () => {
       status: 200,
       body: successBody(
         alignmentResponse("text", {
-          overall: "fail",
           fields: {
             rulesAndClues: field("fail"),
             hint: field("fail"),
@@ -582,7 +579,7 @@ describe("informed alignment reviewer", () => {
     });
     const result = await callAlignment(fixture);
     expect(result.derivedOverall).toBe("fail");
-    expect(result.modelOverall).toBe("fail");
+    expect(result.modelOverall).toBeNull();
     expect(result.concerns.map((concern) => concern.field)).toEqual(
       expect.arrayContaining(["rulesAndClues", "hint", "explanation"]),
     );
@@ -600,7 +597,6 @@ describe("informed alignment reviewer", () => {
       status: 200,
       body: successBody(
         alignmentResponse("svg", {
-          overall: "fail",
           fields: {
             rulesAndClues: field("fail"),
             options: field("fail"),
@@ -618,21 +614,20 @@ describe("informed alignment reviewer", () => {
     expect(result.pngHash).toBe(fixture.pngHash);
   });
 
-  it("ignores a model overall pass when a field fails and records the mismatch", async () => {
+  it("derives fail from a failing field without a model overall", async () => {
     const fixture = fixtureForSlot(textSlotFor("matching"));
     fake.enqueue({
       status: 200,
       body: successBody(
         alignmentResponse("text", {
-          overall: "pass",
           fields: { question: field("fail") },
         }),
       ),
     });
     const result = await callAlignment(fixture);
-    expect(result.modelOverall).toBe("pass");
+    expect(result.modelOverall).toBeNull();
     expect(result.derivedOverall).toBe("fail");
-    expect(result.overallMismatch).toBe(true);
+    expect(result.overallMismatch).toBe(false);
     expect(result.concerns[0]?.field).toBe("question");
   });
 
@@ -678,7 +673,6 @@ describe("informed alignment reviewer", () => {
       status: 200,
       body: successBody(
         alignmentResponse("text", {
-          overall: "uncertain",
           fields: { question: field("uncertain") },
         }),
       ),
@@ -734,7 +728,7 @@ describe("informed alignment reviewer", () => {
     await expectAlignmentError(callAlignment(invalidJson), "TRANSPORT_FAILED");
 
     const missing = fixtureForSlot(textSlotFor("scheduling"));
-    fake.enqueue({ status: 200, body: successBody({ overall: "pass" }) });
+    fake.enqueue({ status: 200, body: successBody({}) });
     await expectAlignmentError(callAlignment(missing), "INVALID_ALIGNMENT");
     expect(fake.requests).toHaveLength(3);
   });
@@ -816,12 +810,12 @@ describe("informed alignment reviewer", () => {
   it("keeps text and vision prompt metadata stable and versioned", () => {
     const text = alignmentPromptMetadata("text");
     const svg = alignmentPromptMetadata("svg");
-    expect(text.promptVersion).toBe("v1");
-    expect(svg.promptVersion).toBe("v1");
+    expect(text.promptVersion).toBe("v2");
+    expect(svg.promptVersion).toBe("v3");
     expect(text.schemaName).toBe("puzzle_alignment_review");
     expect(svg.schemaName).toBe("puzzle_alignment_review");
-    expect(text.schemaVersion).toBe("v1");
-    expect(svg.schemaVersion).toBe("v1");
+    expect(text.schemaVersion).toBe("v2");
+    expect(svg.schemaVersion).toBe("v2");
     expect(text.promptHash).not.toBe(svg.promptHash);
     expect(text.schemaHash).toBe(strictSchemaHash(ALIGNMENT_REVIEW_JSON_SCHEMA));
     expect(svg.schemaHash).toBe(strictSchemaHash(ALIGNMENT_REVIEW_JSON_SCHEMA));
@@ -839,7 +833,7 @@ describe("informed alignment reviewer", () => {
       inventory: [],
     };
     const messages = buildAlignmentMessages(payload, text, null);
-    expect(messages[0]?.content).toContain("prompt_version: v1");
+    expect(messages[0]?.content).toContain("prompt_version: v2");
     expect(messages[0]?.content).toContain(
       "image field must be not_applicable",
     );

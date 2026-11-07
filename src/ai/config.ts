@@ -31,6 +31,7 @@ export const OutputCapFieldSchema = z.enum(OUTPUT_CAP_FIELDS);
 export const MODEL_ROLE_KINDS = [
   "generator",
   "reviewer",
+  "alignment_text_reviewer",
   "vision_reviewer",
 ] as const;
 export type ModelRoleKind = (typeof MODEL_ROLE_KINDS)[number];
@@ -39,7 +40,7 @@ export const ROLE_TO_MODEL_ROLE: Readonly<Record<RequestRole, ModelRoleKind>> = 
   spec: "generator",
   wording: "generator",
   blind_text: "reviewer",
-  alignment_text: "reviewer",
+  alignment_text: "alignment_text_reviewer",
   blind_vision: "vision_reviewer",
   alignment_vision: "vision_reviewer",
 };
@@ -48,6 +49,7 @@ export const LIVE_ENV_KEYS = {
   apiKey: "OPENROUTER_API_KEY",
   generatorModel: "GENERATOR_MODEL",
   reviewerModel: "REVIEWER_MODEL",
+  alignmentTextModel: "ALIGNMENT_TEXT_MODEL",
   visionReviewerModel: "VISION_REVIEWER_MODEL",
 } as const;
 
@@ -90,6 +92,7 @@ export interface LiveEnvironmentConfig {
   readonly apiKey: string;
   readonly generator: LiveModelConfig;
   readonly reviewer: LiveModelConfig;
+  readonly alignmentText: LiveModelConfig;
   readonly visionReviewer: LiveModelConfig;
   readonly correlations: readonly string[];
 }
@@ -141,12 +144,26 @@ export function readLiveEnvironment(
       LIVE_ENV_KEYS.visionReviewerModel,
     ),
   };
+  const alignmentTextModel = env[LIVE_ENV_KEYS.alignmentTextModel]?.trim();
+  const alignmentText: LiveModelConfig = {
+    model:
+      alignmentTextModel === undefined || alignmentTextModel === ""
+        ? reviewer.model
+        : identifier(alignmentTextModel, LIVE_ENV_KEYS.alignmentTextModel),
+  };
 
   if (generator.model === reviewer.model) {
     throw new AiConfigError(
       "ROLE_SEPARATION_VIOLATION",
       "GENERATOR_MODEL must differ from REVIEWER_MODEL",
       LIVE_ENV_KEYS.reviewerModel,
+    );
+  }
+  if (generator.model === alignmentText.model) {
+    throw new AiConfigError(
+      "ROLE_SEPARATION_VIOLATION",
+      "GENERATOR_MODEL must differ from ALIGNMENT_TEXT_MODEL",
+      LIVE_ENV_KEYS.alignmentTextModel,
     );
   }
   if (generator.model === visionReviewer.model) {
@@ -158,6 +175,12 @@ export function readLiveEnvironment(
   }
 
   const correlations: string[] = [];
+  if (alignmentText.model === reviewer.model) {
+    correlations.push("alignment_text_uses_reviewer_model");
+  }
+  if (alignmentText.model === visionReviewer.model) {
+    correlations.push("alignment_text_uses_vision_reviewer_model");
+  }
   if (visionReviewer.model === reviewer.model) {
     correlations.push("vision_reviewer_uses_text_reviewer_model");
   }
@@ -165,17 +188,24 @@ export function readLiveEnvironment(
   if (authorOf(generator.model) === authorOf(reviewer.model)) {
     correlations.push("generator_and_text_reviewer_share_model_author");
   }
+  if (authorOf(generator.model) === authorOf(alignmentText.model)) {
+    correlations.push("generator_and_alignment_text_reviewer_share_model_author");
+  }
   if (authorOf(generator.model) === authorOf(visionReviewer.model)) {
     correlations.push("generator_and_vision_reviewer_share_model_author");
   }
   if (authorOf(reviewer.model) === authorOf(visionReviewer.model)) {
     correlations.push("text_and_vision_reviewers_share_model_author");
   }
+  if (authorOf(alignmentText.model) === authorOf(visionReviewer.model)) {
+    correlations.push("alignment_text_and_vision_reviewer_share_model_author");
+  }
 
   return {
     apiKey,
     generator,
     reviewer,
+    alignmentText,
     visionReviewer,
     correlations,
   };
@@ -190,6 +220,8 @@ export function modelConfigForRole(
       return config.generator;
     case "reviewer":
       return config.reviewer;
+    case "alignment_text_reviewer":
+      return config.alignmentText;
     case "vision_reviewer":
       return config.visionReviewer;
   }
@@ -207,6 +239,7 @@ export const AiRoleSettingsSchema = z.strictObject({
   temperature: z.number().min(0).max(2).optional(),
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
   reasoning: z.boolean().optional(),
+  reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
 });
 export type AiRoleSettings = z.infer<typeof AiRoleSettingsSchema>;
 
@@ -214,6 +247,7 @@ export const SETTING_SUPPORT_PARAMETER = {
   temperature: "temperature",
   seed: "seed",
   reasoning: "reasoning",
+  reasoningEffort: "reasoning_effort",
 } as const satisfies Readonly<Record<keyof AiRoleSettings, string>>;
 
 export type ChatContentPart =
@@ -461,6 +495,9 @@ export function buildChatRequest(input: BuildChatRequestInput): BuiltChatRequest
   }
   if (settings?.reasoning !== undefined) {
     body.reasoning = settings.reasoning;
+  }
+  if (settings?.reasoningEffort !== undefined) {
+    body.reasoning_effort = settings.reasoningEffort;
   }
 
   assertExactlyOneOutputCap(body);

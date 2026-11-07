@@ -21,7 +21,9 @@ import {
   type CalibrationLabels,
 } from "../../src/calibration/labels.js";
 import {
+  buildAlignmentReviewRequest,
   buildBlindPayload,
+  buildBlindReviewRequest,
   runCalibrationMock,
   type CalibrationMockMode,
 } from "../../src/calibration/run.js";
@@ -31,6 +33,8 @@ import {
   type CalibrationObservation,
   type CalibrationScoreReport,
 } from "../../src/calibration/score.js";
+import { hashPng } from "../../src/render/png.js";
+import { mockRoute } from "../../src/runner/run.js";
 
 const FIXED_NOW = new Date("2026-11-06T12:00:00.000Z");
 const CLOCK = { now: () => FIXED_NOW, sleep: async () => {} };
@@ -271,6 +275,98 @@ describe("calibration runner and scoring", { timeout: 120_000 }, () => {
     expect(serialized).not.toContain("fixtureId");
   });
 
+  it("keeps SVG request payloads and image bytes faithful to the pack", () => {
+    for (const entry of built.fixtures) {
+      const fixture = entry.fixture;
+      if (fixture.modality !== "svg") {
+        continue;
+      }
+      const visiblePng = entry.artifacts.visible.png;
+      const originalPng = entry.artifacts.original.png;
+      if (visiblePng === null || originalPng === null) {
+        throw new Error(`${fixture.fixtureId} has no SVG raster`);
+      }
+      expect(hashPng(visiblePng)).toBe(fixture.pngHash);
+      expect(hashPng(originalPng)).toBe(fixture.originalPngHash);
+      if (fixture.variant === "sound") {
+        expect(fixture.pngHash).toBe(fixture.originalPngHash);
+      }
+      if (fixture.mutation?.changedFields.includes("assets")) {
+        expect(fixture.pngHash).not.toBe(fixture.originalPngHash);
+      }
+
+      const blind = buildBlindReviewRequest(
+        fixture,
+        entry,
+        mockRoute("blind_vision"),
+      );
+      const blindText = JSON.stringify(blind.body);
+      expect(blindText).toContain(fixture.visible.question);
+      expect(blindText).toContain("data:image/png;base64,");
+      for (const option of fixture.visible.options) {
+        expect(blindText).toContain(option.text);
+      }
+      for (const clue of fixture.visible.clues) {
+        expect(blindText).toContain(clue.text);
+      }
+      expect(blindText).not.toContain("sound_or_defective");
+      expect(blindText).not.toContain("acceptedDefectCodes");
+      expect(blindText).not.toContain("mutation");
+
+      const alignment = buildAlignmentReviewRequest(
+        fixture,
+        entry,
+        mockRoute("alignment_vision"),
+      );
+      const messages = alignment.body.messages as readonly {
+        readonly role: string;
+        readonly content: unknown;
+      }[];
+      const userContent = messages[1]?.content;
+      if (!Array.isArray(userContent)) {
+        throw new Error(`${fixture.fixtureId} alignment request has no parts`);
+      }
+      const textPart = userContent.find(
+        (part) => part.type === "text",
+      ) as { readonly text: string } | undefined;
+      if (textPart === undefined) {
+        throw new Error(`${fixture.fixtureId} alignment request has no text`);
+      }
+      const payload = JSON.parse(
+        textPart.text.slice(
+          textPart.text.indexOf("{"),
+          textPart.text.lastIndexOf("}") + 1,
+        ),
+      ) as {
+        readonly dsl: unknown;
+        readonly correctOption: { readonly label: string };
+        readonly visible: unknown;
+      };
+      expect(payload.dsl).toEqual(fixture.original.spec);
+      expect(payload.correctOption.label).toBe(
+        fixture.original.choices.correctLabel,
+      );
+      expect(payload.visible).toEqual({
+        question: fixture.visible.question,
+        rules: fixture.visible.rules,
+        clues: fixture.visible.clues.map((clue) => ({
+          factId: clue.factId,
+          text: clue.text,
+        })),
+        options: fixture.visible.options.map((option) => ({
+          label: option.label,
+          text: option.text,
+        })),
+      });
+      expect(JSON.stringify(alignment.body)).toContain(
+        "data:image/png;base64,",
+      );
+      expect(JSON.stringify(alignment.body)).not.toContain(
+        "sound_or_defective",
+      );
+    }
+  });
+
   it("produces separate text/SVG blind/alignment matrices and conservative gates", () => {
     expect(Object.keys(oracleScore.combinations)).toEqual([
       "text_blind",
@@ -392,6 +488,42 @@ describe("calibration runner and scoring", { timeout: 120_000 }, () => {
     expect(score.combinations.text_blind!.conservative.defectiveNumerator).toBe(9);
   });
 
+  it("credits an explicit accepted defect even when ambiguity is none", () => {
+    const observations = cloneObservations(oracleRun.observations);
+    const defective = labels.rows.find(
+      (row) => row.soundOrDefective === "defective" && row.modality === "text",
+    );
+    if (defective === undefined) {
+      throw new Error("missing defective text fixture");
+    }
+    const observation = observations.find(
+      (candidate) => candidate.fixtureId === defective.fixtureId,
+    );
+    if (observation === undefined) {
+      throw new Error("missing observation");
+    }
+    const signal = BLIND_DEFECT_SIGNALS[defective.acceptedDefectCodes[0]!];
+    observation.blind.response = {
+      ...blindResponse(observation),
+      answerStatus: "no_unique_answer",
+      chosenOption: null,
+      clarity: "clear",
+      ambiguity: "none",
+      issues: [{ code: signal.issueCodes[0]!, evidence: "Named accepted defect." }],
+    };
+    const score = scoreCalibration({
+      labels,
+      observations,
+      reviewCalls: 80,
+      generationCalls: 0,
+    });
+    expect(score.combinations.text_blind!.matrix.truePositive).toBe(10);
+    expect(score.combinations.text_blind!.matrix.abstentions).toBe(0);
+    expect(score.combinations.text_blind!.conservative.defectiveNumerator).toBe(
+      10,
+    );
+  });
+
   it("does not reward unrelated criticism on a defective fixture conservatively", () => {
     const observations = cloneObservations(oracleRun.observations);
     const defective = labels.rows.find(
@@ -447,7 +579,6 @@ describe("calibration runner and scoring", { timeout: 120_000 }, () => {
       reason: "Unrelated hint criticism.",
     };
     observation.alignment.response = {
-      overall: "fail",
       fields,
     };
     const score = scoreCalibration({
@@ -466,7 +597,6 @@ describe("calibration runner and scoring", { timeout: 120_000 }, () => {
       reason: "Wrong accepted fact ID.",
     };
     observation.alignment.response = {
-      overall: "fail",
       fields: wrongFactFields,
     };
     const wrongFactScore = scoreCalibration({
@@ -497,7 +627,6 @@ describe("calibration runner and scoring", { timeout: 120_000 }, () => {
       reason: "The original explanation also contradicts the visible rule.",
     };
     observation.alignment.response = {
-      overall: "fail",
       fields,
     };
     const score = scoreCalibration({
@@ -507,6 +636,41 @@ describe("calibration runner and scoring", { timeout: 120_000 }, () => {
       generationCalls: 0,
     });
     expect(score.combinations.svg_alignment!.conservative.defectiveNumerator).toBe(10);
+  });
+
+  it("re-scores a legacy alignment response by ignoring a contradictory model overall", () => {
+    const observations = cloneObservations(oracleRun.observations);
+    const defective = labels.rows.find(
+      (row) => row.soundOrDefective === "defective" && row.modality === "text",
+    );
+    if (defective === undefined) {
+      throw new Error("missing defective text label");
+    }
+    const observation = observations.find(
+      (candidate) => candidate.fixtureId === defective.fixtureId,
+    );
+    if (observation === undefined) {
+      throw new Error("missing defective observation");
+    }
+    const response = alignmentResponse(observation);
+    observation.alignment.response = {
+      overall: "pass",
+      fields: response.fields,
+    };
+    const score = scoreCalibration({
+      labels,
+      observations,
+      reviewCalls: 80,
+      generationCalls: 0,
+    });
+    expect(score.coverage.errors).toBe(0);
+    const scored = score.cases.find(
+      (candidate) => candidate.fixtureId === defective.fixtureId,
+    );
+    expect(scored?.alignment.bucket).toBe("defective");
+    expect(
+      score.combinations.text_alignment?.conservative.defectiveNumerator,
+    ).toBe(10);
   });
 
   it("rejects non-review generation counts and changes the label hash with labels", () => {

@@ -472,7 +472,7 @@ describe("blind vision reviewer", () => {
         pngHash: fixture.pngHash,
         pngByteLength: fixture.png.length,
         review: result.review,
-        promptVersion: "v1",
+        promptVersion: "v3",
         schemaName: "puzzle_blind_review",
         schemaVersion: "v1",
       });
@@ -787,7 +787,7 @@ describe("blind vision reviewer", () => {
     const first = blindVisionPromptMetadata();
     const second = blindVisionPromptMetadata();
     expect(first).toEqual(second);
-    expect(first.promptVersion).toBe("v1");
+    expect(first.promptVersion).toBe("v3");
     expect(first.schemaVersion).toBe("v1");
     expect(first.schemaName).toBe("puzzle_blind_review");
     expect(first.promptHash).toMatch(/^[0-9a-f]{64}$/);
@@ -815,7 +815,7 @@ describe("blind vision reviewer", () => {
       metadata,
       Buffer.from("png"),
     );
-    expect(messages[0]?.content).toContain("prompt_version: v1");
+    expect(messages[0]?.content).toContain("prompt_version: v3");
     expect(JSON.stringify(messages[1]?.content)).toContain("data:image/png;base64,");
   });
 });
