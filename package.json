@@ -15,6 +15,7 @@
     "test:browser": "tsx tests/browser/generate-fixture.ts && playwright test",
     "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "experiment": "tsx src/cli/experiment.ts",
+    "designer": "tsx src/cli/design.ts",
     "preview": "tsx src/cli/preview.ts",
     "calibration": "tsx src/cli/calibration.ts",
     "paths-diagnostic": "tsx src/cli/paths-diagnostic.ts",

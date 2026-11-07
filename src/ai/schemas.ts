@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { FAMILIES, type Family, type Modality } from "../domain/experiment.js";
+import {
+  designProposalSchemaFor,
+  designProposalSchemaName,
+  type DesignProposalSchemaOptions,
+} from "../domain/design.js";
+import {
+  FAMILIES,
+  type Difficulty,
+  type Family,
+  type Modality,
+} from "../domain/experiment.js";
 import { WordingResponseSchema } from "../domain/presentation.js";
 import { FAMILY_SPEC_SCHEMAS } from "../domain/spec.js";
 import { FactIdSchema } from "../families/contracts.js";
@@ -556,6 +566,34 @@ export function familySpecJsonSchema(family: Family): StrictJsonSchema {
 
 export function familySpecEnvelopeJsonSchema(family: Family): StrictJsonSchema {
   return FAMILY_SPEC_ENVELOPE_JSON_SCHEMAS[family];
+}
+
+const DESIGNER_PROPOSAL_JSON_SCHEMAS = new Map<string, StrictJsonSchema>();
+
+export function designerProposalJsonSchema(
+  family: Family,
+  difficulty: Difficulty,
+  options: DesignProposalSchemaOptions,
+): StrictJsonSchema {
+  const key = `${family}:${difficulty}:${options.skinEnabled ? "skin" : "no-skin"}`;
+  const cached = DESIGNER_PROPOSAL_JSON_SCHEMAS.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const compiled = compileStrictJsonSchema(
+    designProposalSchemaName(family, difficulty, options),
+    designProposalSchemaFor(family, difficulty, options),
+  );
+  DESIGNER_PROPOSAL_JSON_SCHEMAS.set(key, compiled);
+  return compiled;
+}
+
+export function designerProposalSchemaHash(
+  family: Family,
+  difficulty: Difficulty,
+  options: DesignProposalSchemaOptions,
+): string {
+  return strictSchemaHash(designerProposalJsonSchema(family, difficulty, options));
 }
 
 export const WORDING_JSON_SCHEMA = compileStrictJsonSchema(

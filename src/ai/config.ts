@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  DESIGNER_REQUEST_ROLES,
+  type DesignerRequestRole,
+} from "../domain/design.js";
 import { REQUEST_ROLES, type RequestRole } from "../domain/experiment.js";
 import {
   STRICT_SCHEMA_NAME_PATTERN,
@@ -12,6 +16,12 @@ export const MAX_REQUEST_TEXT_BYTES = 65_536;
 export const MAX_PNG_BYTES = 1_048_576;
 export const MAX_STORED_REQUEST_BYTES = 2_097_152;
 
+export const AI_REQUEST_ROLES = [
+  ...REQUEST_ROLES,
+  ...DESIGNER_REQUEST_ROLES,
+] as const;
+export type AiRequestRole = (typeof AI_REQUEST_ROLES)[number];
+
 export const DEFAULT_MAX_OUTPUT_TOKENS = {
   spec: 8192,
   wording: 8192,
@@ -19,7 +29,10 @@ export const DEFAULT_MAX_OUTPUT_TOKENS = {
   blind_vision: 4096,
   alignment_text: 4096,
   alignment_vision: 4096,
-} as const satisfies Readonly<Record<RequestRole, number>>;
+  design: 8192,
+  design_repair_1: 8192,
+  design_repair_2: 8192,
+} as const satisfies Readonly<Record<AiRequestRole, number>>;
 
 export const OUTPUT_CAP_FIELDS = [
   "max_tokens",
@@ -33,6 +46,7 @@ export const MODEL_ROLE_KINDS = [
   "reviewer",
   "alignment_text_reviewer",
   "vision_reviewer",
+  "designer",
 ] as const;
 export type ModelRoleKind = (typeof MODEL_ROLE_KINDS)[number];
 
@@ -45,6 +59,24 @@ export const ROLE_TO_MODEL_ROLE: Readonly<Record<RequestRole, ModelRoleKind>> = 
   alignment_vision: "vision_reviewer",
 };
 
+export const DESIGNER_ROLE_TO_MODEL_ROLE: Readonly<
+  Record<DesignerRequestRole, "designer">
+> = {
+  design: "designer",
+  design_repair_1: "designer",
+  design_repair_2: "designer",
+};
+
+export function isDesignerRequestRole(
+  role: AiRequestRole,
+): role is DesignerRequestRole {
+  return (DESIGNER_REQUEST_ROLES as readonly string[]).includes(role);
+}
+
+export function modelRoleForRequestRole(role: AiRequestRole): ModelRoleKind {
+  return isDesignerRequestRole(role) ? "designer" : ROLE_TO_MODEL_ROLE[role];
+}
+
 export const LIVE_ENV_KEYS = {
   apiKey: "OPENROUTER_API_KEY",
   generatorModel: "GENERATOR_MODEL",
@@ -52,6 +84,18 @@ export const LIVE_ENV_KEYS = {
   alignmentTextModel: "ALIGNMENT_TEXT_MODEL",
   visionReviewerModel: "VISION_REVIEWER_MODEL",
 } as const;
+
+export const DESIGNER_ENV_KEYS = {
+  apiKey: "OPENROUTER_API_KEY",
+  designerModel: "DESIGNER_MODEL",
+  temperature: "DESIGNER_TEMPERATURE",
+  seed: "DESIGNER_SEED",
+  reasoning: "DESIGNER_REASONING",
+  reasoningEffort: "DESIGNER_REASONING_EFFORT",
+  maxOutputTokens: "DESIGNER_MAX_OUTPUT_TOKENS",
+} as const;
+
+export const DESIGNER_DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 
 export const BALANCED_ROUTING_POLICY = {
   allow_fallbacks: true,
@@ -95,6 +139,13 @@ export interface LiveEnvironmentConfig {
   readonly alignmentText: LiveModelConfig;
   readonly visionReviewer: LiveModelConfig;
   readonly correlations: readonly string[];
+}
+
+export interface DesignerLiveEnvironmentConfig {
+  readonly apiKey: string;
+  readonly designer: LiveModelConfig;
+  readonly settings: AiRoleSettings;
+  readonly maxOutputTokens: number;
 }
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
@@ -224,14 +275,19 @@ export function modelConfigForRole(
       return config.alignmentText;
     case "vision_reviewer":
       return config.visionReviewer;
+    case "designer":
+      throw new AiConfigError(
+        "INVALID_REQUEST",
+        "designer roles do not use the legacy live model configuration",
+      );
   }
 }
 
-export function defaultMaxOutputTokensFor(role: RequestRole): number {
+export function defaultMaxOutputTokensFor(role: AiRequestRole): number {
   return DEFAULT_MAX_OUTPUT_TOKENS[role];
 }
 
-export function requiresImageForRole(role: RequestRole): boolean {
+export function requiresImageForRole(role: AiRequestRole): boolean {
   return role === "blind_vision" || role === "alignment_vision";
 }
 
@@ -250,6 +306,129 @@ export const SETTING_SUPPORT_PARAMETER = {
   reasoningEffort: "reasoning_effort",
 } as const satisfies Readonly<Record<keyof AiRoleSettings, string>>;
 
+function optionalTrimmedValue(
+  env: NodeJS.ProcessEnv,
+  key: string,
+): string | undefined {
+  const value = env[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+function readDesignerSettings(env: NodeJS.ProcessEnv): AiRoleSettings {
+  const settings: {
+    temperature?: number;
+    seed?: number;
+    reasoning?: boolean;
+    reasoningEffort?: "low" | "medium" | "high";
+  } = {};
+  const temperature = optionalTrimmedValue(env, DESIGNER_ENV_KEYS.temperature);
+  if (temperature !== undefined) {
+    const parsed = Number(temperature);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 2) {
+      throw new AiConfigError(
+        "INVALID_ENV_VALUE",
+        `${DESIGNER_ENV_KEYS.temperature} must be a decimal number between 0 and 2`,
+        DESIGNER_ENV_KEYS.temperature,
+      );
+    }
+    settings.temperature = parsed;
+  }
+  const seed = optionalTrimmedValue(env, DESIGNER_ENV_KEYS.seed);
+  if (seed !== undefined) {
+    const parsed = Number(seed);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 2_147_483_647) {
+      throw new AiConfigError(
+        "INVALID_ENV_VALUE",
+        `${DESIGNER_ENV_KEYS.seed} must be an integer between 0 and 2147483647`,
+        DESIGNER_ENV_KEYS.seed,
+      );
+    }
+    settings.seed = parsed;
+  }
+  const reasoning = optionalTrimmedValue(env, DESIGNER_ENV_KEYS.reasoning);
+  if (reasoning !== undefined) {
+    if (reasoning !== "true" && reasoning !== "false") {
+      throw new AiConfigError(
+        "INVALID_ENV_VALUE",
+        `${DESIGNER_ENV_KEYS.reasoning} must be true or false`,
+        DESIGNER_ENV_KEYS.reasoning,
+      );
+    }
+    settings.reasoning = reasoning === "true";
+  }
+  const reasoningEffort = optionalTrimmedValue(
+    env,
+    DESIGNER_ENV_KEYS.reasoningEffort,
+  );
+  if (reasoningEffort !== undefined) {
+    if (
+      reasoningEffort !== "low" &&
+      reasoningEffort !== "medium" &&
+      reasoningEffort !== "high"
+    ) {
+      throw new AiConfigError(
+        "INVALID_ENV_VALUE",
+        `${DESIGNER_ENV_KEYS.reasoningEffort} must be low, medium, or high`,
+        DESIGNER_ENV_KEYS.reasoningEffort,
+      );
+    }
+    settings.reasoningEffort = reasoningEffort;
+  }
+  const parsed = AiRoleSettingsSchema.safeParse(settings);
+  if (!parsed.success) {
+    throw new AiConfigError(
+      "INVALID_ENV_VALUE",
+      "designer settings do not satisfy the supported setting schema",
+      null,
+      { cause: parsed.error },
+    );
+  }
+  return parsed.data;
+}
+
+export function readDesignerLiveEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+): DesignerLiveEnvironmentConfig {
+  const apiKey = requiredValue(
+    env,
+    DESIGNER_ENV_KEYS.apiKey,
+    "MISSING_INFERENCE_KEY",
+  );
+  const designer: LiveModelConfig = {
+    model: identifier(
+      requiredValue(env, DESIGNER_ENV_KEYS.designerModel, "MISSING_MODEL"),
+      DESIGNER_ENV_KEYS.designerModel,
+    ),
+  };
+  const maxOutputTokensValue = optionalTrimmedValue(
+    env,
+    DESIGNER_ENV_KEYS.maxOutputTokens,
+  );
+  let maxOutputTokens = DESIGNER_DEFAULT_MAX_OUTPUT_TOKENS;
+  if (maxOutputTokensValue !== undefined) {
+    const parsed = Number(maxOutputTokensValue);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new AiConfigError(
+        "INVALID_ENV_VALUE",
+        `${DESIGNER_ENV_KEYS.maxOutputTokens} must be a positive integer`,
+        DESIGNER_ENV_KEYS.maxOutputTokens,
+      );
+    }
+    maxOutputTokens = parsed;
+  }
+  return {
+    apiKey,
+    designer,
+    settings: readDesignerSettings(env),
+    maxOutputTokens,
+  };
+}
+
+
 export type ChatContentPart =
   | { readonly type: "text"; readonly text: string }
   | {
@@ -263,7 +442,7 @@ export interface ChatMessage {
 }
 
 export interface BuildChatRequestInput {
-  readonly role: RequestRole;
+  readonly role: AiRequestRole;
   readonly model: string;
   readonly outputCapField: OutputCapField;
   readonly maxOutputTokens: number;
@@ -403,7 +582,7 @@ export function assertNoForbiddenRequestFields(
 
 export function buildChatRequest(input: BuildChatRequestInput): BuiltChatRequest {
   const model = assertIdentifier(input.model, "model");
-  if (!REQUEST_ROLES.includes(input.role)) {
+  if (!AI_REQUEST_ROLES.includes(input.role)) {
     throw new AiConfigError("INVALID_REQUEST", `unknown role ${String(input.role)}`);
   }
   if (!OUTPUT_CAP_FIELDS.includes(input.outputCapField)) {
