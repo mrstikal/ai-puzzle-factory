@@ -2,6 +2,8 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
 import type Database from "better-sqlite3";
+import { exportDesignerRun } from "./design-report.js";
+import { getDesignerRun } from "../storage/repository.js";
 import { z } from "zod";
 import { getLogicalCall, listAttempts, type LogicalCall } from "../ai/ledger.js";
 import { REDACTED, isSensitiveKey } from "../ai/redact.js";
@@ -750,6 +752,23 @@ export function exportRun(
   const format = options.format ?? "all";
   if (format !== "all" && format !== "csv" && format !== "jsonl") {
     throw new ExportError("INVALID_FORMAT", `unsupported export format: ${format}`);
+  }
+  let designerRun;
+  try {
+    designerRun = getDesignerRun(db, runId);
+  } catch {
+    designerRun = null;
+  }
+  if (designerRun !== null) {
+    const designer = exportDesignerRun(db, runId, {
+      ...(options.outputRoot === undefined ? {} : { outputRoot: options.outputRoot }),
+      format,
+    });
+    return {
+      runId: designer.runId,
+      directory: designer.directory,
+      files: designer.files,
+    };
   }
   let run;
   try {

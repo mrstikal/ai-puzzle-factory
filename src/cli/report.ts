@@ -1,8 +1,22 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
 import { writeHtmlReport } from "../reporting/html.js";
+import {
+  writeDesignerHtmlReport,
+} from "../reporting/design-report.js";
+import { getDesignerRun } from "../storage/repository.js";
+import { loadDesignEvaluationSummary } from "../audit/design-labels.js";
+import {
+  computeDesignerConfigurationHash,
+  getDesignerProtocolFreeze,
+  readDesignerConfigurationEvent,
+} from "../design/freeze.js";
+import {
+  buildDesignerDecisionEvidence,
+  evaluateDesignerDecision,
+} from "../reporting/design-decision.js";
 import { computeRunMetrics } from "../reporting/metrics.js";
 import { openDatabase } from "../storage/database.js";
 
@@ -12,6 +26,7 @@ interface ReportOptions {
   readonly run?: string;
   readonly db?: string;
   readonly calibrationRoot?: string;
+  readonly protocol?: string;
 }
 
 function findCalibrationLiveArtifact(
@@ -40,6 +55,7 @@ export function createReportProgram(): Command {
       "--calibration-root <dir>",
       "calibration artifact root (default: data/calibration); use the live --out root",
     )
+    .option("--protocol <hash>", "frozen designer protocol hash for the decision")
     .showHelpAfterError()
     .action((options: ReportOptions) => {
       if (options.run === undefined) {
@@ -75,6 +91,66 @@ export function createReportProgram(): Command {
       }
       const db = openDatabase(options.db ?? "data/experiment.sqlite");
       try {
+        let designer = null;
+        try {
+          designer = getDesignerRun(db, options.run);
+        } catch {
+          designer = null;
+        }
+        if (designer !== null) {
+          const report = writeDesignerHtmlReport(db, options.run);
+          const sample = db
+            .prepare(
+              "SELECT sample_hash FROM design_evaluation_samples WHERE run_id = ? ORDER BY created_at DESC LIMIT 1",
+            )
+            .get(options.run) as { sample_hash: string } | undefined;
+          const human =
+            sample === undefined
+              ? null
+              : loadDesignEvaluationSummary(db, sample.sample_hash);
+          let protocolHash: string | null = null;
+          let protocolMatches = false;
+          if (options.protocol !== undefined) {
+            const freeze = getDesignerProtocolFreeze(db, options.protocol);
+            protocolHash = freeze.protocolHash;
+            const storedConfiguration = readDesignerConfigurationEvent(
+              db,
+              options.run,
+            );
+            protocolMatches =
+              freeze.plan.planHash === report.metrics.planHash &&
+              storedConfiguration !== null &&
+              computeDesignerConfigurationHash(storedConfiguration) ===
+                freeze.configurationHash;
+          }
+          const unresolvedInfrastructureDefect =
+            (report.metrics.arms.ai_feedback.errorCodeDistribution
+              .INFRASTRUCTURE_ERROR ?? 0) > 0 ||
+            (report.metrics.arms.ai_one_shot.errorCodeDistribution
+              .INFRASTRUCTURE_ERROR ?? 0) > 0;
+          const decision = evaluateDesignerDecision({
+            evidence: buildDesignerDecisionEvidence(report.metrics, {
+              unresolvedInfrastructureDefect,
+            }),
+            human,
+            protocolHash,
+            protocolMatches,
+            evaluatedAt: new Date().toISOString(),
+          });
+          const decisionPath = join(dirname(report.htmlPath), "decision.json");
+          writeFileSync(
+            decisionPath,
+            `${JSON.stringify(decision, null, 2)}\n`,
+            "utf8",
+          );
+          process.stdout.write(
+            `${JSON.stringify({ metrics: report.metrics, decision }, null, 2)}\n`,
+          );
+          process.stderr.write(
+            `report.html ${report.htmlPath}\ndecision.json ${decisionPath}\n`,
+          );
+          return;
+        }
         const metrics = computeRunMetrics(db, options.run);
         process.stdout.write(`${JSON.stringify(metrics, null, 2)}\n`);
         const html = writeHtmlReport(db, options.run);

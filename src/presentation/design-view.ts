@@ -274,6 +274,8 @@ export interface BuiltDesignAssets {
   readonly assets: z.infer<typeof PresentationAssetsSchema>;
   readonly previewPngHash: string | null;
   readonly svg: string | null;
+  readonly png: Buffer | null;
+  readonly previewPng: Buffer | null;
   readonly scene: unknown;
 }
 
@@ -285,6 +287,8 @@ export function buildDesignAssets<S, A>(
       assets: { svgHash: null, pngHash: null },
       previewPngHash: null,
       svg: null,
+      png: null,
+      previewPng: null,
       scene: null,
     };
   }
@@ -309,6 +313,8 @@ export function buildDesignAssets<S, A>(
     },
     previewPngHash: hashArtifactBytes(previewPng),
     svg,
+    png: fullPng,
+    previewPng,
     scene,
   };
 }
@@ -372,6 +378,8 @@ export interface BuildDesignViewInput<S, A> {
 export interface BuiltDesignView {
   readonly view: DesignView;
   readonly svg: string | null;
+  readonly png: Buffer | null;
+  readonly previewPng: Buffer | null;
 }
 
 function assertChoices<S, A>(
@@ -551,7 +559,12 @@ export function buildDesignView<S, A>(
     choices: input.choices,
     difficulty: input.difficulty,
   });
-  return { view, svg: builtAssets.svg };
+  return {
+    view,
+    svg: builtAssets.svg,
+    png: builtAssets.png,
+    previewPng: builtAssets.previewPng,
+  };
 }
 
 export interface AssertDesignViewInput<S, A> {

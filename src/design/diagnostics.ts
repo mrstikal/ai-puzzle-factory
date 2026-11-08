@@ -29,6 +29,8 @@ import { canonicalJson, sha256Hex } from "../util/hash.js";
 export const DESIGN_DIAGNOSTIC_CODES = [
   "SCHEMA_INVALID",
   "BOUNDS_INVALID",
+  "FORBIDDEN_CONTENT",
+  "SKIN_INVALID",
   "UNSAT",
   "MULTIPLE_SOLUTIONS",
   "MULTIPLE_ANSWERS",
@@ -41,6 +43,7 @@ export const DESIGN_DIAGNOSTIC_CODES = [
   "VISUAL_AMBIGUITY",
   "PRESENTATION_INVALID",
   "INPUT_TOO_LARGE",
+  "BASELINE_CONSTRUCTION_FAILED",
   "GENERATION_ERROR",
   "INFRASTRUCTURE_ERROR",
   "REPAIR_REPLAY",
@@ -247,7 +250,10 @@ export const DesignDiagnosticSchema = z
           issue(["message"], `${diagnostic.errorCode} requires a message`);
         }
         break;
+      case "FORBIDDEN_CONTENT":
+      case "SKIN_INVALID":
       case "INPUT_TOO_LARGE":
+      case "BASELINE_CONSTRUCTION_FAILED":
       case "GENERATION_ERROR":
       case "INFRASTRUCTURE_ERROR":
       case "REPAIR_REPLAY":
@@ -474,6 +480,73 @@ export function diagnoseInputTooLarge(message: string): DesignDiagnostic {
   });
 }
 
+export function diagnoseProposalFailure(input: {
+  readonly code: string;
+  readonly message: string;
+  readonly issues?: readonly string[];
+}): DesignDiagnostic {
+  const issues = (input.issues ?? []).slice(0, 32).map((message) => ({
+    path: "<proposal>",
+    message,
+  }));
+  switch (input.code) {
+    case "OUT_OF_BOUNDS":
+      return diagnostic({
+        errorCode: "BOUNDS_INVALID",
+        evidenceSource: "input",
+        solutionCount: null,
+        message: input.message,
+        schemaPath: issues[0]?.path ?? "<proposal>",
+        issues,
+        allowedFixKinds: ["change_parameter", "change_geometry", "remove_relation"],
+      });
+    case "FORBIDDEN_CONTENT":
+      return diagnostic({
+        errorCode: "FORBIDDEN_CONTENT",
+        evidenceSource: "input",
+        solutionCount: null,
+        message: input.message,
+        issues,
+        allowedFixKinds: ["remove_relation", "replace_relation", "change_geometry"],
+      });
+    case "SKIN_INVALID":
+      return diagnostic({
+        errorCode: "SKIN_INVALID",
+        evidenceSource: "input",
+        solutionCount: null,
+        message: input.message,
+        issues,
+        allowedFixKinds: ["change_skin"],
+      });
+    case "WRONG_FAMILY":
+    case "WRONG_DIFFICULTY":
+    case "SCHEMA_INVALID":
+    case "UNSUPPORTED_SCHEMA":
+    case "INVALID_INPUT":
+    default:
+      return diagnostic({
+        errorCode: "SCHEMA_INVALID",
+        evidenceSource: "input",
+        solutionCount: null,
+        message: input.message,
+        schemaPath: issues[0]?.path ?? "<proposal>",
+        issues,
+        allowedFixKinds: GENERIC_REPAIR_FIXES,
+      });
+  }
+}
+
+export function diagnoseBaselineConstructionFailure(
+  message: string,
+): DesignDiagnostic {
+  return diagnostic({
+    errorCode: "BASELINE_CONSTRUCTION_FAILED",
+    evidenceSource: "infrastructure",
+    solutionCount: null,
+    message,
+  });
+}
+
 export function diagnoseRepairReplay(message: string): DesignDiagnostic {
   return diagnostic({
     errorCode: "REPAIR_REPLAY",
@@ -481,6 +554,56 @@ export function diagnoseRepairReplay(message: string): DesignDiagnostic {
     solutionCount: null,
     message,
     allowedFixKinds: GENERIC_REPAIR_FIXES,
+  });
+}
+
+export function diagnoseOptionFailure(
+  code: DesignOptionDiagnostic["code"],
+  message: string,
+  optionCount: number | null,
+  distinctCount: number | null,
+): DesignDiagnostic {
+  const errorCode =
+    code === "INSUFFICIENT_OPTIONS"
+      ? "OPTIONS_INSUFFICIENT"
+      : code === "NON_DISTINCT_OPTIONS"
+        ? "OPTIONS_NOT_DISTINCT"
+        : "DUPLICATE_OPTION";
+  return diagnostic({
+    errorCode,
+    evidenceSource: "deterministic",
+    solutionCount: null,
+    message,
+    optionDiagnostic: { code, message, optionCount, distinctCount },
+    allowedFixKinds: ["change_parameter", "change_geometry", "change_query"],
+  });
+}
+
+export function diagnoseRenderFailure(
+  code: "RENDER_INVALID" | "VISUAL_AMBIGUITY",
+  message: string,
+  family: Family | null,
+): DesignDiagnostic {
+  return diagnostic({
+    errorCode: code === "VISUAL_AMBIGUITY" ? "VISUAL_AMBIGUITY" : "SVG_RENDER_INVALID",
+    evidenceSource: "deterministic",
+    solutionCount: null,
+    message,
+    renderDiagnostic: { code, message, family },
+    allowedFixKinds: ["change_geometry", "change_parameter", "replace_relation"],
+  });
+}
+
+export function diagnosePresentationFailure(
+  message: string,
+  family: Family | null,
+): DesignDiagnostic {
+  return diagnostic({
+    errorCode: "PRESENTATION_INVALID",
+    evidenceSource: "infrastructure",
+    solutionCount: null,
+    message,
+    renderDiagnostic: { code: "RENDER_INVALID", message, family },
   });
 }
 
@@ -632,6 +755,9 @@ function arithmeticInequalityIsEssential(
   const parsed = ArithmeticSpecSchema.parse(spec);
   for (const [index, constraint] of parsed.constraints.entries()) {
     if (constraint.op !== "lt" && constraint.op !== "le") {
+      continue;
+    }
+    if (parsed.constraints.length <= 2) {
       continue;
     }
     const reduced = {

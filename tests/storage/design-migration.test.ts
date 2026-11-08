@@ -279,7 +279,7 @@ describe("P47 designer migration", () => {
     expect(getRun(db, LEGACY_RUN_ID).manifestHash).toBe(LEGACY_PLAN.planHash);
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
-    ).toEqual({ count: 7 });
+    ).toEqual({ count: 9 });
   });
 
   it("round-trips a 300-slot designer run, stage checkpoints, and attempts", () => {

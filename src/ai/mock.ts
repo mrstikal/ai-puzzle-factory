@@ -8,7 +8,17 @@ import {
   type OpenRouterClock,
 } from "./openrouter.js";
 import { getLogicalCall } from "./ledger.js";
-import { getSlot, getStageResult } from "../storage/repository.js";
+import {
+  getDesignerSlot,
+  getSlot,
+  getStageResult,
+} from "../storage/repository.js";
+import {
+  buildDesignerMockResponse,
+  designerMockSlotIdForScenario,
+  DesignerMockScenarioSchema,
+  type DesignerMockScenario,
+} from "../design/mock.js";
 import {
   ALIGNMENT_REVIEW_RESPONSE_SCHEMA,
   BLIND_REVIEW_RESPONSE_SCHEMA,
@@ -145,6 +155,11 @@ export interface MockTransport
   readonly isMock: true;
   readonly requests: readonly MockRequest[];
   registerScenario(logicalCallId: string, scenario: MockScenario): void;
+  registerDesignerScenario(
+    logicalCallId: string,
+    scenario: DesignerMockScenario,
+  ): void;
+  getDesignerScenario(logicalCallId: string): DesignerMockScenario | null;
   clearScenarios(): void;
   clear(): void;
 }
@@ -304,7 +319,7 @@ export function buildMockContent(
 }
 
 function chatBody(
-  scenario: MockScenario,
+  scenario: { readonly role: string; readonly seed: string; readonly [key: string]: unknown },
   content: unknown,
   finishReason: string,
   refusal: string | null,
@@ -373,6 +388,7 @@ export function createMockTransport(
   options: CreateMockTransportOptions,
 ): MockTransport {
   const scenarios = new Map<string, MockScenario>();
+  const designerScenarios = new Map<string, DesignerMockScenario>();
   const requests: MockRequest[] = [];
   const callContext = new AsyncLocalStorage<string>();
   let activeCalls = 0;
@@ -386,7 +402,8 @@ export function createMockTransport(
       );
     }
     const scenario = scenarios.get(logicalCallId);
-    if (scenario === undefined) {
+    const designerScenario = designerScenarios.get(logicalCallId);
+    if (scenario === undefined && designerScenario === undefined) {
       throw new MockTransportError(
         "MISSING_SCENARIO",
         `no mock scenario is registered for logical call ${logicalCallId}`,
@@ -397,6 +414,42 @@ export function createMockTransport(
       body: typeof init?.body === "string" ? init.body : "",
       headers: Object.fromEntries(new Headers(init?.headers).entries()),
     });
+
+    if (designerScenario !== undefined) {
+      const built = buildDesignerMockResponse(designerScenario);
+      if (built.failure?.kind === "generation_error") {
+        return jsonResponse(
+          200,
+          chatBody(
+            { role: "design", seed: logicalCallId, family: designerScenario.family, difficulty: designerScenario.difficulty, kind: "refusal" },
+            null,
+            MOCK_FIXTURE.failures.refusal.finishReason,
+            MOCK_FIXTURE.failures.refusal.refusal,
+          ),
+        );
+      }
+      return jsonResponse(
+        200,
+        chatBody(
+          {
+            role: "design",
+            seed: logicalCallId,
+            family: designerScenario.family,
+            difficulty: designerScenario.difficulty,
+            kind: "valid",
+          },
+          built.proposal,
+          "stop",
+          null,
+        ),
+      );
+    }
+    if (scenario === undefined) {
+      throw new MockTransportError(
+        "MISSING_SCENARIO",
+        `no mock scenario is registered for logical call ${logicalCallId}`,
+      );
+    }
 
     if (scenario.kind === "timeout") {
       await waitForAbort(init?.signal);
@@ -450,7 +503,10 @@ export function createMockTransport(
   const executeCall = async (
     input: ExecuteOpenRouterCallInput,
   ): ReturnType<typeof real.executeCall> => {
-    if (!scenarios.has(input.logicalCallId)) {
+    if (
+      !scenarios.has(input.logicalCallId) &&
+      !designerScenarios.has(input.logicalCallId)
+    ) {
       throw new MockTransportError(
         "MISSING_SCENARIO",
         `no mock scenario is registered for logical call ${input.logicalCallId}`,
@@ -512,11 +568,62 @@ export function createMockTransport(
       }
       scenarios.set(logicalCallId, parsed.data);
     },
+    registerDesignerScenario: (logicalCallId, scenario) => {
+      const parsed = DesignerMockScenarioSchema.safeParse(scenario);
+      if (!parsed.success) {
+        throw new MockTransportError(
+          "INVALID_SCENARIO",
+          "designer mock scenario does not satisfy its schema",
+          { cause: parsed.error },
+        );
+      }
+      const call = getLogicalCall(options.db, logicalCallId);
+      if (call.runId === null || call.slotId === null) {
+        throw new MockTransportError(
+          "INVALID_SCENARIO",
+          "designer mock scenarios require a designer logical call with a slot",
+        );
+      }
+      const slot = getDesignerSlot(options.db, call.runId, call.slotId);
+      const expectedSlotId = designerMockSlotIdForScenario(parsed.data);
+      const expectedRole =
+        parsed.data.attemptIndex === 0
+          ? "design"
+          : parsed.data.attemptIndex === 1
+            ? "design_repair_1"
+            : "design_repair_2";
+      if (
+        call.slotId !== expectedSlotId ||
+        call.role !== expectedRole ||
+        slot.family !== parsed.data.family ||
+        slot.difficulty !== parsed.data.difficulty
+      ) {
+        throw new MockTransportError(
+          "INVALID_SCENARIO",
+          `designer scenario ${parsed.data.assignmentId}/${parsed.data.arm}/${parsed.data.attemptIndex} does not match call ${call.role}/${call.slotId}`,
+        );
+      }
+      const existing = designerScenarios.get(logicalCallId);
+      if (existing !== undefined) {
+        if (JSON.stringify(existing) !== JSON.stringify(parsed.data)) {
+          throw new MockTransportError(
+            "DUPLICATE_SCENARIO",
+            `a different designer mock scenario is already registered for logical call ${logicalCallId}`,
+          );
+        }
+        return;
+      }
+      designerScenarios.set(logicalCallId, parsed.data);
+    },
+    getDesignerScenario: (logicalCallId) =>
+      designerScenarios.get(logicalCallId) ?? null,
     clearScenarios: () => {
       scenarios.clear();
+      designerScenarios.clear();
     },
     clear: () => {
       scenarios.clear();
+      designerScenarios.clear();
       requests.length = 0;
     },
   };

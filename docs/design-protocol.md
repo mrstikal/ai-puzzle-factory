@@ -485,3 +485,58 @@ claim semantic novelty or human quality.
 AI generation and repair (P46/P47), deterministic presentation/proof traces
 (P49), human evaluation (P50.3+), live calls (P51), and any claim of complete
 semantic novelty.
+
+## P50 offline designer completion and mock release
+
+P50 completes the offline designer protocol before any paid pilot:
+
+- `src/design/run.ts` executes the real baseline/one-shot/feedback cohort through
+  storage, the conservative ledger/transport, solver, deterministic
+  presentation, and terminal verdicts. `--resume` reuses saved responses, never
+  resends an ambiguous dispatch, keeps the first-attempt/repair identities, and
+  settles a saved response's reservation. Budget-cap increases require an
+  explicit acknowledgement.
+- `src/design/mock.ts` registers deterministic mock scenarios outside request
+  DTOs: first accepted, ambiguous/unsat/schema-invalid then repaired, all
+  repairs fail, solver limit, input-level render failure, and generation error.
+  Solver-limit and render-failure scenarios are explicitly synthetic
+  simulations; implementation/storage/renderer exceptions are separate
+  fault-injection runs that pause rather than becoming expected cohort rows.
+- `src/reporting/design-metrics.ts` reports every section 9.1 count, planned
+  denominator, Wilson interval, repair/novelty/latency/cost/error metric, and
+  missing-cost/null-denominator status.
+- `src/design/freeze.ts`, `src/reporting/design-decision.ts`, and migration
+  `0007_designer_protocol_freezes.sql` implement the append-only pre-run freeze
+  and the section 9.3 proceed/revise/reject evaluator. Freeze validation uses
+  only pre-run evidence and rejects mock, partial, stale, mismatched,
+  source/model/routing-drifted, over-budget, or threshold-edited pilots. DB
+  commit precedes `protocol.json` export, and the freeze replays from SQLite.
+- `src/audit/design-sample.ts`, `src/audit/design-labels.ts`, migration
+  `0008_design_evaluations.sql`, and `npm run audit -- --design` implement the
+  fixed family-blocked sampler, opaque public bundle, separate private reveal,
+  pending/append-only CSV, provenance checks, and synthetic test-only labels.
+  The public bundle contains only puzzle content and opaque evaluation IDs.
+- `npm run designer -- --mock --seed puzzle-designer-mock-v1 --max-cost 0`
+  runs 100 assignments / 300 candidates with at most 400 zero-cost mock calls
+  and no legacy reviewer role. `npm run report` and `npm run export` support
+  designer runs, including the static gallery, 300 cards, all families and both
+  modalities, attempt evidence, and per-slot puzzle/SVG files.
+- `src/design/preflight.ts` validates the designer model against a recorded
+  public catalog with one text-family and one SVG-family strict schema. Live
+  pilot execution additionally creates two `role=preflight`, `slot_id=null`
+  probe calls in a separate preflight budget pool before the 20-assignment
+  pilot. P50 does not execute paid traffic.
+
+### P50 verification
+
+```sh
+npx vitest run tests/design/resume.test.ts tests/reporting/design-metrics.test.ts
+npx vitest run tests/design/freeze.test.ts tests/reporting/design-decision.test.ts
+npx vitest run tests/audit/design-sample.test.ts tests/design/preflight.test.ts
+npx vitest run tests/design/mock-cohort.test.ts
+npm run designer -- --mock --seed puzzle-designer-mock-v1 --max-cost 0
+npm run report -- --run <mock-design-id>
+npm run audit -- --design --run <mock-design-id> --prepare
+npm run check
+npm run test:browser
+```

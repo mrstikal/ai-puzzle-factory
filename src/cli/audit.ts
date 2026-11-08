@@ -21,6 +21,9 @@ interface AuditOptions {
   readonly prepare?: boolean;
   readonly import?: string;
   readonly db?: string;
+  readonly design?: boolean;
+  readonly outputRoot?: string;
+  readonly syntheticTest?: boolean;
 }
 
 function formatShortfalls(
@@ -47,7 +50,18 @@ export function createProgram(): Command {
     .option("--prepare", "select the deterministic sample, gallery, and pending label CSV")
     .option("--import <path>", "import a completed human audit label CSV")
     .option("--db <path>", "SQLite database path", "data/experiment.sqlite")
-    .action((options: AuditOptions) => {
+    .option("--design", "designer blinded evaluation mode")
+    .option("--output-root <dir>", "designer evaluation output root")
+    .option("--synthetic-test", "mark designer labels as synthetic test-only")
+    .action(async (options: AuditOptions) => {
+      if (options.design === true) {
+        const { createProgram: createDesignAuditProgram } = await import(
+          "./design-audit.js"
+        );
+        const designProgram = createDesignAuditProgram().exitOverride();
+        await designProgram.parseAsync([...process.argv]);
+        return;
+      }
       if (options.run === undefined) {
         program.error("--run is required", { exitCode: 1 });
         return;

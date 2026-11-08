@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
 import {
@@ -24,6 +24,29 @@ import {
   migrate,
   openDatabase,
 } from "../storage/database.js";
+import { buildDesignerPlanManifest } from "../design/assignments.js";
+import {
+  buildCohortReference,
+  buildFrozenReference,
+  readCohortReference,
+  readFrozenReference,
+} from "../design/baseline.js";
+import {
+  buildDesignerConfigurationSnapshot,
+  canFreezeDesignerProtocol,
+  collectDesignerConfigurationHashes,
+  computePilotPerFamilyAiAccepted,
+  exportDesignerProtocolFreeze,
+  insertDesignerProtocolFreeze,
+  readDesignerConfigurationEvent,
+  type DesignerBudgetForecast,
+} from "../design/freeze.js";
+import {
+  assertRoutingConfirmationFresh,
+  readRoutingConfirmationFile,
+} from "../design/routing.js";
+import { getDesignerRun } from "../storage/repository.js";
+import { loadDesignerCohortMetrics } from "../reporting/design-metrics.js";
 
 export const PROGRAM_NAME = "freeze";
 
@@ -38,6 +61,15 @@ interface FreezeOptions {
   readonly archiveProvenance?: string;
   readonly verifyProvenance?: string;
   readonly sourceRoot?: string;
+  readonly design?: string;
+  readonly protocolsRoot?: string;
+  readonly routingConfirmation?: string;
+  readonly totalLogicalCalls?: string;
+  readonly maxTransportAttempts?: string;
+  readonly reserveUsd?: string;
+  readonly model?: string;
+  readonly concurrency?: string;
+  readonly maxOutputTokens?: string;
 }
 
 interface EvidenceBundle {
@@ -77,6 +109,182 @@ function provenanceVerifyOptions(rootDirectory: string): {
   };
 }
 
+async function runDesignerFreeze(
+  program: Command,
+  options: FreezeOptions,
+): Promise<void> {
+  if (options.design === undefined) {
+    throw new Error("--design requires a pilot run ID");
+  }
+  if (options.maxRunCost === undefined) {
+    program.error("--design requires --max-run-cost <usd>", { exitCode: 1 });
+  }
+  if (options.routingConfirmation === undefined) {
+    program.error("--design requires --routing-confirmation <file>", {
+      exitCode: 1,
+    });
+  }
+  const routingConfirmation = readRoutingConfirmationFile(
+    options.routingConfirmation,
+  );
+  assertRoutingConfirmationFresh(routingConfirmation, new Date());
+  const dbPath = resolve(options.db ?? join("data", "experiment.sqlite"));
+  const db = openDatabase(dbPath);
+  try {
+    migrate(db);
+    const pilotRun = getDesignerRun(db, options.design);
+    if (pilotRun.runKind !== "design_pilot") {
+      throw new Error("--design requires a design_pilot run");
+    }
+    if (pilotRun.evidenceKind !== "live") {
+      throw new Error("designer protocol freeze requires live pilot evidence");
+    }
+    const primaryPlan = buildDesignerPlanManifest({ runKind: "design_primary" });
+    const referenceDirectory = join("data", "design", "reference");
+    const frozenPath = join(referenceDirectory, "frozen-reference.json");
+    const cohortPath = join(referenceDirectory, "cohort-reference.json");
+    const frozen = existsSync(frozenPath)
+      ? readFrozenReference(frozenPath)
+      : buildFrozenReference();
+    const cohort = existsSync(cohortPath)
+      ? readCohortReference(cohortPath)
+      : buildCohortReference(primaryPlan);
+    const metrics = loadDesignerCohortMetrics(db, pilotRun.runId, {
+      frozen,
+      cohort,
+    });
+    const pilotConfiguration = readDesignerConfigurationEvent(db, pilotRun.runId);
+    if (pilotConfiguration === null) {
+      throw new Error(
+        "the pilot has no recorded designer configuration event; rerun it with a configuration snapshot",
+      );
+    }
+    const currentHashes = collectDesignerConfigurationHashes({
+      frozenReferenceHash: frozen.referenceHash,
+      cohortReferenceHash: cohort.cohortHash,
+    });
+    const currentConfiguration = buildDesignerConfigurationSnapshot({
+      model: options.model ?? pilotConfiguration.model,
+      outputCapField: pilotConfiguration.outputCapField,
+      maxOutputTokens:
+        options.maxOutputTokens === undefined
+          ? pilotConfiguration.maxOutputTokens
+          : Number(options.maxOutputTokens),
+      concurrency:
+        options.concurrency === undefined
+          ? pilotConfiguration.concurrency
+          : Number(options.concurrency) === 1
+            ? 1
+            : 2,
+      ...(pilotConfiguration.settings === null
+        ? {}
+        : { settings: pilotConfiguration.settings }),
+      routingConfirmation,
+      hashes: currentHashes,
+    });
+    const perFamilyAccepted = computePilotPerFamilyAiAccepted(metrics);
+    const knownCostsComplete =
+      metrics.arms.ai_feedback.cost.unknownAttempts === 0 &&
+      metrics.arms.ai_one_shot.cost.unknownAttempts === 0;
+    const observedProviderMix: Record<string, number> = {};
+    for (const arm of [
+      metrics.arms.baseline,
+      metrics.arms.ai_one_shot,
+      metrics.arms.ai_feedback,
+    ]) {
+      for (const [provider, count] of Object.entries(arm.providerMix)) {
+        observedProviderMix[provider] = (observedProviderMix[provider] ?? 0) + count;
+      }
+    }
+    const totalLogicalCalls = Number(options.totalLogicalCalls ?? "400");
+    const maxTransportAttempts = Number(options.maxTransportAttempts ?? "1200");
+    const reserve = options.reserveUsd ?? "0.50";
+    const budgetForecast: DesignerBudgetForecast = {
+      totalLogicalCalls,
+      maxTransportAttempts,
+      conservativeReserveUsd: reserve,
+      perRoleReserveUsd: {
+        design: reserve,
+        design_repair_1: reserve,
+        design_repair_2: reserve,
+      },
+      observedPilotCostUsd:
+        metrics.arms.ai_feedback.cost.finalKnownUsd === null ||
+        metrics.arms.ai_one_shot.cost.finalKnownUsd === null
+          ? null
+          : (
+              Number(metrics.arms.ai_feedback.cost.finalKnownUsd) +
+              Number(metrics.arms.ai_one_shot.cost.finalKnownUsd)
+            ).toFixed(6),
+      method:
+        "Conservative per-role reserve supplied explicitly; observed pilot costs are reported separately.",
+    };
+    const result = canFreezeDesignerProtocol({
+      pilotRun,
+      pilotMetrics: metrics,
+      primaryPlan,
+      currentConfiguration,
+      pilotConfiguration,
+      routingConfirmation,
+      budgetForecast,
+      authorization: {
+        operator: options.operator ?? "freeze-cli",
+        authorizedAt: new Date().toISOString(),
+        maxRunCostUsd: options.maxRunCost,
+        acknowledged: true,
+      },
+      pilotEvidence: {
+        evidenceKind: "live",
+        runKind: "design_pilot",
+        completed: metrics.complete,
+        assignments: metrics.planned.assignments,
+        candidates: metrics.planned.candidates,
+        perFamilyAccepted,
+        knownCostsComplete,
+        ledgerComplete: metrics.complete,
+        unresolvedInfrastructureDefect:
+          (metrics.arms.ai_feedback.errorCodeDistribution.INFRASTRUCTURE_ERROR ??
+            0) > 0 ||
+          (metrics.arms.ai_one_shot.errorCodeDistribution.INFRASTRUCTURE_ERROR ??
+            0) > 0,
+        observedProviderMix,
+      },
+      frozenAt: new Date().toISOString(),
+    });
+    let stored: unknown = null;
+    if (result.ok && result.freeze !== null) {
+      insertDesignerProtocolFreeze(db, result.freeze);
+      const protocolsRoot = resolve(
+        options.protocolsRoot ?? join("data", "protocols"),
+      );
+      const exported = exportDesignerProtocolFreeze({
+        freeze: result.freeze,
+        outputDirectory: join(protocolsRoot, result.freeze.protocolHash),
+      });
+      stored = { ...exported };
+    }
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          mode: "designer_freeze",
+          ok: result.ok,
+          failed: result.failures,
+          protocolHash: result.freeze?.protocolHash ?? null,
+          freezeHash: result.freeze?.freezeHash ?? null,
+          stored,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    if (!result.ok) {
+      throw new Error("designer protocol freeze validation failed");
+    }
+  } finally {
+    db.close();
+  }
+}
+
 export function createProgram(): Command {
   const program = new Command();
   program
@@ -107,7 +315,20 @@ export function createProgram(): Command {
       "--source-root <dir>",
       "source tree inspected for provenance (default: current directory)",
     )
+    .option("--design <pilot-id>", "designer pilot run ID to freeze")
+    .option("--protocols-root <dir>", "designer protocol export root (default: data/protocols)")
+    .option("--routing-confirmation <file>", "operator routing confirmation JSON")
+    .option("--total-logical-calls <n>", "forecast total logical calls (default: 400)")
+    .option("--max-transport-attempts <n>", "forecast transport attempts (default: 1200)")
+    .option("--reserve-usd <usd>", "conservative reserve estimate (default: 0.50)")
+    .option("--model <slug>", "designer model override")
+    .option("--concurrency <1|2>", "designer concurrency override")
+    .option("--max-output-tokens <n>", "designer output cap override")
     .action(async (options: FreezeOptions) => {
+      if (options.design !== undefined) {
+        await runDesignerFreeze(program, options);
+        return;
+      }
       const sourceRoot = resolve(options.sourceRoot ?? process.cwd());
       if (
         options.archiveProvenance !== undefined &&

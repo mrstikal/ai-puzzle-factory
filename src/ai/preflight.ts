@@ -25,8 +25,9 @@ import {
 import {
   DEFAULT_REQUEST_DEADLINE_MS,
   DEFAULT_MAX_RESPONSE_BYTES,
-  ROLE_TO_MODEL_ROLE,
   SETTING_SUPPORT_PARAMETER,
+  modelRoleForRequestRole,
+  type AiRequestRole,
   buildChatRequest,
   defaultMaxOutputTokensFor,
   requiresImageForRole,
@@ -241,7 +242,7 @@ export function parseRecordedCatalog(input: unknown): RecordedCatalog {
 }
 
 export interface RolePreflightRequest {
-  readonly role: RequestRole;
+  readonly role: AiRequestRole;
   readonly model: string;
   readonly maxOutputTokens?: number;
   readonly minPromptTokens?: number;
@@ -251,7 +252,7 @@ export interface RolePreflightRequest {
 }
 
 export interface ResolvedRoute {
-  readonly role: RequestRole;
+  readonly role: AiRequestRole;
   readonly model: string;
   readonly routingPolicy: "balanced";
   readonly compatibleEndpointTags: readonly string[];
@@ -273,13 +274,13 @@ export interface ResolvedRoute {
 }
 
 export interface PreflightFailure {
-  readonly role: RequestRole | null;
+  readonly role: AiRequestRole | null;
   readonly code: PreflightFailureCode;
   readonly detail: string;
 }
 
 export interface RolePreflightResult {
-  readonly role: RequestRole;
+  readonly role: AiRequestRole;
   readonly model: string;
   readonly ok: boolean;
   readonly resolved: ResolvedRoute | null;
@@ -325,7 +326,7 @@ function pricingValue(
 }
 
 function validatePricing(
-  role: RequestRole,
+  role: AiRequestRole,
   endpoint: CatalogEndpoint,
   pricing: Readonly<Record<string, unknown>>,
   options: RunPreflightOptions,
@@ -414,7 +415,7 @@ function validatePricing(
   }
 }
 
-function responseFormatForRole(role: RequestRole): StrictJsonSchema {
+function responseFormatForRole(role: AiRequestRole): StrictJsonSchema {
   switch (role) {
     case "spec":
       return FAMILY_SPEC_JSON_SCHEMAS.ranking;
@@ -426,6 +427,10 @@ function responseFormatForRole(role: RequestRole): StrictJsonSchema {
     case "alignment_text":
     case "alignment_vision":
       return ALIGNMENT_REVIEW_JSON_SCHEMA;
+    case "design":
+    case "design_repair_1":
+    case "design_repair_2":
+      throw new Error("designer preflight requires an explicit response format");
   }
 }
 
@@ -808,7 +813,7 @@ function uniqueModels(
 ): ReadonlySet<string> {
   return new Set(
     roles
-      .filter((role) => ROLE_TO_MODEL_ROLE[role.role] === kind)
+      .filter((role) => modelRoleForRequestRole(role.role) === kind)
       .map((role) => role.model),
   );
 }
