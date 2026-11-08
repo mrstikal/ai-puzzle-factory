@@ -375,3 +375,6 @@ export function renderDesignNoveltyGallery(
 <div class="cards">${cards}</div>`,
   );
 }
+
+export { renderDesignViewGallery } from "../presentation/design-view.js";
+export type { BuiltDesignView, DesignView } from "../presentation/design-view.js";
