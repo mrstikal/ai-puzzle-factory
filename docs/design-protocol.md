@@ -571,3 +571,80 @@ This example has the unique solution `T0=true, T1=false, T2=true`; it is a synta
 - The designer truth schema is `puzzle_design_truth_d1_skin` with a new hash; the designer prompts are version v2. The text preflight probe now uses truth so this schema class is exercised before a pilot.
 - Any P52 freeze must use the revised truth schema/prompt hashes and a pilot run executed under this protocol. The final hash-bound pilot is `2f59e287-1e4d-42bc-84e6-e5b575eb4326` (56 accepted, 2 schema-invalid rejects, 2 retained length generation errors, all ten families with at least one accepted AI candidate); the earlier `bfe18...` RPN pilot is retained as behavioral evidence but predates the truth-file hash coverage. The earlier recursive-truth pilot evidence is preserved but is not freeze-eligible.
 - `src/families/truth/schema.ts`, `canonical.ts`, and `engine.ts` are included in the freeze `schemaHash`/`sourceHash` coverage, so a post-pilot change to the RPN wire format, parser, canonicalization, or solver changes the frozen configuration hash.
+
+## P52 frozen designer protocol and authorized budget
+
+P52 executed the existing P50.2 freeze gate against the accepted P51 hash-bound pilot. It introduced no source, schema, prompt, model, threshold, or test change and made no paid call. The primary cohort has not started.
+
+The first freeze (`7cdf1243...`, cap USD 10, default per-role reserve USD 0.50) is retained as append-only evidence but is superseded and not accepted. The decision-reviewer High finding showed that the P50.2 forecast schema has no projected 400-call total and that the 2x observed projection is USD 10.917, above the then-authorized USD 10. The user authorized a USD 12 cap; the final freeze is `9cc7d206...`. The first record must not be used for P53.
+
+### Frozen identity
+
+| Field | Value |
+| --- | --- |
+| Protocol hash | `9cc7d206f37ffc00c8f8caaa17e0a33d85b2041d520c9002fcf7482299aa422f` |
+| Freeze hash | `67428bc5d8334d19672f4bf0185b66f8b7003b7ca36dd0ecc230c11bd3dfdd76` |
+| Frozen at | `2026-11-08T21:03:11.049Z` |
+| Pilot run | `2f59e287-1e4d-42bc-84e6-e5b575eb4326` |
+| Pilot manifest hash | `56bad92069d4ca7d96d1c2e909cc5ffb7d67c527feafe85981d25ca4a8bf9314` |
+| Configuration hash | `83cfb7ee2bae17c5342e7cb6cb56f5b37a390f0fedd72c90db199596e8b80282` |
+| Pilot configuration hash | `83cfb7ee2bae17c5342e7cb6cb56f5b37a390f0fedd72c90db199596e8b80282` |
+| Primary plan hash | `0e640131fc212612e6aa3661421c1ca4ee845316a22522ead3385a8e7f0a7c0b` |
+| Root seed | `puzzle-designer-v1` |
+| Protocol version | `2.0.0` |
+
+The pilot and current configuration hashes are equal at freeze time.
+
+The automated configuration hash binds the files listed in `DESIGNER_CONFIGURATION_HASH_FIELDS` (prompts, the truth schema/solver/canonicalization, the designer/domain/ai adapters, presentation, renderer, font, references, lockfile, templates, comparator, metrics, decision evaluator, and human rubric). It does not cover every family engine, family schema, family renderer, or validation/fingerprint module. The 168-file provenance archive covers those files. Before P53, run `npm run freeze -- --verify-provenance data/protocols/9cc7d206.../provenance`; any mismatch is a protocol change and blocks P53. A change to the frozen hashes, provenance archive, model, prompt, schema, or threshold requires a new protocol plus affected pilot evidence; provider churn under the unchanged Balanced policy is not such a change.
+
+### Frozen plan and model
+
+- 100 assignments, 300 candidates, 50 text / 50 SVG, 10 assignments per family, per-family difficulty `(4,3,3)`; 100 candidates per arm.
+- 400 logical calls: `design` 200 (100 one-shot first + 100 feedback first), `design_repair_1` 100, `design_repair_2` 100. Baseline AI calls are zero. Maximum client transport attempts are 1,200.
+- Model `google/gemini-3.8-flash`; Balanced routing with `providerSort=default`; no BYOK provider keys; `max_tokens=8192`; concurrency 2; default model settings.
+- Frozen hashes: prompts `03ab04a7cef34734d3a3d98cf80ea657ace6065f009ae1f5305f06a589757808`; schema `ba7ec7cc9c74c154fe1878ce0e245e9b06636c662caca5c3623957aa0f84643f`; source `446f4ba1c597ffd69cf712b4cf0af0ca72273db1093baefb4c72740841a551f4`; font `7da195a74c55bef988d0d48f9508bd5d849425c1770dba5d7bfc6ce9ed848954`; frozen reference `9412fef5101df4860945adcb3f47b8a16642f78d4a323a4ed0c80b536daed408`; cohort reference `87cbefaff79937b92e3a49acecf1fbf463d44f049cc3f750dc65141558201ba3`; dependency lock `cc544e9e7a6f4c174467c14086904ef0d72d018a75340dab37a96d1fa0d25873`; templates `8e5e130d92162726748a9e73bb73a081dfa023a70a1f4dbe59c42436ab300d67`; comparator `b981d662a22af57f4cee66f7feacd1c629dc28f17f71133735839830c5079f2b`; metrics `010d385d32215f132dcbe5b722ed800c57e15511dfc124132ebe3ea09b4a2eb2`; decision evaluator `df9ef358759acdf306e600bfec4fcf02f364099ea2d7167ce5f10b381b36665c`; human rubric `a62fde6fc86d78264b222b876e5e64a18ac34fb50c7177d300a2f6efca2dd5bf`.
+
+### Frozen thresholds and human plan
+
+The section 9.3 predicates are frozen as `feedbackFinalAcceptanceOverall=0.60`, `feedbackFinalAcceptancePerModality=0.50`, `oneShotFirstAcceptanceOverall=0.40`, `repairSuccessRate=0.20`, `repairLift=0.05`, `feedbackFirstAcceptanceForRepairEvidence=0.80`, `novelAcceptance=0.30`, `novelPerFamily=3`, `distinctNovelStructures=50`, `costPerNovelAcceptedUsd=0.50`, `humanCoreInspected=30`, `humanAiCorePlanned=20`, `humanClearSolved=16`, `humanSolveTimeMaxSeconds=180`, `pairedInterestWinsOrTies=7`, `pairedClarityWinsOrTies=8`, `rejectFeedbackFinalOverall=0.30`, `rejectFeedbackFinalPerModality=0.25`, `rejectOneShotFirstAcceptance=20`, `rejectRepairSuccessRate=0.10`, `rejectCostMultiplier=2`, and `rejectAiGenerationErrors=100`.
+
+The human evaluation plan is frozen as sampler `p50.3-design-sample-v1`, rubric `p50.3-rubric-v1`, at most 30 core candidates, 10 additions, and 40 candidates total. Threshold or rubric changes require a new protocol and new pilot evidence; they cannot be tuned after primary observation.
+
+### Frozen budget and authorization
+
+- Forecast: 400 logical calls, 1,200 transport attempts, per-role reserve USD 4.00 for `design`, `design_repair_1`, and `design_repair_2` (sum USD 12.00), conservative reserve USD 4.00, observed pilot cost USD 0.592451.
+- Operator-recorded projection in `budget-forecast-addendum.json`: USD 5.4585955 for 400 calls at observed pilot role costs, USD 10.917191 with the plan's 2x safety margin. The 2x scenario fits the USD 12 cap. The public price snapshot's max-output upper bounds are USD 6.8501775 (flex), USD 13.700355 (standard), USD 15.0703905 (Vertex US standard), and USD 24.660639 (priority); the standard/Vertex US/priority upper bounds exceed the cap and must pause safely rather than overspend. The P50.2 freeze payload has no projected-total field; the freeze gate compares only the conservative reserve (USD 4.00) and the per-role reserve sum (USD 12.00) against the authorized cap. The 400-call projection is validated only by the operator-recorded `budget-forecast-addendum.json`, not by the freeze gate. The cap is a spending limit, not a guarantee that 400 calls complete at the most expensive tier.
+- P53 admission reservation: `--reservation 0.03` per call (2x the maximum observed per-call rate), not the CLI default 0.01. The frozen forecast does not override the runtime reservation flag.
+- Authorized primary cap: USD 12. The independent operator authorization is `data/p52-primary-authorization.json` (operator `Lexa`, authorized at `2026-11-08T21:03:00.000Z`, SHA-256 `866a6c2a4cfa3b4785d031e65cbb4110227bcb4a6cdd17ea336e14d2b8766ba0`). The freeze payload's own `authorization` block is the P50.2 CLI record (operator `Lexa`, `authorizedAt=2026-11-08T21:03:11.049Z`, `acknowledged=true`); it is not independent proof of the operator's act. P51 authorization does not carry over, and the freeze does not authorize P53 execution without separate user acceptance.
+- Routing confirmation: operator `Lexa`, checked at `2026-11-08T20:54:54.000Z`, Balanced/default, no BYOK; freeze payload `routingConfirmationHash` `94d709f04bc8cbbe40059fc7daf46efc1835dd82c002f9aae292beda021f6a8f` (the file SHA-256 is recorded in `docs/PROGRESS.md`).
+
+### Stored evidence and provenance
+
+- The append-only SQLite row is in `designer_protocol_freezes`; its stored payload hash is `40477586f3a4097e0f7e89e30dd4d5239fe5a1f395b8836f783e3e4be04f5764`.
+- `data/protocols/9cc7d206f37ffc00c8f8caaa17e0a33d85b2041d520c9002fcf7482299aa422f/protocol.json` is the canonical freeze export and equals the DB payload.
+- `data/protocols/9cc7d206f37ffc00c8f8caaa17e0a33d85b2041d520c9002fcf7482299aa422f/provenance/` contains 168 files (145 source, 13 prompt, 8 config, 1 font, 1 license), `manifest.json`, and `schemas.json`. Archive hash `1c4cde088eb654f64d8957f97436e53a32fa08b9f99f00b86ef61439b1b0f4a1`; source hash `8c15e4bc6a3ae5a9d379199e0cb64753af4dcd60c2ea5de9aece58966e4c898d`; configuration hash `406b8ed0c681a1ac4014cc598657aec7206049cd4481bd2a6bcf65ef8a98440e`; Node 24.22.2 / npm 11.19.1; git `a5ee7e4` with dirty true only from uncommitted P52 documentation.
+- `price-snapshot.json` is the public OpenRouter endpoints response for `google/gemini-3.8-flash` (7 endpoints, SHA-256 `c48c3d74cc4c26c28e43d4ff02d2fec4f7c7c02b6c16e1e2a3b40aa67386d042`).
+- `budget-forecast-addendum.json` is the operator-recorded projected-total/2x scenario (SHA-256 `4a42620f4b7964a50288da23fb2bc6eb1630ac5232e5a56d888d4a7d10d148c5`).
+- The freeze, addendum, price snapshot, authorization artifact, and provenance contain no API key, authorization header, `.env`, or environment dump.
+
+### P52 verification
+
+```sh
+npm run freeze -- --design 2f59e287-1e4d-42bc-84e6-e5b575eb4326 \
+  --max-run-cost 12 \
+  --routing-confirmation data/p52-routing-confirmation.json \
+  --operator Lexa \
+  --reserve-usd 4.00
+npm run freeze -- --archive-provenance \
+  data/protocols/9cc7d206f37ffc00c8f8caaa17e0a33d85b2041d520c9002fcf7482299aa422f/provenance
+npm run freeze -- --verify-provenance \
+  data/protocols/9cc7d206f37ffc00c8f8caaa17e0a33d85b2041d520c9002fcf7482299aa422f/provenance
+npm run designer -- --dry-run --seed puzzle-designer-v1
+npx vitest run tests/design/freeze.test.ts
+```
+
+The freeze command returned `ok: true`; the provenance verification returned `ok: true` with no failures; the dry-run returned the same plan hash; the boundary suite passed 7/7. The exact DB/export replay script is recorded in `docs/PROGRESS.md` under P52.
+
+### P52 boundary
+
+P53 was unblocked by the user's acceptance of this named final protocol, thresholds, human-evaluation plan, and authorized USD 12 cap on 2026-11-08. P53 has not started; it must run as a separate live task with `--max-cost 12 --reservation 0.03` and a prior `--verify-provenance` check. The freeze does not start the cohort, does not spend money, and does not decide the experiment outcome. Any post-freeze change to the frozen hashes or provenance archive requires a new protocol and affected pilot evidence.
