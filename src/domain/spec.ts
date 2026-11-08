@@ -37,6 +37,7 @@ import {
   type TransformsSpec,
 } from "../families/transforms/schema.js";
 import {
+  TruthRpnSpecBaseSchema,
   TruthSpecSchema,
   type TruthSpec,
 } from "../families/truth/schema.js";
@@ -69,6 +70,14 @@ export const FAMILY_SPEC_SCHEMAS = {
   counting: CountingSpecSchema,
 } as const satisfies {
   readonly [F in Family]: z.ZodType<FamilySpecByFamily[F]>;
+};
+
+export const DESIGNER_FAMILY_SPEC_SCHEMAS = {
+  ...FAMILY_SPEC_SCHEMAS,
+  truth: TruthRpnSpecBaseSchema,
+} as const;
+export type DesignerFamilySpecByFamily = {
+  readonly [F in Family]: z.infer<(typeof DESIGNER_FAMILY_SPEC_SCHEMAS)[F]>;
 };
 
 export type FamilySpecEnvelope = {

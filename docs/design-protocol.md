@@ -540,3 +540,34 @@ npm run audit -- --design --run <mock-design-id> --prepare
 npm run check
 npm run test:browser
 ```
+
+## P51 truth designer wire format (protocol revision)
+
+The live P51 preflight revealed that Google AI Studio rejects the recursive truth response schema (`required ref loop` in `operand`). The designer wire format for the truth family is now a flat postfix (RPN) token list:
+
+```json
+{
+  "family": "truth",
+  "difficulty": 1,
+  "spec": {
+    "people": 3,
+    "exactTruthful": 2,
+    "statements": [
+      { "rpn": [{"kind":"truthful","person":0},{"kind":"truthful","person":2},{"kind":"and"},{"kind":"truthful","person":2},{"kind":"or"}] },
+      { "rpn": [{"kind":"truthful","person":2},{"kind":"not"}] },
+      { "rpn": [{"kind":"truthful","person":0}] }
+    ]
+  },
+  "designIntent": null,
+  "presentationSkin": null
+}
+```
+
+This example has the unique solution `T0=true, T1=false, T2=true`; it is a syntax and solver-acceptable illustration, not a template to copy.
+
+- `truthful(person)` pushes a leaf; `not` consumes one expression; `and`/`or`/`xor` consume two expressions (left then right). The list must reduce to exactly one expression.
+- `truthRpnSpecToCanonical` rejects stack underflow, missing operands, excess operands, out-of-range person IDs, wrong statement count, invalid `exactTruthful`, depth > 2, leaves > 3, and nodes > 7. It never repairs a malformed expression.
+- The canonical truth AST, solver, evaluation semantics, canonicalization, and fingerprints are unchanged; RPN is only the provider-facing wire format. `truthSpecToRpn`/`truthAstToRpn` provide the inverse for tests and repair prompts.
+- The designer truth schema is `puzzle_design_truth_d1_skin` with a new hash; the designer prompts are version v2. The text preflight probe now uses truth so this schema class is exercised before a pilot.
+- Any P52 freeze must use the revised truth schema/prompt hashes and a pilot run executed under this protocol. The final hash-bound pilot is `2f59e287-1e4d-42bc-84e6-e5b575eb4326` (56 accepted, 2 schema-invalid rejects, 2 retained length generation errors, all ten families with at least one accepted AI candidate); the earlier `bfe18...` RPN pilot is retained as behavioral evidence but predates the truth-file hash coverage. The earlier recursive-truth pilot evidence is preserved but is not freeze-eligible.
+- `src/families/truth/schema.ts`, `canonical.ts`, and `engine.ts` are included in the freeze `schemaHash`/`sourceHash` coverage, so a post-pilot change to the RPN wire format, parser, canonicalization, or solver changes the frozen configuration hash.

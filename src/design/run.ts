@@ -54,6 +54,10 @@ import {
   type DesignDownstreamEvidence,
 } from "./diagnostics.js";
 import { SolverLimitError } from "../families/canonicalize.js";
+import {
+  truthSpecToRpn,
+  type TruthSpec,
+} from "../families/truth/schema.js";
 import { productionRegistry } from "../families/registry.js";
 import { buildBaselineOutcome, type BaselineOutcome } from "./baseline.js";
 import {
@@ -203,7 +207,7 @@ export interface RunDesignerCohortInput {
 export interface DesignerRunSummary {
   readonly runId: string;
   readonly planHash: string;
-  readonly status: "completed" | "cancelled";
+  readonly status: "completed" | "cancelled" | "paused_budget";
   readonly assignments: number;
   readonly candidates: number;
   readonly terminalCandidates: number;
@@ -427,7 +431,7 @@ function solveAndPresent(input: {
 function evaluateProposal(input: {
   readonly assignment: DesignerAssignment;
   readonly viewId: string;
-  readonly proposal: DesignProposal | null;
+  readonly proposal: unknown | null;
   readonly rawValue: unknown | null;
   readonly logicalCallId: string | null;
   readonly costStatus: DesignAttemptCandidateResult["costStatus"];
@@ -450,9 +454,10 @@ function evaluateProposal(input: {
   let choicesSeed: string | null = null;
   let built: BuiltDesignView | null = null;
 
+  let parsedProposal: DesignProposal | null = null;
   if (input.proposal !== null) {
     try {
-      const proposal =
+      parsedProposal =
         input.repair
           ? parseDesignRepairProposal(
               input.proposal,
@@ -469,7 +474,7 @@ function evaluateProposal(input: {
         diagnostic = diagnoseDesignSpec(
           input.assignment.family,
           input.assignment.difficulty,
-          proposal.spec,
+          parsedProposal.spec,
         );
       }
       if (diagnostic === null) {
@@ -483,10 +488,10 @@ function evaluateProposal(input: {
           const presented = solveAndPresent({
             assignment: input.assignment,
             viewId: input.viewId,
-            proposal,
+            proposal: parsedProposal,
             skinEnabled: input.skinEnabled,
           });
-          spec = proposal.spec;
+          spec = parsedProposal.spec;
           solve = presented.solve;
           choices = presented.choices;
           choicesSeed = presented.choicesSeed;
@@ -498,7 +503,13 @@ function evaluateProposal(input: {
       if (error instanceof DesignerRunError) {
         throw error;
       }
-      if (isOptionError(error)) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        typeof (error as { code?: unknown }).code === "string"
+      ) {
+        diagnostic = diagnosticFromProposalError(error);
+      } else if (isOptionError(error)) {
         diagnostic = diagnoseOptionFailure(
           "NON_DISTINCT_OPTIONS",
           errorMessage(error),
@@ -523,7 +534,7 @@ function evaluateProposal(input: {
   }
 
   const candidate: DesignAttemptCandidateResult = {
-    proposal: input.proposal,
+    proposal: parsedProposal,
     rawValue: input.rawValue,
     diagnostic,
     downstream,
@@ -539,7 +550,7 @@ function evaluateProposal(input: {
     candidate,
     evidence: {
       version: DESIGNER_RUN_STAGE_PAYLOAD_VERSION,
-      proposal: input.proposal,
+      proposal: parsedProposal,
       rawValue: input.rawValue,
       diagnostic,
       downstream,
@@ -580,7 +591,9 @@ function isPresentationError(error: unknown): boolean {
   );
 }
 
-function diagnosticFromProposalError(error: unknown): DesignDiagnostic {
+export function diagnosticFromProposalError(
+  error: unknown,
+): DesignDiagnostic {
   if (error instanceof Error && "code" in error) {
     const code = (error as { code?: unknown }).code;
     const issues = (error as { issues?: unknown }).issues;
@@ -772,7 +785,6 @@ async function evaluateTransportAttempt(input: {
   readonly simulatedFailure: "solver_limit" | "render_failure" | null;
 }): Promise<EvaluatedCandidateAttempt> {
   const { parsed, parseError } = parseContent(input.result);
-  let proposal: DesignProposal | null = null;
   let diagnostic = transportDiagnostic(input.result);
   let rawValue: unknown | null = parsed;
   if (parseError !== null) {
@@ -780,26 +792,6 @@ async function evaluateTransportAttempt(input: {
       new Error(`design response is not valid JSON: ${errorMessage(parseError)}`),
     );
     rawValue = null;
-  }
-  if (diagnostic === null && parsed !== null) {
-    try {
-      proposal =
-        input.attemptIndex === 0
-          ? parseDesignProposal(parsed, input.assignment, {
-              skinEnabled: input.skinEnabled,
-            })
-          : parseDesignRepairProposal(
-              parsed,
-              input.assignment,
-              input.previousProposal,
-              { skinEnabled: input.skinEnabled },
-            );
-    } catch (error) {
-      diagnostic = diagnosticFromProposalError(error);
-    }
-  }
-  if (diagnostic !== null) {
-    proposal = null;
   }
   const artifacts: ArtifactInput[] = [];
   const raw = rawResponseArtifact(input.db, input.logicalCallId);
@@ -816,7 +808,7 @@ async function evaluateTransportAttempt(input: {
   return evaluateProposal({
     assignment: input.assignment,
     viewId: input.viewId,
-    proposal,
+    proposal: diagnostic === null ? parsed : null,
     rawValue,
     logicalCallId: input.logicalCallId,
     costStatus: cost.costStatus,
@@ -1247,7 +1239,10 @@ async function processBaselineCandidate(input: {
   const proposal = {
     family: input.assignment.family,
     difficulty: input.assignment.difficulty,
-    spec: outcome.spec,
+    spec:
+      input.assignment.family === "truth"
+        ? truthSpecToRpn(outcome.spec as TruthSpec)
+        : outcome.spec,
     designIntent: null,
     presentationSkin: null,
   } as DesignProposal;
@@ -1581,6 +1576,9 @@ async function processAiCandidate(input: {
       break;
     }
   }
+  if (paused !== null) {
+    return;
+  }
   if (records.length === 0) {
     throw new DesignerRunError(
       "INCOMPLETE_RUN",
@@ -1749,36 +1747,16 @@ function evaluateSavedResponse(input: {
       parsed = null;
     }
   }
-  let proposal: DesignProposal | null = null;
-  let diagnostic: DesignDiagnostic | null = null;
-  if (parsed === null) {
-    diagnostic = diagnoseGenerationError(
-      new Error("saved design response has no JSON content"),
-    );
-  } else {
-    try {
-      proposal =
-        input.attemptIndex === 0
-          ? parseDesignProposal(parsed, input.assignment, {
-              skinEnabled: input.skinEnabled,
-            })
-          : parseDesignRepairProposal(
-              parsed,
-              input.assignment,
-              input.previousProposal,
-              { skinEnabled: input.skinEnabled },
-            );
-    } catch (error) {
-      diagnostic = diagnosticFromProposalError(error);
-    }
-  }
-  if (diagnostic !== null) {
-    proposal = null;
-  }
+  const diagnostic: DesignDiagnostic | null =
+    parsed === null
+      ? diagnoseGenerationError(
+          new Error("saved design response has no JSON content"),
+        )
+      : null;
   return evaluateProposal({
     assignment: input.assignment,
     viewId: input.viewId,
-    proposal,
+    proposal: diagnostic === null ? parsed : null,
     rawValue: parsed,
     logicalCallId: input.logicalCallId,
     costStatus: input.saved.costStatus,
@@ -1927,6 +1905,50 @@ function finishCancelled(input: {
     slots: listDesignerSlots(input.db, input.runId),
     summary,
     cancellation,
+  };
+}
+
+function finishBudgetPaused(input: {
+  readonly db: Database.Database;
+  readonly runId: string;
+  readonly plan: DesignerPlanManifest;
+  readonly accountId: string;
+  readonly clock: { now(): Date };
+  readonly phase: string;
+}): RunDesignerCohortResult {
+  const marked = markUnfinishedDispatchesUncertain(
+    input.db,
+    input.runId,
+    nowIso(input.clock),
+  );
+  const summary = summarizeRun({
+    db: input.db,
+    runId: input.runId,
+    plan: input.plan,
+    accountId: input.accountId,
+    status: "paused_budget",
+    cancellation: null,
+  });
+  insertEvent(input.db, {
+    runId: input.runId,
+    slotId: null,
+    eventType: "run_paused",
+    stage: null,
+    payload: {
+      reason: "budget",
+      phase: input.phase,
+      terminalCandidates: summary.terminalCandidates,
+      markedUncertain: marked.length,
+    },
+    createdAt: nowIso(input.clock),
+  });
+  return {
+    runId: input.runId,
+    plan: input.plan,
+    status: "paused_budget",
+    slots: listDesignerSlots(input.db, input.runId),
+    summary,
+    cancellation: null,
   };
 }
 
@@ -2187,6 +2209,12 @@ export async function runDesignerCohort(
           clock,
           ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
         });
+        if (getDesignerRun(input.db, input.runId).controlState === "paused_budget") {
+          throw new DesignerRunError(
+            "BUDGET_PAUSED",
+            "designer run paused at the budget cap",
+          );
+        }
         await input.hooks?.onSlotCompleted?.(slot.slotId);
       },
       { concurrency, cancellation, drainTimeoutMs, yieldBetweenJobs },
@@ -2204,7 +2232,21 @@ export async function runDesignerCohort(
       });
     }
     if (aiPool.errors.length > 0) {
-      throw aiPool.errors[0];
+      const firstError = aiPool.errors[0];
+      if (
+        firstError instanceof DesignerRunError &&
+        firstError.code === "BUDGET_PAUSED"
+      ) {
+        return finishBudgetPaused({
+          db: input.db,
+          runId: input.runId,
+          plan,
+          accountId: input.accountId,
+          clock,
+          phase,
+        });
+      }
+      throw firstError;
     }
     const finalSlots = listDesignerSlots(input.db, input.runId);
     const relevantSlots =

@@ -8,10 +8,12 @@ import { openDatabase, migrate } from "../../src/storage/database.js";
 import { createMockTransport } from "../../src/ai/mock.js";
 import { buildDesignerPlanManifest } from "../../src/design/assignments.js";
 import {
+  diagnosticFromProposalError,
   runDesignerCohort,
   type DesignerRunConfig,
   type DesignerRunHooks,
 } from "../../src/design/run.js";
+import { DesignFeedbackError } from "../../src/design/feedback.js";
 import {
   getOrCreatePreparedAttempt,
   markAttemptDispatching,
@@ -405,6 +407,44 @@ describe("P50.1 designer resume crash windows", () => {
     expect(attempts).toHaveLength(2);
     expect(attempts[1]?.verdict).toBe("accepted");
     expect(getDesignerSlot(h.db, h.runId, FEEDBACK_SLOT).stage).toBe("terminal");
+  }, 120_000);
+});
+
+describe("P50.1 designer proposal diagnostics", () => {
+  it("maps a repair replay to a rejected-attempt diagnostic", () => {
+    const diagnostic = diagnosticFromProposalError(
+      new DesignFeedbackError(
+        "REPAIR_REPLAY",
+        "repair response repeats the previous proposal instead of a new design",
+      ),
+    );
+    expect(diagnostic.errorCode).toBe("REPAIR_REPLAY");
+    expect(diagnostic.evidenceSource).toBe("input");
+  });
+});
+
+describe("P50.1 designer budget pause handling", () => {
+  it("returns paused_budget without throwing when no attempt can be admitted", async () => {
+    const h = harness();
+    const transport = createMockTransport({ db: h.db });
+    const result = await runDesignerCohort({
+      db: h.db,
+      runId: h.runId,
+      plan: h.plan,
+      evidenceKind: "mock",
+      apiKey: "mock",
+      transport,
+      accountId: h.accountId,
+      maxCostUsd: "0",
+      config: { ...CONFIG, nonBilling: false },
+      concurrency: 1,
+      slotIds: [FEEDBACK_SLOT],
+    });
+    expect(result.status).toBe("paused_budget");
+    expect(getDesignerSlot(h.db, h.runId, FEEDBACK_SLOT).stage).not.toBe(
+      "terminal",
+    );
+    expect(transport.requests).toHaveLength(0);
   }, 120_000);
 });
 

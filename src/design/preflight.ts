@@ -11,7 +11,7 @@ import type Database from "better-sqlite3";
 import type { createOpenRouterTransport } from "../ai/openrouter.js";
 import type { OutputCapField } from "../ai/config.js";
 
-export const DESIGNER_PREFLIGHT_TEXT_FAMILY = "ranking" as const;
+export const DESIGNER_PREFLIGHT_TEXT_FAMILY = "truth" as const;
 export const DESIGNER_PREFLIGHT_SVG_FAMILY = "matrix" as const;
 
 export interface DesignerPreflightInput {
@@ -39,11 +39,45 @@ export async function fetchDesignerPreflightCatalog(
   });
 }
 
+function isNormalizedRecordedCatalog(
+  value: unknown,
+): value is RecordedCatalog {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const models = (value as { models?: unknown }).models;
+  if (!Array.isArray(models)) {
+    return false;
+  }
+  return models.every((model) => {
+    if (typeof model !== "object" || model === null) {
+      return false;
+    }
+    const entry = model as {
+      inputModalities?: unknown;
+      endpoints?: unknown;
+    };
+    if (!Array.isArray(entry.inputModalities) || !Array.isArray(entry.endpoints)) {
+      return false;
+    }
+    return entry.endpoints.every((endpoint) => {
+      if (typeof endpoint !== "object" || endpoint === null) {
+        return false;
+      }
+      return Array.isArray(
+        (endpoint as { supportedParameters?: unknown }).supportedParameters,
+      );
+    });
+  });
+}
+
 export function runDesignerPreflightOnCatalog(
   catalogInput: unknown,
   input: DesignerPreflightInput,
 ): PreflightReport {
-  const catalog = parseRecordedCatalog(catalogInput);
+  const catalog = isNormalizedRecordedCatalog(catalogInput)
+    ? catalogInput
+    : parseRecordedCatalog(catalogInput);
   const skinEnabled = input.skinEnabled ?? true;
   const settings =
     input.settings === undefined ? {} : { settings: input.settings };
@@ -125,7 +159,8 @@ export async function runDesignerPreflightProbes(
   const accountId = randomUUID();
   createBudgetAccount(input.db, {
     accountId,
-    runKind: "preflight",
+    runId: input.pilotRunId,
+    runKind: "design_pilot",
     pool: "preflight",
     maxCostUsd: input.maxCostUsd,
     createdAt,

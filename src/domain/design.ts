@@ -16,7 +16,7 @@ import {
   type Family,
 } from "./experiment.js";
 import {
-  FAMILY_SPEC_SCHEMAS,
+  DESIGNER_FAMILY_SPEC_SCHEMAS,
   type FamilySpec,
   type FamilySpecByFamily,
 } from "./spec.js";
@@ -837,7 +837,7 @@ export function designProposalSchemaFor(
   const schema = z.strictObject({
     family: z.literal(family),
     difficulty: z.literal(difficulty),
-    spec: FAMILY_SPEC_SCHEMAS[family],
+    spec: DESIGNER_FAMILY_SPEC_SCHEMAS[family],
     designIntent: z.string().max(400).nullable(),
     presentationSkin: options.skinEnabled
       ? presentationSkinSchemaFor(family, difficulty).nullable()

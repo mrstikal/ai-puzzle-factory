@@ -13,11 +13,15 @@ import {
   type OutputCapField,
 } from "./config.js";
 import {
-  FAMILY_SPEC_JSON_SCHEMAS,
+  designerFamilySpecJsonSchema,
   designerProposalJsonSchema,
   strictSchemaHash,
   type StrictJsonSchema,
 } from "./schemas.js";
+import {
+  truthSpecToRpn,
+  type TruthSpec,
+} from "../families/truth/schema.js";
 import {
   DesignProposalError,
   parseDesignProposal,
@@ -112,15 +116,40 @@ export function buildDesignRepairMessages(
     assignment.family,
     assignment.difficulty,
   );
+  const previousProposal = repairInput.previousProposal as DesignProposal | null;
+  const previousStatements =
+    previousProposal === null
+      ? null
+      : (previousProposal.spec as { statements?: unknown }).statements;
+  const previousIsCanonicalTruth =
+    Array.isArray(previousStatements) &&
+    previousStatements.every(
+      (statement) =>
+        typeof statement === "object" &&
+        statement !== null &&
+        "kind" in statement,
+    );
+  const promptRepairInput =
+    assignment.family === "truth" &&
+    previousProposal !== null &&
+    previousIsCanonicalTruth
+      ? {
+          ...repairInput,
+          previousProposal: {
+            ...previousProposal,
+            spec: truthSpecToRpn(previousProposal.spec as TruthSpec),
+          } as unknown as DesignProposal,
+        }
+      : repairInput;
   const payload = {
     assignment: {
       assignmentId: assignment.assignmentId,
       family: assignment.family,
       difficulty: assignment.difficulty,
     },
-    repairInput,
+    repairInput: promptRepairInput,
     bounds: designerBoundsBrief(assignment.family, assignment.difficulty),
-    dslSchema: FAMILY_SPEC_JSON_SCHEMAS[assignment.family].schema,
+    dslSchema: designerFamilySpecJsonSchema(assignment.family).schema,
     responseSchema: schema.schema,
     skinCatalog: options.skinEnabled
       ? {

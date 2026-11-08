@@ -687,6 +687,9 @@ export function collectDesignerConfigurationHashes(input: {
       path("src/ai/schemas.ts"),
       path("src/ai/design-proposal.ts"),
       path("src/ai/repair-proposal.ts"),
+      path("src/families/truth/schema.ts"),
+      path("src/families/truth/canonical.ts"),
+      path("src/families/truth/engine.ts"),
     ]),
     sourceHash: sha256Hex(
       canonicalJson([
@@ -708,6 +711,7 @@ export function collectDesignerConfigurationHashes(input: {
           path("src/design/routing.ts"),
         ]),
         hashDirectory(path("src/design")),
+        hashDirectory(path("src/families/truth")),
         hashDirectory(path("src/presentation")),
         hashDirectory(path("src/render")),
       ]),

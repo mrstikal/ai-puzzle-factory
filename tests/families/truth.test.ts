@@ -16,6 +16,7 @@ import {
   truthEngine,
 } from "../../src/families/truth/engine.js";
 import {
+  TruthRpnParseError,
   TruthSpecSchema,
   TruthVectorSchema,
   astKey,
@@ -25,6 +26,9 @@ import {
   containsXor,
   evaluateAst,
   generateTruthAstPool,
+  truthAstToRpn,
+  truthRpnSpecToCanonical,
+  truthSpecToRpn,
   type TruthAst,
   type TruthPeople,
   type TruthSpec,
@@ -467,6 +471,155 @@ describe("truth engine contract and registry", () => {
     expect(facts.map((fact) => fact.factId)).toEqual(["f001", "f002", "f003"]);
     expect(facts[0]?.text).toContain("P1 says");
     expect(facts[0]?.text).toContain("not");
+  });
+
+  it("parses postfix RPN expressions into the canonical AST", () => {
+    const statements = [
+      leaf(0),
+      not(leaf(1)),
+      and(leaf(1), leaf(2)),
+    ];
+    const spec = makeSpec(3, 1, statements);
+    const rpn = truthSpecToRpn(spec);
+    expect(rpn.statements.map((statement) => statement.rpn)).toEqual([
+      [{ kind: "truthful", person: 0 }],
+      [{ kind: "truthful", person: 1 }, { kind: "not" }],
+      [
+        { kind: "truthful", person: 1 },
+        { kind: "truthful", person: 2 },
+        { kind: "and" },
+      ],
+    ]);
+    expect(truthRpnSpecToCanonical(rpn)).toEqual(spec);
+  });
+
+  it("parses NOT, AND, OR, XOR, and nested RPN expressions", () => {
+    const nested = and(not(leaf(0)), or(leaf(1), leaf(2)));
+    const spec = makeSpec(4, 2, [
+      nested,
+      xor(leaf(2), leaf(3)),
+      leaf(0),
+      leaf(1),
+    ]);
+    const parsed = truthRpnSpecToCanonical(truthSpecToRpn(spec));
+    expect(parsed).toEqual(spec);
+    expect(astKey(parsed.statements[0] as TruthAst)).toBe(astKey(nested));
+  });
+
+  it("round-trips AST -> RPN -> AST for generated legal expressions", () => {
+    const pool = generateTruthAstPool(3, false);
+    for (const ast of pool) {
+      const rpn = truthAstToRpn(ast);
+      const parsed = truthRpnSpecToCanonical({
+        people: 3,
+        exactTruthful: 1,
+        statements: [
+          { rpn },
+          { rpn: truthAstToRpn(leaf(1)) },
+          { rpn: truthAstToRpn(leaf(2)) },
+        ],
+      });
+      expect(astKey(parsed.statements[0] as TruthAst)).toBe(astKey(ast));
+      expect(astStats(parsed.statements[0] as TruthAst)).toEqual(astStats(ast));
+    }
+  });
+
+  it("rejects malformed RPN explicitly instead of repairing it", () => {
+    const valid = (rpn: unknown[], people = 3) => ({
+      people,
+      exactTruthful: 1,
+      statements: [
+        { rpn },
+        { rpn: [{ kind: "truthful", person: 1 }] },
+        { rpn: [{ kind: "truthful", person: 2 }] },
+      ],
+    });
+    const expectCode = (input: unknown, code: string): void => {
+      try {
+        truthRpnSpecToCanonical(input);
+        throw new Error("expected RPN parse failure");
+      } catch (error) {
+        expect(error).toBeInstanceOf(TruthRpnParseError);
+        expect((error as TruthRpnParseError).code).toBe(code);
+      }
+    };
+    expectCode(valid([{ kind: "and" }]), "STACK_UNDERFLOW");
+    expectCode(valid([{ kind: "not" }]), "STACK_UNDERFLOW");
+    expectCode(
+      valid([
+        { kind: "truthful", person: 0 },
+        { kind: "truthful", person: 1 },
+      ]),
+      "EXCESS_OPERANDS",
+    );
+    expectCode(
+      valid([{ kind: "truthful", person: 3 }]),
+      "PERSON_OUT_OF_RANGE",
+    );
+    expectCode(
+      valid([{ kind: "truthful", person: 0 }, { kind: "not" }, { kind: "not" }, { kind: "not" }]),
+      "DEPTH_EXCEEDED",
+    );
+    expectCode(
+      {
+        people: 4,
+        exactTruthful: 2,
+        statements: [
+          {
+            rpn: [
+              { kind: "truthful", person: 0 },
+              { kind: "truthful", person: 1 },
+              { kind: "and" },
+              { kind: "truthful", person: 2 },
+              { kind: "truthful", person: 3 },
+              { kind: "and" },
+              { kind: "and" },
+            ],
+          },
+          { rpn: [{ kind: "truthful", person: 0 }] },
+          { rpn: [{ kind: "truthful", person: 1 }] },
+          { rpn: [{ kind: "truthful", person: 2 }] },
+        ],
+      },
+      "LEAVES_EXCEEDED",
+    );
+    expectCode(
+      {
+        people: 3,
+        exactTruthful: 1,
+        statements: [
+          { rpn: [{ kind: "truthful", person: 0 }] },
+          { rpn: [{ kind: "truthful", person: 1 }] },
+          { rpn: [{ kind: "truthful", person: 2 }] },
+          { rpn: [{ kind: "truthful", person: 0 }] },
+        ],
+      },
+      "STATEMENT_COUNT",
+    );
+    expectCode(
+      {
+        people: 3,
+        exactTruthful: 3,
+        statements: [
+          { rpn: [{ kind: "truthful", person: 0 }] },
+          { rpn: [{ kind: "truthful", person: 1 }] },
+          { rpn: [{ kind: "truthful", person: 2 }] },
+        ],
+      },
+      "EXACT_TRUTHFUL",
+    );
+    expectCode(
+      {
+        people: 3,
+        exactTruthful: 1,
+        statements: [
+          { rpn: [{ kind: "truthful", person: 0 }], extra: true },
+          { rpn: [{ kind: "truthful", person: 1 }] },
+          { rpn: [{ kind: "truthful", person: 2 }] },
+        ],
+      },
+      "INVALID_STRUCTURE",
+    );
   });
 
   it("registers truth among the real text engines", () => {

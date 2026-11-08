@@ -12,6 +12,7 @@ import {
 } from "../domain/experiment.js";
 import { WordingResponseSchema } from "../domain/presentation.js";
 import { FAMILY_SPEC_SCHEMAS } from "../domain/spec.js";
+import { TruthRpnSpecBaseSchema } from "../families/truth/schema.js";
 import { FactIdSchema } from "../families/contracts.js";
 import { hashCanonicalJson } from "../util/hash.js";
 
@@ -560,8 +561,28 @@ const FAMILY_SPEC_ENVELOPE_JSON_SCHEMAS: Readonly<
   ]),
 ) as Record<Family, StrictJsonSchema>;
 
+const DESIGNER_FAMILY_SPEC_JSON_SCHEMAS: Readonly<
+  Record<Family, StrictJsonSchema>
+> = Object.fromEntries(
+  FAMILIES.map((family) => [
+    family,
+    family === "truth"
+      ? compileStrictJsonSchema(
+          `${FAMILY_SPEC_SCHEMA_NAMES[family]}_designer`,
+          TruthRpnSpecBaseSchema,
+        )
+      : FAMILY_SPEC_JSON_SCHEMAS[family],
+  ]),
+) as Record<Family, StrictJsonSchema>;
+
 export function familySpecJsonSchema(family: Family): StrictJsonSchema {
   return FAMILY_SPEC_JSON_SCHEMAS[family];
+}
+
+export function designerFamilySpecJsonSchema(
+  family: Family,
+): StrictJsonSchema {
+  return DESIGNER_FAMILY_SPEC_JSON_SCHEMAS[family];
 }
 
 export function familySpecEnvelopeJsonSchema(family: Family): StrictJsonSchema {

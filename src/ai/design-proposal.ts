@@ -18,13 +18,17 @@ import {
   designerBoundsBrief,
 } from "../design/bounds.js";
 import {
+  TruthRpnParseError,
+  truthRpnSpecToCanonical,
+} from "../families/truth/schema.js";
+import {
   buildChatRequest,
   type AiRoleSettings,
   type ChatMessage,
   type OutputCapField,
 } from "./config.js";
 import {
-  FAMILY_SPEC_JSON_SCHEMAS,
+  designerFamilySpecJsonSchema,
   designerProposalJsonSchema,
   strictSchemaHash,
   type StrictJsonSchema,
@@ -155,7 +159,7 @@ export function buildDesignProposalMessages(
       difficulty: assignment.difficulty,
     },
     bounds: designerBoundsBrief(assignment.family, assignment.difficulty),
-    dslSchema: FAMILY_SPEC_JSON_SCHEMAS[assignment.family].schema,
+    dslSchema: designerFamilySpecJsonSchema(assignment.family).schema,
     responseSchema: schema.schema,
     skinCatalog: options.skinEnabled
       ? {
@@ -362,12 +366,31 @@ export function parseDesignProposal(
       { cause: parsed.error },
     );
   }
-  assertNoForbiddenProposalContent(parsed.data);
+  let proposal = parsed.data;
+  if (assignment.family === "truth") {
+    try {
+      proposal = {
+        ...proposal,
+        spec: truthRpnSpecToCanonical(proposal.spec),
+      } as DesignProposal;
+    } catch (error) {
+      if (error instanceof TruthRpnParseError) {
+        throw new DesignProposalError(
+          "SCHEMA_INVALID",
+          error.message,
+          error.issues,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+  }
+  assertNoForbiddenProposalContent(proposal);
   try {
     assertDesignerBounds(
-      parsed.data.family,
-      parsed.data.difficulty,
-      parsed.data.spec,
+      proposal.family,
+      proposal.difficulty,
+      proposal.spec,
     );
   } catch (error) {
     if (error instanceof DesignerBoundsError) {
@@ -382,9 +405,9 @@ export function parseDesignProposal(
   }
   try {
     validatePresentationSkin(
-      parsed.data.family,
-      parsed.data.spec,
-      parsed.data.presentationSkin,
+      proposal.family,
+      proposal.spec,
+      proposal.presentationSkin,
     );
   } catch (error) {
     if (error instanceof DesignerSkinError) {
@@ -397,5 +420,5 @@ export function parseDesignProposal(
     }
     throw error;
   }
-  return parsed.data;
+  return proposal;
 }

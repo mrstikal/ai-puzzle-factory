@@ -227,6 +227,250 @@ export const TruthSpecSchema = z
   });
 export type TruthSpec = z.infer<typeof TruthSpecSchema>;
 
+export const TRUTH_RPN_TOKEN_KINDS = [
+  "truthful",
+  "not",
+  "and",
+  "or",
+  "xor",
+] as const;
+export type TruthRpnTokenKind = (typeof TRUTH_RPN_TOKEN_KINDS)[number];
+
+export type TruthRpnToken =
+  | { readonly kind: "truthful"; readonly person: number }
+  | { readonly kind: "not" }
+  | { readonly kind: "and" }
+  | { readonly kind: "or" }
+  | { readonly kind: "xor" };
+
+export interface TruthRpnStatement {
+  readonly rpn: readonly TruthRpnToken[];
+}
+
+export interface TruthRpnSpec {
+  readonly people: TruthPeople;
+  readonly exactTruthful: number;
+  readonly statements: readonly TruthRpnStatement[];
+}
+
+export const TruthRpnTokenSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("truthful"),
+    person: z.number().int().min(0).max(3),
+  }),
+  z.strictObject({ kind: z.literal("not") }),
+  z.strictObject({ kind: z.literal("and") }),
+  z.strictObject({ kind: z.literal("or") }),
+  z.strictObject({ kind: z.literal("xor") }),
+]);
+
+export const TruthRpnStatementSchema = z.strictObject({
+  rpn: z.array(TruthRpnTokenSchema).min(1).max(7),
+});
+
+export const TruthRpnSpecBaseSchema = z.strictObject({
+  people: z.union([z.literal(3), z.literal(4)]),
+  exactTruthful: z.number().int().min(1).max(3),
+  statements: z.array(TruthRpnStatementSchema).min(3).max(4),
+});
+export type TruthRpnSpecWire = z.infer<typeof TruthRpnSpecBaseSchema>;
+
+export type TruthRpnParseErrorCode =
+  | "INVALID_STRUCTURE"
+  | "PERSON_OUT_OF_RANGE"
+  | "STACK_UNDERFLOW"
+  | "MISSING_OPERANDS"
+  | "EXCESS_OPERANDS"
+  | "STATEMENT_COUNT"
+  | "EXACT_TRUTHFUL"
+  | "DEPTH_EXCEEDED"
+  | "LEAVES_EXCEEDED"
+  | "NODES_EXCEEDED";
+
+export class TruthRpnParseError extends Error {
+  readonly code: TruthRpnParseErrorCode;
+  readonly issues: readonly string[];
+
+  constructor(
+    code: TruthRpnParseErrorCode,
+    message: string,
+    issues: readonly string[] = [],
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "TruthRpnParseError";
+    this.code = code;
+    this.issues = issues;
+  }
+}
+
+function parseRpnStatement(
+  tokens: readonly TruthRpnToken[],
+  people: TruthPeople,
+  statementIndex: number,
+): TruthAst {
+  const stack: TruthAst[] = [];
+  const issues: string[] = [];
+  for (const [tokenIndex, token] of tokens.entries()) {
+    const path = `statements[${statementIndex}].rpn[${tokenIndex}]`;
+    if (token.kind === "truthful") {
+      if (token.person >= people) {
+        throw new TruthRpnParseError(
+          "PERSON_OUT_OF_RANGE",
+          `truth statement references person ${token.person} outside 0..${people - 1}`,
+          [`${path}: person ${token.person} is outside 0..${people - 1}`],
+        );
+      }
+      stack.push({ kind: "truthful", person: token.person });
+      continue;
+    }
+    if (token.kind === "not") {
+      if (stack.length < 1) {
+        throw new TruthRpnParseError(
+          "STACK_UNDERFLOW",
+          `truth RPN not at ${path} has no operand`,
+          [`${path}: not requires one preceding expression`],
+        );
+      }
+      const operand = stack.pop();
+      if (operand === undefined) {
+        throw new TruthRpnParseError(
+          "STACK_UNDERFLOW",
+          `truth RPN not at ${path} has no operand`,
+          [`${path}: not requires one preceding expression`],
+        );
+      }
+      stack.push({ kind: "not", operand });
+      continue;
+    }
+    if (stack.length < 2) {
+      throw new TruthRpnParseError(
+        "STACK_UNDERFLOW",
+        `truth RPN ${token.kind} at ${path} has fewer than two operands`,
+        [`${path}: ${token.kind} requires two preceding expressions`],
+      );
+    }
+    const right = stack.pop();
+    const left = stack.pop();
+    if (left === undefined || right === undefined) {
+      throw new TruthRpnParseError(
+        "STACK_UNDERFLOW",
+        `truth RPN ${token.kind} at ${path} has fewer than two operands`,
+        [`${path}: ${token.kind} requires two preceding expressions`],
+      );
+    }
+    stack.push({ kind: token.kind, left, right });
+  }
+  if (stack.length === 0) {
+    throw new TruthRpnParseError(
+      "MISSING_OPERANDS",
+      `truth RPN statement ${statementIndex + 1} has no expression`,
+      [`statements[${statementIndex}].rpn: statement has no expression`],
+    );
+  }
+  if (stack.length > 1) {
+    throw new TruthRpnParseError(
+      "EXCESS_OPERANDS",
+      `truth RPN statement ${statementIndex + 1} leaves ${stack.length} expressions; exactly one is required`,
+      [
+        `statements[${statementIndex}].rpn: ${stack.length} expressions remain; exactly one is required`,
+      ],
+    );
+  }
+  const ast = stack[0];
+  if (ast === undefined) {
+    throw new TruthRpnParseError(
+      "MISSING_OPERANDS",
+      `truth RPN statement ${statementIndex + 1} has no expression`,
+    );
+  }
+  const stats = astStats(ast);
+  if (stats.depth > 2) {
+    issues.push(`statements[${statementIndex}]: truth statement depth exceeds 2`);
+  }
+  if (stats.leaves > 3) {
+    issues.push(`statements[${statementIndex}]: truth statement has more than 3 leaves`);
+  }
+  if (stats.nodes > 7) {
+    issues.push(`statements[${statementIndex}]: truth statement has more than 7 nodes`);
+  }
+  if (issues.length > 0) {
+    const code =
+      stats.depth > 2
+        ? "DEPTH_EXCEEDED"
+        : stats.leaves > 3
+          ? "LEAVES_EXCEEDED"
+          : "NODES_EXCEEDED";
+    throw new TruthRpnParseError(code, issues.join("; "), issues);
+  }
+  return ast;
+}
+
+export function truthRpnSpecToCanonical(input: unknown): TruthSpec {
+  const parsed = TruthRpnSpecBaseSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new TruthRpnParseError(
+      "INVALID_STRUCTURE",
+      "truth RPN spec does not satisfy its structural schema",
+      parsed.error.issues.map(
+        (issue) => `${issue.path.join(".") || "<spec>"}: ${issue.message}`,
+      ),
+      { cause: parsed.error },
+    );
+  }
+  const spec = parsed.data;
+  const issues: string[] = [];
+  if (spec.exactTruthful >= spec.people) {
+    issues.push(
+      `exactTruthful must be between 1 and ${spec.people - 1}`,
+    );
+  }
+  if (spec.statements.length !== spec.people) {
+    issues.push(`truth requires exactly ${spec.people} statements`);
+  }
+  if (issues.length > 0) {
+    throw new TruthRpnParseError(
+      issues[0]?.startsWith("exactTruthful")
+        ? "EXACT_TRUTHFUL"
+        : "STATEMENT_COUNT",
+      issues.join("; "),
+      issues,
+    );
+  }
+  const statements = spec.statements.map((statement, index) =>
+    parseRpnStatement(statement.rpn, spec.people, index),
+  );
+  return TruthSpecSchema.parse({
+    people: spec.people,
+    exactTruthful: spec.exactTruthful,
+    statements,
+  });
+}
+
+export function truthAstToRpn(ast: TruthAst): TruthRpnToken[] {
+  if (ast.kind === "truthful") {
+    return [{ kind: "truthful", person: ast.person }];
+  }
+  if (ast.kind === "not") {
+    return [...truthAstToRpn(ast.operand), { kind: "not" }];
+  }
+  return [
+    ...truthAstToRpn(ast.left),
+    ...truthAstToRpn(ast.right),
+    { kind: ast.kind },
+  ];
+}
+
+export function truthSpecToRpn(spec: TruthSpec): TruthRpnSpec {
+  return {
+    people: spec.people,
+    exactTruthful: spec.exactTruthful,
+    statements: spec.statements.map((statement) => ({
+      rpn: truthAstToRpn(statement),
+    })),
+  };
+}
+
 export interface TruthPredicate {
   readonly speaker: number;
   readonly ast: TruthAst;

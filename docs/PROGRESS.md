@@ -3260,3 +3260,39 @@ Expected after human completion: `labels_verified: true`, 40 fixtures, matching 
 **Manual acceptance:** the four-variant diagnostic is accepted as a separate diagnostic; it is not calibration evidence. The classification is visual interpretation; the rules/logic are sound. The next step is a closed-edge visual-representation experiment (larger/contrast/zoom as a new fixture configuration) or a new calibration contract that assigns structural defects to the deterministic validator and narrows the AI reviewer role. No v2 P48 calibration has been run.
 
 **Out of scope, unchanged:** primary-candidate generation, remediation, claims of precise reviewer accuracy, and any live run beyond the approved pilot/P46/diagnostic scope.
+
+## P51 Authorized Designer Preflight and Pilot — 2026-11-08
+
+**State:** `PILOT PASS / REVISED TRUTH RPN PROTOCOL / INTEGRATION EVIDENCE ONLY`. P51 initially failed closed on two defects: the normalized catalog returned by `fetchDesignerPreflightCatalog` was re-parsed as raw catalog JSON, and Google AI Studio rejected the recursive truth response schema (`required ref loop` in `operand`). The truth designer wire format was revised to flat postfix (RPN) tokens; the canonical truth AST, solver, evaluation semantics, and fingerprints are unchanged. The revised 20-assignment pilot completed.
+
+**Files**
+
+- Truth RPN: `src/families/truth/schema.ts` (`TruthRpnSpecBaseSchema`, `truthRpnSpecToCanonical`, `truthAstToRpn`, `truthSpecToRpn`); designer schema selection `src/domain/spec.ts`, `src/domain/design.ts`; prompt/schema adapters `src/ai/design-proposal.ts`, `src/ai/repair-proposal.ts`, `src/ai/schemas.ts`; prompts `src/ai/prompts/designer-v1/design.txt`, `design-repair.txt` (v2); baseline/mock conversion `src/design/run.ts`, `src/design/mock.ts`; preflight adapter `src/design/preflight.ts`.
+- Tests: `tests/families/truth.test.ts` (NOT/AND/OR/XOR/nested, missing/excess operands, underflow, person range, depth/leaves, statement count, exactTruthful, malformed structure, AST→RPN→AST), `tests/ai/design-proposal.test.ts` (flat RPN schema, parse conversion, repair prompt), `tests/design/preflight.test.ts` (normalized catalog and truth probe), `tests/design/mock-cohort.test.ts` (offline regression).
+- Evidence: final hash-bound pilot `data/runs/2f59e287-1e4d-42bc-84e6-e5b575eb4326/`; earlier revised-protocol pilot `data/runs/bfe18b23-d878-4958-8681-8c114eb252af/` (behavioral RPN pass, before truth-file hash coverage); preflight-only RPN check `e7ea485d-7013-4871-bfdd-eb4aa21660f1`; preserved failed runs `14fd8eb4-29e1-47cc-a464-30a55cbb545e`, `c2f93fe4-c4d7-437f-967c-d37796e19544`, `42663da6-d66c-498c-865e-928d9478a97a`, `0eb08890-9330-499c-b472-3de982bcaf27`, `e52bdce4-9346-4e00-b6c5-858a8babb22e`, `052c63f8-6057-456f-beb9-9e90f7e3fe96`.
+- Docs: `docs/PROVIDER_SMOKE_TESTS.md` P51 entry and this entry.
+
+**Review fixes:** the single-parse proposal refactor now routes any code-bearing proposal/feedback error through `diagnosticFromProposalError`; a `REPAIR_REPLAY` from a repeated repair response is retained as a rejected attempt with the `REPAIR_REPLAY` diagnostic instead of aborting the run. `src/families/truth/schema.ts`, `canonical.ts`, and `engine.ts` are included in the freeze `schemaHash`/`sourceHash` coverage, so the final pilot `2f59e287-1e4d-42bc-84e6-e5b575eb4326` is hash-bound for P52.
+
+**Observable behavior**
+
+- `npm run check` passed 64 files / 803 tests plus lint/typecheck/build before paid calls.
+- Preflight probes: 2/2 passed the actual serialized strict contract (truth text `puzzle_design_truth_d1_skin`, matrix SVG `puzzle_design_matrix_d1_skin`), cost USD 0.020364.
+- Final pilot `2f59e287-1e4d-42bc-84e6-e5b575eb4326`: 20 assignments, 60 candidates, 60 terminal, 10 text / 10 SVG, two per family; 63 design attempts (20 baseline + 40 AI first + 3 repairs), 45 logical calls (2 preflight + 40 design + 3 repair), zero reviewer calls.
+- Final pilot verdicts: 56 accepted, 2 rejected, 0 inconclusive, 2 generation errors (both `finish_reason:length` on scheduling-01, one per AI arm; known cost, retained as ordinary model-output failures). Baseline 20/20. One-shot first/final 17/20 (2 ordinary schema-invalid rejects on paths-01/paths-02: unsorted edges/cells; 1 length generation error on scheduling-01). Feedback first 16/20, final 19/20, 3 first-attempt rejects repaired (counting-02 unsorted cells, paths-01/paths-02 unsorted edges/cells), 0 feedback rejects, 1 length generation error on scheduling-01. The earlier `bfe18...` pilot was 57 accepted / 3 rejected / 0 generation errors; it is retained as the pre-hash-coverage RPN pilot.
+- Novelty: one-shot 14 novel / 17 distinct; feedback 17 novel / 19 distinct; complete frozen/cohort coverage for all ten families. Truth AI accepted 2/2 feedback and 2/2 one-shot after the RPN fix.
+- Costs: final pilot USD 0.59245035, preflight USD 0.020364, combined USD 0.61281435; 0 unknown pilot attempts, 0 unknown exposure, no budget pause; separate caps respected. Latency p95: one-shot 42.40s, feedback 41.16s; wall 427.4s. Earlier `bfe18...` cost USD 0.55174635 combined.
+- All 45 observed calls used `google/gemini-3.8-flash` via `Google`. The routing confirmation was `data/p51-routing-confirmation.json` (operator Lexa, Balanced/default, no BYOK); the key was loaded locally and never printed.
+- Cumulative P51 evidence including failed attempts and both revised-protocol pilots: known USD 1.88927692 + unknown exposure USD 0.40. Failed attempts are preserved and are not pilot acceptance. `src/families/truth/schema.ts`, `canonical.ts`, and `engine.ts` are now included in the freeze configuration hashes, so the final pilot is hash-bound.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm run check` | 64 files / 803 tests passed; lint, typecheck, build passed. |
+| preflight-only RPN check | 2/2 probes pass; USD 0.021969. |
+| `npm run designer -- --pilot --live --allow-paid --seed puzzle-designer-pilot-v1 --max-cost 2 --preflight-max-cost 0.50 --model google/gemini-3.8-flash --routing-confirmation data/p51-routing-confirmation.json --reservation 0.08` | exit 0; 60/60 terminal; 56 accepted / 2 rejected / 2 generation errors; USD 0.61281435 combined. |
+| `npm run report -- --run 2f59e287-1e4d-42bc-84e6-e5b575eb4326` | `report.html` + `decision.json` (`revise`, pilot evidence, no human labels). |
+| `npm run export -- --run 2f59e287-1e4d-42bc-84e6-e5b575eb4326` | 60 candidates, 63 attempts, 45 requests, 60 puzzles, 28 SVG + 28 PNG. |
+
+**Manual acceptance:** P51 is integration evidence only. The model designs full DSL specs; the solver is the only judge; repair attempts are visible; the budget is respected; no reviewer role or model substitution occurred. P51 does not authorize the primary cohort, freeze, human evaluation, or any claim of final quality. The failed-run evidence remains under `data/` and must not be used as a pilot pass.

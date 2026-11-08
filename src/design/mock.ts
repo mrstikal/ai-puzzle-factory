@@ -13,6 +13,10 @@ import {
 import { productionRegistry } from "../families/registry.js";
 import { canonicalJson, sha256Hex } from "../util/hash.js";
 import { diagnoseDesignSpec } from "./diagnostics.js";
+import {
+  truthSpecToRpn,
+  type TruthSpec,
+} from "../families/truth/schema.js";
 
 export const DESIGNER_MOCK_SCENARIO_VERSION = "p50.1-mock-v1" as const;
 
@@ -261,7 +265,10 @@ function validProposal(
       return {
         family: assignment.family,
         difficulty: assignment.difficulty,
-        spec,
+        spec:
+          assignment.family === "truth"
+            ? truthSpecToRpn(spec as TruthSpec)
+            : spec,
         designIntent: null,
         presentationSkin: null,
       } as DesignProposal;
@@ -469,7 +476,12 @@ export function buildDesignerMockResponse(
         proposal: {
           family: assignment.family,
           difficulty: assignment.difficulty,
-          spec: ambiguousSpec(assignment.family, assignment.difficulty),
+          spec:
+            assignment.family === "truth"
+              ? truthSpecToRpn(
+                  ambiguousSpec(assignment.family, assignment.difficulty) as TruthSpec,
+                )
+              : ambiguousSpec(assignment.family, assignment.difficulty),
           designIntent: null,
           presentationSkin: null,
         },
@@ -481,7 +493,12 @@ export function buildDesignerMockResponse(
         proposal: {
           family: assignment.family,
           difficulty: assignment.difficulty,
-          spec: unsatSpec(assignment.family, assignment.difficulty),
+          spec:
+            assignment.family === "truth"
+              ? truthSpecToRpn(
+                  unsatSpec(assignment.family, assignment.difficulty) as TruthSpec,
+                )
+              : unsatSpec(assignment.family, assignment.difficulty),
           designIntent: null,
           presentationSkin: null,
         },
@@ -493,7 +510,12 @@ export function buildDesignerMockResponse(
         proposal: {
           family: assignment.family,
           difficulty: assignment.difficulty,
-          spec: unsatSpec(assignment.family, assignment.difficulty),
+          spec:
+            assignment.family === "truth"
+              ? truthSpecToRpn(
+                  unsatSpec(assignment.family, assignment.difficulty) as TruthSpec,
+                )
+              : unsatSpec(assignment.family, assignment.difficulty),
           designIntent: null,
           presentationSkin: null,
         },

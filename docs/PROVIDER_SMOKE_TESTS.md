@@ -298,3 +298,40 @@ The operator approved one final targeted diagnostic on `cal-paths-13` with Sonne
 A/B are in `data/paths-diagnostic/03992846-9d26-4588-b00d-edbf08cbb5f7/`; the first run paused at C on the admission reservation after A/B, so C/D were completed in `data/paths-diagnostic/64877ad9-8b6c-48fa-81ed-c001e6f77e0e/`. The combined report is `data/paths-diagnostic/combined-2026-11-07.json`. The combined result is **D succeeds, A fails, B/C fail**: the primary classification is **visual interpretation**. The rules/logic are sound; the explicit edge-check procedure and the zoomed crop do not fix the visual failure. The first artifact labels the budget-refused C as `schema_error`; new runs use the distinct `budget_refused`/`transport_error` buckets. The diagnostic CLI now caps new runs at the remaining envelope (USD 0.05 admission/actual).
 
 Costs: A/B USD 0.040836; C/D USD 0.044802; diagnostic total USD 0.085638. Total known spend is now **USD 0.4928365** (USD 0.4071985 + USD 0.085638); the combined authorization is USD 0.55, leaving **USD 0.0571635**. The full suite passed 52 files / 651 tests. No v2 P48 calibration was run. The next step is a closed-edge visual-representation experiment (larger/contrast/zoom as a new fixture configuration) or a new calibration contract assigning structural defects to the deterministic validator and narrowing the AI reviewer role.
+
+## P51 authorized designer preflight and pilot — 2026-11-08
+
+**State:** `PILOT PASS / REVISED TRUTH RPN PROTOCOL / INTEGRATION EVIDENCE ONLY`. The first live attempts exposed two blocking P50/P46 defects and were preserved: the designer preflight adapter re-parsed a normalized catalog, and the recursive truth response schema was rejected by Google AI Studio (`required ref loop` in `operand`). The truth wire format was revised to flat postfix (RPN) tokens with a deterministic RPN-to-AST parser; canonical AST, solver, evaluation semantics, and fingerprints are unchanged. The revised pilot completed 60/60 terminal candidates.
+
+**Operator inputs:** `DESIGNER_MODEL=google/gemini-3.8-flash`; routing confirmation `data/p51-routing-confirmation.json` (operator Lexa, Balanced/default, no BYOK); separate caps USD 0.50 preflight + USD 2.00 pilot. The inference key was loaded locally from `.env.local` and never printed.
+
+**Files**
+
+- Truth RPN wire schema/parser: `src/families/truth/schema.ts`; designer schema selection `src/domain/spec.ts`, `src/domain/design.ts`; prompt/schema adapters `src/ai/design-proposal.ts`, `src/ai/repair-proposal.ts`, `src/ai/schemas.ts`; prompts `src/ai/prompts/designer-v1/design.txt`, `design-repair.txt` (v2); baseline/mock conversion `src/design/run.ts`, `src/design/mock.ts`.
+- Tests: `tests/families/truth.test.ts` (RPN positive/negative and AST→RPN→AST), `tests/ai/design-proposal.test.ts` (flat RPN schema, parse conversion, repair prompt), `tests/design/preflight.test.ts` (normalized catalog + truth probe), `tests/design/mock-cohort.test.ts` (offline regression).
+- Evidence: final hash-bound pilot `data/runs/2f59e287-1e4d-42bc-84e6-e5b575eb4326/`; earlier revised-protocol pilot `data/runs/bfe18b23-d878-4958-8681-8c114eb252af/` (behavioral RPN pass, before truth-file hash coverage); preflight-only RPN check `e7ea485d-7013-4871-bfdd-eb4aa21660f1`; failed runs preserved: `14fd8eb4-29e1-47cc-a464-30a55cbb545e`, `c2f93fe4-c4d7-437f-967c-d37796e19544`, `42663da6-d66c-498c-865e-928d9478a97a`, `0eb08890-9330-499c-b472-3de982bcaf27`, `e52bdce4-9346-4e00-b6c5-858a8babb22e`, `052c63f8-6057-456f-beb9-9e90f7e3fe96`.
+- Docs: this entry and `docs/PROGRESS.md` P51 entry.
+
+**Review fixes:** the single-parse proposal refactor now routes any code-bearing proposal/feedback error through `diagnosticFromProposalError`; a `REPAIR_REPLAY` from a repeated repair response is retained as a rejected attempt with the `REPAIR_REPLAY` diagnostic instead of aborting the run. `src/families/truth/schema.ts`, `canonical.ts`, and `engine.ts` are included in the freeze `schemaHash`/`sourceHash` coverage, so the final pilot `2f59e287-1e4d-42bc-84e6-e5b575eb4326` is hash-bound for P52.
+
+**Observable behavior**
+
+- Preflight probes (2 calls) passed the actual serialized strict contract: truth text probe `puzzle_design_truth_d1_skin` and matrix SVG probe `puzzle_design_matrix_d1_skin`; both returned valid proposals. Probe cost USD 0.01232025 + USD 0.00804375 = USD 0.020364.
+- Final pilot: 20 assignments / 60 candidates / 60 terminal; 10 text + 10 SVG; two per family; 63 design attempts (20 baseline + 40 AI first + 3 repairs); 45 logical calls (2 preflight + 40 design + 3 design_repair_1); zero reviewer calls. All 45 observed calls used `google/gemini-3.8-flash` via provider `Google`.
+- Final pilot verdicts: 56 accepted, 2 rejected, 0 inconclusive, 2 generation errors (both `finish_reason:length` on scheduling-01, one per AI arm; known cost, retained as ordinary model-output failures). Baseline 20/20 accepted. One-shot first/final 17/20 (2 ordinary schema-invalid rejects on paths-01/paths-02: unsorted edges/cells; 1 length generation error on scheduling-01). Feedback first 16/20, final 19/20, 3 repairable first failures, 3 repairs accepted (one-repair 3, two-repair 0), 0 feedback rejects, 1 length generation error on scheduling-01; the repaired rejects were counting-02 and paths-01/paths-02. The earlier `bfe18...` pilot was 57 accepted / 3 rejected / 0 generation errors; it is retained as the pre-hash-coverage RPN pilot.
+- Novelty: one-shot 14 novel / 17 distinct final structures; feedback 17 novel / 19 distinct; frozen and cohort reference coverage complete for all ten families.
+- Costs: final pilot known USD 0.59245035, preflight known USD 0.020364, combined USD 0.61281435; 0 unknown pilot attempts, 0 unknown exposure, no budget pause; separate caps respected. Latency p95: one-shot 42.40s, feedback 41.16s; wall 427.4s. Earlier `bfe18...` cost USD 0.55174635 combined.
+- All ten families have at least one fully accepted real-pipeline AI candidate; truth AI accepted 2/2 feedback and 2/2 one-shot after the RPN fix. The two schema-invalid rejects and two length generation errors are retained ordinary quality failures, not replacements or infrastructure defects.
+- Cumulative P51 evidence including failed attempts and both revised-protocol pilots: known USD 1.88927692 + unknown exposure USD 0.40; all failed runs remain under `data/` and are not used as pilot acceptance. `src/families/truth/schema.ts`, `canonical.ts`, and `engine.ts` are now included in the freeze configuration hashes, so the final pilot is hash-bound.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm run check` | 64 files / 803 tests passed; lint, typecheck, build passed (before paid calls). |
+| `npx tsx` preflight-only RPN check | 2/2 probes pass; USD 0.021969. |
+| `npm run designer -- --pilot --live --allow-paid --seed puzzle-designer-pilot-v1 --max-cost 2 --preflight-max-cost 0.50 --model google/gemini-3.8-flash --routing-confirmation data/p51-routing-confirmation.json --reservation 0.08` | exit 0; completed 60/60; 56 accepted / 2 rejected / 2 generation errors; USD 0.61281435 combined. |
+| `npm run report -- --run 2f59e287-1e4d-42bc-84e6-e5b575eb4326` | `report.html` + `decision.json` (`revise`, pilot evidence, no human labels). |
+| `npm run export -- --run 2f59e287-1e4d-42bc-84e6-e5b575eb4326` | 60 candidates, 63 attempts, 45 requests, 60 puzzles, 28 SVG + 28 PNG, manifest. |
+
+**Manual acceptance:** the pilot is accepted as integration evidence only. The model designs full DSL specs; the solver is the only judge; repair attempts are visible; the budget is respected; no reviewer role or model substitution occurred. P51 does not authorize the primary cohort, freeze, human evaluation, or any claim of final quality.

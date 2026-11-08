@@ -30,6 +30,10 @@ import {
   designerProposalJsonSchema,
   strictSchemaHash,
 } from "../../src/ai/schemas.js";
+import {
+  truthSpecToRpn,
+  type TruthSpec,
+} from "../../src/families/truth/schema.js";
 import { main as designerMain } from "../../src/cli/design.js";
 import {
   DESIGNER_ROOT_SEEDS,
@@ -433,10 +437,14 @@ function proposalFor(
     readonly presentationSkin?: unknown;
   } = {},
 ): unknown {
+  const spec = validSpec(family, difficulty);
   return {
     family,
     difficulty,
-    spec: validSpec(family, difficulty),
+    spec:
+      family === "truth"
+        ? truthSpecToRpn(spec as TruthSpec)
+        : spec,
     designIntent:
       overrides.designIntent === undefined ? null : overrides.designIntent,
     presentationSkin:
@@ -926,7 +934,7 @@ describe("designer proposal contract", () => {
       {
         family: "truth",
         difficulty: 1,
-        spec: {
+        spec: truthSpecToRpn({
           people: 3,
           exactTruthful: 1,
           statements: [
@@ -943,7 +951,7 @@ describe("designer proposal contract", () => {
             { kind: "truthful", person: 1 },
             { kind: "truthful", person: 2 },
           ],
-        },
+        }),
       },
       {
         family: "arithmetic",
@@ -1043,7 +1051,7 @@ describe("designer proposal contract", () => {
     const cases: Array<{
       readonly family: Family;
       readonly difficulty: Difficulty;
-      readonly spec: FamilySpec;
+      readonly spec: unknown;
     }> = [
       {
         family: "ranking",
@@ -1053,12 +1061,12 @@ describe("designer proposal contract", () => {
       {
         family: "truth",
         difficulty: 1,
-        spec: truthSpec(3),
+        spec: truthSpecToRpn(truthSpec(3)),
       },
       {
         family: "truth",
         difficulty: 2,
-        spec: truthSpec(3),
+        spec: truthSpecToRpn(truthSpec(3)),
       },
       {
         family: "arithmetic",
@@ -1415,7 +1423,7 @@ describe("designer request identity and prompt", () => {
       skinEnabled: true,
     });
     expect(built.messages).toHaveLength(2);
-    expect(built.messages[0]?.content).toContain("prompt_version: v1");
+    expect(built.messages[0]?.content).toContain("prompt_version: v2");
     expect(built.messages[0]?.content).toContain("designer");
     const payload = JSON.parse(String(built.messages[1]?.content)) as Record<
       string,
@@ -1629,6 +1637,36 @@ describe("designer role seams and strict schema failure", () => {
         }
       }
     }
+  });
+
+  it("uses a flat RPN truth schema without recursive refs", () => {
+    const schema = designerProposalJsonSchema("truth", 1, {
+      skinEnabled: true,
+    });
+    const serialized = JSON.stringify(schema.schema);
+    expect(serialized).not.toContain('"$defs"');
+    expect(serialized).not.toContain('"$ref"');
+    expect(serialized).toContain('"rpn"');
+    expect(serialized).toContain('"truthful"');
+    expect(serialized).toContain('"not"');
+    expect(serialized).toContain('"and"');
+    expect(serialized).toContain('"or"');
+    expect(serialized).toContain('"xor"');
+  });
+
+  it("parses truth RPN into the canonical AST", () => {
+    const canonical = truthSpec(1);
+    const parsed = parseDesignProposal(
+      {
+        family: "truth",
+        difficulty: 1,
+        spec: truthSpecToRpn(canonical),
+        designIntent: null,
+        presentationSkin: null,
+      },
+      assignmentFor("truth", 1),
+    );
+    expect(parsed.spec).toEqual(canonical);
   });
 
   it("fails loudly on dynamic record schemas before transport", () => {
