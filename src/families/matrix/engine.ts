@@ -5,6 +5,7 @@ import {
   formatFactId,
   type Fact,
   type FamilyEngine,
+  type FamilySolutionDiagnostics,
   type SolveResult,
   type TestMutation,
   type VisibleRules,
@@ -345,6 +346,20 @@ function testMutations(_spec: MatrixSpec): readonly TestMutation<MatrixSpec>[] {
       spec: emptyMissing,
     },
   ];
+}
+
+export function diagnoseMatrixSolutions(
+  spec: MatrixSpec,
+): FamilySolutionDiagnostics<MatrixAnswer> {
+  const parsed = MatrixSpecSchema.parse(spec);
+  const solutions = solveMatrix(parsed);
+  return {
+    solutionCount: solutions.length,
+    answerCount: solutions.length,
+    witnesses: solutions.slice(0, 2),
+    complete: true,
+    enumeratedStates: 16,
+  };
 }
 
 export const matrixEngine: FamilyEngine<MatrixSpec, MatrixAnswer> = {

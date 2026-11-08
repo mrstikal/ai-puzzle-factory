@@ -7,21 +7,57 @@ import {
   Sha256Schema,
   UsdSchema,
 } from "../domain/experiment.js";
+import {
+  DESIGNER_CANDIDATE_SLOT_ID_PATTERN,
+  DESIGNER_REQUEST_ROLES,
+} from "../domain/design.js";
 import { canonicalJson, sha256Hex } from "../util/hash.js";
 import { ARTIFACT_LIMITS } from "../storage/artifacts.js";
 import { withTransaction } from "../storage/database.js";
 
-export const LEDGER_ROLES = [...REQUEST_ROLES, "preflight"] as const;
+export const LEDGER_ROLES = [
+  ...REQUEST_ROLES,
+  "preflight",
+  ...DESIGNER_REQUEST_ROLES,
+] as const;
 export type LedgerRole = (typeof LEDGER_ROLES)[number];
 export const LedgerRoleSchema = z.enum(LEDGER_ROLES);
 
-export const LEDGER_RUN_KINDS = ["full", "smoke", "calibration", "preflight"] as const;
+export const LEDGER_RUN_KINDS = [
+  "full",
+  "smoke",
+  "calibration",
+  "preflight",
+  "design_primary",
+  "design_pilot",
+  "design_mock",
+] as const;
 export type LedgerRunKind = (typeof LEDGER_RUN_KINDS)[number];
 export const LedgerRunKindSchema = z.enum(LEDGER_RUN_KINDS);
 
-export const BUDGET_POOLS = ["primary", "smoke", "calibration", "preflight"] as const;
+export const BUDGET_POOLS = [
+  "primary",
+  "smoke",
+  "calibration",
+  "preflight",
+  "pilot",
+  "mock",
+] as const;
 export type BudgetPool = (typeof BUDGET_POOLS)[number];
 export const BudgetPoolSchema = z.enum(BUDGET_POOLS);
+
+const LedgerSlotIdSchema = z.union([
+  z.string().regex(SLOT_ID_PATTERN),
+  z.string().regex(DESIGNER_CANDIDATE_SLOT_ID_PATTERN),
+]);
+
+function isDesignerRole(role: LedgerRole): boolean {
+  return (DESIGNER_REQUEST_ROLES as readonly string[]).includes(role);
+}
+
+function isDesignerRunKind(runKind: LedgerRunKind): boolean {
+  return runKind.startsWith("design_");
+}
 
 export const REQUEST_STATES = [
   "prepared",
@@ -79,14 +115,30 @@ function poolForRunKind(runKind: LedgerRunKind): BudgetPool {
       return "calibration";
     case "preflight":
       return "preflight";
+    case "design_primary":
+      return "primary";
+    case "design_pilot":
+      return "pilot";
+    case "design_mock":
+      return "mock";
   }
+}
+
+function expectedPoolForCall(
+  runKind: LedgerRunKind,
+  role: LedgerRole,
+): BudgetPool {
+  if (runKind === "design_pilot" && role === "preflight") {
+    return "preflight";
+  }
+  return poolForRunKind(runKind);
 }
 
 export const LogicalCallInputSchema = z
   .strictObject({
     logicalCallId: z.uuid().optional(),
     runId: z.uuid().nullable().optional(),
-    slotId: z.string().regex(SLOT_ID_PATTERN).nullable().optional(),
+    slotId: LedgerSlotIdSchema.nullable().optional(),
     probeKey: z.string().min(1).max(200).nullable().optional(),
     role: LedgerRoleSchema,
     runKind: LedgerRunKindSchema,
@@ -117,6 +169,13 @@ export const LogicalCallInputSchema = z
           message: "only preflight calls use the preflight role",
         });
       }
+      if (isDesignerRole(input.role)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["role"],
+          message: "designer roles require a designer run kind",
+        });
+      }
     } else if (input.runKind === "calibration") {
       if (runId !== null || slotId !== null || probeKey === null) {
         ctx.addIssue({
@@ -137,11 +196,77 @@ export const LogicalCallInputSchema = z
           message: "calibration uses review roles with fixture keys",
         });
       }
+    } else if (input.runKind === "design_primary" || input.runKind === "design_mock") {
+      if (runId === null || slotId === null || probeKey !== null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["runId"],
+          message: "designer content calls require runId and slotId and no probeKey",
+        });
+      }
+      if (!isDesignerRole(input.role)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["role"],
+          message: "designer content calls use design or repair roles",
+        });
+      }
+      if (
+        slotId !== null &&
+        !DESIGNER_CANDIDATE_SLOT_ID_PATTERN.test(slotId)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["slotId"],
+          message: "designer content calls require a designer candidate slot ID",
+        });
+      }
+    } else if (input.runKind === "design_pilot") {
+      if (runId === null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["runId"],
+          message: "pilot calls require a runId",
+        });
+      }
+      if (slotId !== null) {
+        if (probeKey !== null || !isDesignerRole(input.role)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["slotId"],
+            message: "pilot content calls require a designer slot and role",
+          });
+        }
+        if (!DESIGNER_CANDIDATE_SLOT_ID_PATTERN.test(slotId)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["slotId"],
+            message: "pilot content calls require a designer candidate slot ID",
+          });
+        }
+      } else if (probeKey === null || input.role !== "preflight") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["probeKey"],
+          message: "pilot probes require a probeKey, no slot, and the preflight role",
+        });
+      }
     } else if (runId !== null || slotId !== null || probeKey === null) {
       ctx.addIssue({
         code: "custom",
         path: ["probeKey"],
         message: "preflight calls require a probeKey and no run/slot",
+      });
+    }
+    if (
+      (input.runKind === "full" || input.runKind === "smoke") &&
+      slotId !== null &&
+      !SLOT_ID_PATTERN.test(slotId)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["slotId"],
+        message: "legacy calls require a legacy slot ID",
       });
     }
     if (input.runKind === "preflight" && input.role !== "preflight") {
@@ -159,7 +284,7 @@ export const LogicalCallSchema = z
   .strictObject({
     logicalCallId: z.uuid(),
     runId: z.uuid().nullable(),
-    slotId: z.string().regex(SLOT_ID_PATTERN).nullable(),
+    slotId: LedgerSlotIdSchema.nullable(),
     probeKey: z.string().min(1).max(200).nullable(),
     role: LedgerRoleSchema,
     runKind: LedgerRunKindSchema,
@@ -183,11 +308,62 @@ export const LogicalCallSchema = z
         message: "logical call request hash does not match its request body",
       });
     }
-    if (call.pool !== poolForRunKind(call.runKind)) {
+    if (call.pool !== expectedPoolForCall(call.runKind, call.role)) {
       ctx.addIssue({
         code: "custom",
         path: ["pool"],
-        message: "logical call pool does not match its run kind",
+        message: "logical call pool does not match its run kind and role",
+      });
+    }
+    if (
+      isDesignerRunKind(call.runKind) &&
+      call.slotId !== null &&
+      !DESIGNER_CANDIDATE_SLOT_ID_PATTERN.test(call.slotId)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["slotId"],
+        message: "designer calls require a designer candidate slot ID",
+      });
+    }
+    if (
+      !isDesignerRunKind(call.runKind) &&
+      call.slotId !== null &&
+      !SLOT_ID_PATTERN.test(call.slotId)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["slotId"],
+        message: "legacy calls require a legacy slot ID",
+      });
+    }
+    if (!isDesignerRunKind(call.runKind) && isDesignerRole(call.role)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["role"],
+        message: "designer roles require a designer run kind",
+      });
+    }
+    if (
+      isDesignerRunKind(call.runKind) &&
+      call.role !== "preflight" &&
+      !isDesignerRole(call.role)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["role"],
+        message: "designer content calls use design or repair roles",
+      });
+    }
+    if (
+      isDesignerRunKind(call.runKind) &&
+      call.role === "preflight" &&
+      call.runKind !== "design_pilot"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["role"],
+        message: "only the pilot run carries designer preflight probes",
       });
     }
   });
@@ -762,7 +938,7 @@ export function createLogicalCall(
   const probeKey = call.probeKey ?? null;
   const createdAt = call.createdAt ?? new Date().toISOString();
   const logicalCallId = call.logicalCallId ?? randomUUID();
-  const pool = poolForRunKind(call.runKind);
+  const pool = expectedPoolForCall(call.runKind, call.role);
 
   if (runId !== null) {
     const run = db.prepare("SELECT run_kind FROM runs WHERE run_id = ?").get(runId) as

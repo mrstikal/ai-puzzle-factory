@@ -10,6 +10,7 @@ import {
   formatFactId,
   type Fact,
   type FamilyEngine,
+  type FamilySolutionDiagnostics,
   type SolveResult,
   type TestMutation,
   type VisibleRules,
@@ -529,6 +530,22 @@ function testMutations(_spec: RankingSpec): readonly TestMutation<RankingSpec>[]
       }),
     },
   ];
+}
+
+export function diagnoseRankingSolutions(
+  spec: RankingSpec,
+): FamilySolutionDiagnostics<RankingAnswer> {
+  const parsed = RankingSpecSchema.parse(spec);
+  const solved = solveRankingPermutations(parsed.size, parsed.clues);
+  return {
+    solutionCount: solved.solutions.length,
+    answerCount: solved.solutions.length,
+    witnesses: solved.solutions
+      .slice(0, 2)
+      .map((order) => itemOrderToAnswer(order, parsed.size)),
+    complete: true,
+    enumeratedStates: solved.enumeratedStates,
+  };
 }
 
 export const rankingEngine: FamilyEngine<RankingSpec, RankingAnswer> = {

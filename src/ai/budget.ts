@@ -80,6 +80,34 @@ function poolForRunKind(runKind: LedgerRunKind): BudgetPool {
       return "calibration";
     case "preflight":
       return "preflight";
+    case "design_primary":
+      return "primary";
+    case "design_pilot":
+      return "pilot";
+    case "design_mock":
+      return "mock";
+  }
+}
+
+function isAllowedPoolForRunKind(
+  runKind: LedgerRunKind,
+  pool: BudgetPool,
+): boolean {
+  switch (runKind) {
+    case "full":
+      return pool === "primary";
+    case "smoke":
+      return pool === "smoke";
+    case "calibration":
+      return pool === "calibration";
+    case "preflight":
+      return pool === "preflight";
+    case "design_primary":
+      return pool === "primary";
+    case "design_pilot":
+      return pool === "pilot" || pool === "preflight";
+    case "design_mock":
+      return pool === "mock";
   }
 }
 
@@ -88,19 +116,24 @@ export const BudgetAccountInputSchema = z
     accountId: z.string().min(1).max(200).optional(),
     runId: z.uuid().nullable().optional(),
     runKind: LedgerRunKindSchema,
+    pool: BudgetPoolSchema.optional(),
     maxCostUsd: UsdSchema,
     createdAt: z.iso.datetime().optional(),
   })
   .superRefine((input, ctx) => {
     const runId = input.runId ?? null;
     if (
-      (input.runKind === "full" || input.runKind === "smoke") &&
+      (input.runKind === "full" ||
+        input.runKind === "smoke" ||
+        input.runKind === "design_primary" ||
+        input.runKind === "design_pilot" ||
+        input.runKind === "design_mock") &&
       runId === null
     ) {
       ctx.addIssue({
         code: "custom",
         path: ["runId"],
-        message: "full/smoke budget accounts require a runId",
+        message: "run-scoped budget accounts require a runId",
       });
     }
     if (
@@ -111,6 +144,16 @@ export const BudgetAccountInputSchema = z
         code: "custom",
         path: ["runId"],
         message: "calibration/preflight budget accounts are global",
+      });
+    }
+    if (
+      input.pool !== undefined &&
+      !isAllowedPoolForRunKind(input.runKind, input.pool)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["pool"],
+        message: "budget pool is not allowed for this run kind",
       });
     }
   });
@@ -131,11 +174,35 @@ export const BudgetAccountSchema = z
     updatedAt: z.iso.datetime(),
   })
   .superRefine((account, ctx) => {
-    if (account.pool !== poolForRunKind(account.runKind)) {
+    if (!isAllowedPoolForRunKind(account.runKind, account.pool)) {
       ctx.addIssue({
         code: "custom",
         path: ["pool"],
         message: "budget account pool does not match its run kind",
+      });
+    }
+    if (
+      (account.runKind === "full" ||
+        account.runKind === "smoke" ||
+        account.runKind === "design_primary" ||
+        account.runKind === "design_pilot" ||
+        account.runKind === "design_mock") &&
+      account.runId === null
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["runId"],
+        message: "run-scoped budget accounts require a runId",
+      });
+    }
+    if (
+      (account.runKind === "calibration" || account.runKind === "preflight") &&
+      account.runId !== null
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["runId"],
+        message: "calibration/preflight budget accounts are global",
       });
     }
   });
@@ -476,7 +543,7 @@ export function createBudgetAccount(
   }
   const data = parsed.data;
   const runId = data.runId ?? null;
-  const pool = poolForRunKind(data.runKind);
+  const pool = data.pool ?? poolForRunKind(data.runKind);
   const accountId = data.accountId ?? randomUUID();
   const createdAt = data.createdAt ?? new Date().toISOString();
   const maxCostUsd = normalizeUsd(data.maxCostUsd, "maxCostUsd");

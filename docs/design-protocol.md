@@ -1,9 +1,10 @@
 # AI Puzzle Designer Protocol (P46)
 
-Status: P46 implements the offline designer contract, deterministic cohort plan,
-selected-family proposal schema, pre-solver bounds, prompt adapter, and dry-run
-CLI. It does not execute generation, repair, solving, baseline comparison,
-presentation, human evaluation, or live calls.
+Status: P46/P47 implement the offline designer contract, deterministic cohort
+plan, selected-family proposal schema, pre-solver bounds, prompt adapter,
+dry-run CLI, solver-feedback repair loop, diagnostics, and append-only attempt
+ledger. They do not construct baseline candidates, run the structural
+comparator, render presentation, evaluate humans, or make live calls.
 
 ## Cohort plan
 
@@ -207,3 +208,146 @@ seams, exact manifest counts, and the dry-run CLI.
 - Presentation rendering and assets (P49)
 - Human sampler, metrics, decision thresholds, and mock scenarios (P50)
 - Live calls, capability preflight, and frozen protocol execution (P51)
+
+## P47 solver-feedback repair loop and attempt ledger
+
+Status: implemented offline. P47 adds the shared-schema migration, append-only
+design attempt ledger, independent solver/level diagnostics, bounded repair
+loop, repair prompt/adapter, and repository/ledger/budget integration. It does
+not construct baseline candidates, run the structural comparator, render
+presentation, or make live calls.
+
+### Storage migration 0006
+
+`0006_design_attempts.sql` rebuilds the affected shared tables with foreign
+keys temporarily disabled, runs `PRAGMA foreign_key_check` before commit, and
+restores the pragmas. It preserves legacy rows, indexes, immutable triggers,
+payload hashes, artifacts, monetary reservations, and budget events.
+
+New run kinds are `design_primary`, `design_pilot`, and `design_mock`. New
+budget pools are `pilot` and `mock`; the pilot's two probes use the existing
+`preflight` pool with the pilot `run_id`. Designer slots use
+`slot_kind='designer'`, a nullable `lane`, `assignment_id`, and `arm`, with
+ordinals 1-300. Legacy slots remain `slot_kind='legacy'`, lane-scoped, and
+ordinals 1-200.
+
+`design_attempts` is append-only and keyed by `(run_id, slot_id,
+attempt_index)`. Each row stores role, arm, nullable logical-call/proposal
+references, the strict diagnostic JSON, verdict, cost snapshot, timestamps, and
+elapsed time. `design_attempt_artifacts` links content-addressed artifacts to
+the attempt. Baseline attempt 0 has no logical call and zero AI cost; AI
+attempts require a logical call and a known/unknown cost snapshot. A third
+repair is rejected.
+
+### Attempt diagnostics
+
+Diagnostics are strict bounded objects with `errorCode`, `evidenceSource`,
+`solutionCount`, at most two witnesses, observed `features`, schema path,
+message, solver state/limit, option/render evidence, pending checks, and
+code-owned `allowedFixKinds`.
+
+- Ambiguity witnesses come from bounded family enumeration and are independently
+  verified with the family engine. They are not derived from a missing
+  `correctAnswer` or an aggregate count.
+- `MULTIPLE_SOLUTIONS` requires two distinct verified witnesses.
+- `SOLVER_LIMIT` records the attempted state count and limit and is the only
+  inconclusive result that authorizes a repair.
+- Schema/bounds failures carry paths; path route length and arithmetic
+  inequality nonredundancy are checked after solving.
+- Option/render/presentation evidence is injected explicitly. P47 test doubles
+  can pass all three; the real pipeline leaves presentation pending until P49.
+- A pending check yields `PENDING_CHECKS` and an inconclusive candidate, never an
+  accepted one.
+
+### Bounded repair loop
+
+The feedback arm accepts attempt 0 plus at most two repairs. One-shot and
+baseline arms have exactly attempt 0. A repair is authorized only by a persisted
+deterministic rejection or `SOLVER_LIMIT`, with a saved previous response. Any
+diagnostic classified with `evidenceSource: "infrastructure"` (including
+option/render/presentation codes) is terminal inconclusive evidence and never
+authorizes a repair. An attempt with no usable design response is a generation
+error unless the caller supplies an explicit `INFRASTRUCTURE_ERROR` diagnostic. An
+accepted attempt must own a saved proposal artifact.
+
+Stop rules are applied after every attempt:
+
+- accepted -> stop accepted;
+- generation error -> stop generation_error;
+- infrastructure error -> stop infrastructure_inconclusive;
+- pending checks -> stop pending_checks;
+- solver limit at the repair cap -> stop solver_limit;
+- rejected at the repair cap -> stop repair_cap;
+- repairable attempt with no pause -> `repair_ready` and `repairPending=true`;
+- budget/operator pause -> `*_paused` and `repairPending=true`;
+- oversized repair input -> terminal `input_too_large`, preserving the last
+  rejected or inconclusive verdict.
+
+The pure reducer keeps the first-attempt summary immutable, even when a later
+repair is accepted. A third repair, missing diagnostic, missing saved response,
+or out-of-order attempt is rejected with a typed protocol error. The attempt arm
+must match the referenced slot arm; the repository rejects a mismatch before
+appending any row or artifact.
+
+Repair requests contain the original assignment, the bounded previous proposal
+or sanitized invalid object, the diagnostic, and allowed fix kinds. The repair
+response must be a complete new proposal matching the same selected-family
+schema. Patches, answers, options, visible prose, SVG/XML, code, extra fields,
+and a replay of the same family/difficulty/spec are rejected. Repair inputs
+larger than 16 KiB are terminal and are not dispatched.
+
+### Repository, ledger, budget, and config
+
+`createDesignerRun` persists a designer plan and its 300 (primary/mock) or 60
+(pilot) candidate slots. `getDesignerRun`, `listDesignerSlots`,
+`insertDesignerStageResult`, `getDesignerStageResult`, `getDesignerEvents`,
+`insertDesignAttempt`, `getDesignAttempt`, and `listDesignAttempts` are
+designer-only readers/writers. Legacy `getRun`, `listSlots`, `getSlot`,
+`getStageResult`, `listStageResults`, and `getEvents` reject designer records
+explicitly instead of relabeling them.
+
+`LedgerRoleSchema` now includes the three designer roles; designer logical
+calls use designer candidate slot IDs, designer run kinds, and the primary,
+pilot, or mock pool. Pilot probes use `role='preflight'`, a unique probe key,
+no slot, and the preflight pool scoped to the pilot run. Budget accounts accept
+the matching designer pool and the explicit pilot/preflight probe pool.
+
+The designer live configuration remains one `DESIGNER_MODEL` with the same
+validated settings and 8192-token caps for design and repair roles. Legacy
+reviewer separation is unchanged. Designer mock scenarios remain P50.1.
+
+### Verification
+
+```sh
+npx vitest run tests/design/feedback.test.ts
+npx vitest run tests/storage/design-migration.test.ts
+npx vitest run tests/storage tests/runner
+npm run lint
+npm run typecheck
+npm run build
+```
+
+`tests/design/feedback.test.ts` covers 0/1/2 repairs, solver limits, terminal
+errors at every index, first-attempt immutability, third-repair rejection,
+path/arithmetic level checks, verified two-witness ambiguity, no key leakage,
+cost snapshots, saved-response recomputation, pending checks, pauses, replay,
+and oversized repair inputs. `tests/storage/design-migration.test.ts` covers
+populated legacy round-trip, hashes, artifacts, monetary evidence, foreign
+keys, repeated migrations, the 300-slot designer run, pilot probes, designer
+budget pools, append-only attempts, and legacy role/mock boundaries.
+
+### P47 manual acceptance
+
+Use a synthetic trajectory with a first ranking proposal that has multiple
+solutions, a repair that returns a unique proposal, and test-double
+options/render/presentation evidence. Inspect that the first diagnostic shows
+two distinct verified solutions, the repair request contains the original
+assignment and diagnostic, the final verdict is accepted, and
+`firstAttempt.verdict` remains `rejected`.
+
+### P47 out of scope
+
+Baseline construction and reference corpus (P48), structural comparator (P48),
+deterministic presentation and real option/render checks (P49), human sampler
+and decision thresholds (P50), designer mock scenarios (P50.1), and live calls
+or capability preflight (P51).

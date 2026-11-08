@@ -1600,10 +1600,11 @@ describe("designer role seams and strict schema failure", () => {
     expect(LIVE_PROBE_ROLES).not.toContain("design");
   });
 
-  it("keeps legacy ledger and mock parsers explicit about designer roles", () => {
+  it("extends ledger roles while keeping the mock parser explicit about designer roles", () => {
     expect(LedgerRoleSchema.safeParse("spec").success).toBe(true);
     expect(LedgerRoleSchema.safeParse("preflight").success).toBe(true);
-    expect(LedgerRoleSchema.safeParse("design").success).toBe(false);
+    expect(LedgerRoleSchema.safeParse("design").success).toBe(true);
+    expect(LedgerRoleSchema.safeParse("design_repair_1").success).toBe(true);
     expect(
       MockScenarioSchema.safeParse({
         role: "design",

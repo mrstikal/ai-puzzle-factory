@@ -5,6 +5,7 @@ import {
   formatFactId,
   type Fact,
   type FamilyEngine,
+  type FamilySolutionDiagnostics,
   type SolveResult,
   type TestMutation,
   type VisibleRules,
@@ -613,6 +614,22 @@ function testMutations(_spec: ArithmeticSpec): readonly TestMutation<ArithmeticS
       }),
     },
   ];
+}
+
+export function diagnoseArithmeticSolutions(
+  spec: ArithmeticSpec,
+): FamilySolutionDiagnostics<ArithmeticAnswer> {
+  const parsed = ArithmeticSpecSchema.parse(spec);
+  const solved = solveArithmetic(parsed);
+  return {
+    solutionCount: solved.solutions.length,
+    answerCount: solved.solutions.length,
+    witnesses: solved.solutions
+      .slice(0, 2)
+      .map((solution) => [...solution] as ArithmeticAnswer),
+    complete: true,
+    enumeratedStates: solved.enumeratedStates,
+  };
 }
 
 export const arithmeticEngine: FamilyEngine<ArithmeticSpec, ArithmeticAnswer> = {

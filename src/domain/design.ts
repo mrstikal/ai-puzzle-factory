@@ -20,6 +20,7 @@ import {
   type FamilySpec,
   type FamilySpecByFamily,
 } from "./spec.js";
+import { RunControlStateSchema } from "./candidate.js";
 import { hashObjectExcluding } from "../util/hash.js";
 
 export const DESIGNER_PROTOCOL_VERSION = "2.0.0" as const;
@@ -65,6 +66,17 @@ export type DesignerCandidateVerdict =
 export const DesignerCandidateVerdictSchema = z.enum(
   DESIGNER_CANDIDATE_VERDICTS,
 );
+
+export const DESIGNER_WORKFLOW_STAGES = [
+  "planned",
+  "design_proposed",
+  "formal_checked",
+  "presentation_ready",
+  "terminal",
+] as const;
+export type DesignerWorkflowStage =
+  (typeof DESIGNER_WORKFLOW_STAGES)[number];
+export const DesignerWorkflowStageSchema = z.enum(DESIGNER_WORKFLOW_STAGES);
 
 export const DESIGNER_ASSIGNMENT_ID_PATTERN =
   /^design-(text|svg)-(ranking|matching|scheduling|truth|arithmetic|matrix|transforms|paths|symmetry|counting)-\d{2}$/;
@@ -433,6 +445,81 @@ export const DesignerPlanManifestSchema = z
   });
 
 export type DesignerPlanManifest = z.infer<typeof DesignerPlanManifestSchema>;
+
+export const DesignerSlotRecordSchema = z
+  .strictObject({
+    kind: z.literal("designer"),
+    runId: z.uuid(),
+    slotId: z.string().regex(DESIGNER_CANDIDATE_SLOT_ID_PATTERN),
+    slotOrdinal: z.number().int().min(1).max(300),
+    family: FamilySchema,
+    modality: ModalitySchema,
+    slotKind: z.literal("designer"),
+    assignmentId: z.string().regex(DESIGNER_ASSIGNMENT_ID_PATTERN),
+    arm: DesignerArmSchema,
+    lane: z.null(),
+    difficulty: DifficultySchema,
+    stage: DesignerWorkflowStageSchema,
+    verdict: DesignerCandidateVerdictSchema.nullable(),
+    checkpointVersion: z.number().int().nonnegative(),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+  })
+  .superRefine((slot, ctx) => {
+    if (slot.slotId !== `${slot.assignmentId}-${slot.arm}`) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["slotId"],
+        message: "designer slot ID must append its assignment ID and arm",
+      });
+    }
+    if (slot.modality !== MODALITY_BY_FAMILY[slot.family]) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["modality"],
+        message: "designer slot modality must match its family",
+      });
+    }
+    if ((slot.stage === "terminal") !== (slot.verdict !== null)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["verdict"],
+        message: "only terminal designer slots carry a verdict",
+      });
+    }
+  });
+
+export type DesignerSlotRecord = z.infer<typeof DesignerSlotRecordSchema>;
+
+export const DesignerRunRecordSchema = z
+  .strictObject({
+    kind: z.literal("designer"),
+    runId: z.uuid(),
+    protocolVersion: z.literal(DESIGNER_PROTOCOL_VERSION),
+    runKind: DesignerRunKindSchema,
+    rootSeed: z.string().min(1).max(128),
+    evidenceKind: z.enum(["mock", "live"]),
+    manifest: DesignerPlanManifestSchema,
+    manifestHash: Sha256Schema,
+    controlState: RunControlStateSchema,
+    createdAt: z.iso.datetime(),
+  })
+  .superRefine((run, ctx) => {
+    if (
+      run.manifest.planHash !== run.manifestHash ||
+      run.manifest.protocolVersion !== run.protocolVersion ||
+      run.manifest.runKind !== run.runKind ||
+      run.manifest.rootSeed !== run.rootSeed
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["manifest"],
+        message: "designer run manifest does not match its stored columns",
+      });
+    }
+  });
+
+export type DesignerRunRecord = z.infer<typeof DesignerRunRecordSchema>;
 
 export const DesignerHashesSchema = z.strictObject({
   prompts: Sha256Schema,

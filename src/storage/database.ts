@@ -10,6 +10,7 @@ export type StorageErrorCode =
   | "NOT_FOUND"
   | "DUPLICATE_RUN"
   | "DUPLICATE_STAGE"
+  | "DUPLICATE_ATTEMPT"
   | "STAGE_ORDER"
   | "ARTIFACT_TOO_LARGE"
   | "ARTIFACT_CONFLICT"
@@ -66,17 +67,28 @@ export function migrate(db: Database.Database): void {
       continue;
     }
     const sql = readFileSync(join(migrationsDirectory, file), "utf8");
-    const apply = db.transaction(() => {
-      db.exec(sql);
-      db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(
-        file,
-        new Date().toISOString(),
-      );
-    });
+    db.pragma("foreign_keys = OFF");
+    db.pragma("legacy_alter_table = ON");
     try {
+      const apply = db.transaction(() => {
+        db.exec(sql);
+        const violations = db.prepare("PRAGMA foreign_key_check").all();
+        if (violations.length > 0) {
+          throw new Error(
+            `foreign key check failed after ${file}: ${JSON.stringify(violations)}`,
+          );
+        }
+        db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(
+          file,
+          new Date().toISOString(),
+        );
+      });
       apply();
     } catch (error) {
       throw new StorageError("MIGRATION_FAILED", `migration ${file} failed`, { cause: error });
+    } finally {
+      db.pragma("foreign_keys = ON");
+      db.pragma("legacy_alter_table = OFF");
     }
   }
 }

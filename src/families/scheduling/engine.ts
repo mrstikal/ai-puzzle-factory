@@ -5,6 +5,7 @@ import {
   formatFactId,
   type Fact,
   type FamilyEngine,
+  type FamilySolutionDiagnostics,
   type SolveResult,
   type TestMutation,
   type VisibleRules,
@@ -557,6 +558,20 @@ function testMutations(_spec: SchedulingSpec): readonly TestMutation<SchedulingS
       }),
     },
   ];
+}
+
+export function diagnoseSchedulingSolutions(
+  spec: SchedulingSpec,
+): FamilySolutionDiagnostics<ScheduleAnswer> {
+  const parsed = SchedulingSpecSchema.parse(spec);
+  const solved = solveSchedulingAssignments(parsed.clues);
+  return {
+    solutionCount: solved.solutions.length,
+    answerCount: solved.solutions.length,
+    witnesses: solved.solutions.slice(0, 2).map(assignmentToTable),
+    complete: true,
+    enumeratedStates: solved.enumeratedStates,
+  };
 }
 
 export const schedulingEngine: FamilyEngine<SchedulingSpec, ScheduleAnswer> = {

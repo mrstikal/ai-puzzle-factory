@@ -6,6 +6,7 @@ import {
   formatFactId,
   type Fact,
   type FamilyEngine,
+  type FamilySolutionDiagnostics,
   type SolveResult,
   type TestMutation,
   type VisibleRules,
@@ -534,6 +535,20 @@ function testMutations(_spec: MatchingSpec): readonly TestMutation<MatchingSpec>
       }),
     },
   ];
+}
+
+export function diagnoseMatchingSolutions(
+  spec: MatchingSpec,
+): FamilySolutionDiagnostics<MatchingAnswer> {
+  const parsed = MatchingSpecSchema.parse(spec);
+  const solved = solveMatchingPermutations(parsed.clues);
+  return {
+    solutionCount: solved.solutions.length,
+    answerCount: solved.solutions.length,
+    witnesses: solved.solutions.slice(0, 2).map(assignmentToTable),
+    complete: true,
+    enumeratedStates: solved.enumeratedStates,
+  };
 }
 
 export const matchingEngine: FamilyEngine<MatchingSpec, MatchingAnswer> = {

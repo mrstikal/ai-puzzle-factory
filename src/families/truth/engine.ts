@@ -5,6 +5,7 @@ import {
   formatFactId,
   type Fact,
   type FamilyEngine,
+  type FamilySolutionDiagnostics,
   type SolveResult,
   type TestMutation,
   type VisibleRules,
@@ -493,6 +494,20 @@ function testMutations(_spec: TruthSpec): readonly TestMutation<TruthSpec>[] {
       spec: countContradiction,
     },
   ];
+}
+
+export function diagnoseTruthSolutions(
+  spec: TruthSpec,
+): FamilySolutionDiagnostics<TruthAnswer> {
+  const parsed = TruthSpecSchema.parse(spec);
+  const solved = solveTruthAssignments(parsed);
+  return {
+    solutionCount: solved.solutions.length,
+    answerCount: solved.solutions.length,
+    witnesses: solved.solutions.slice(0, 2).map((solution) => [...solution]),
+    complete: true,
+    enumeratedStates: solved.enumeratedStates,
+  };
 }
 
 export const truthEngine: FamilyEngine<TruthSpec, TruthAnswer> = {

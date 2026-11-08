@@ -1287,6 +1287,14 @@ export interface TestMutation<S> {
   readonly spec: S;
 }
 
+export interface FamilySolutionDiagnostics<A> {
+  readonly solutionCount: number;
+  readonly answerCount: number;
+  readonly witnesses: readonly A[];
+  readonly complete: boolean;
+  readonly enumeratedStates: number;
+}
+
 export interface FamilyEngine<S, A> {
   readonly family: Family;
   readonly modality: Modality;
