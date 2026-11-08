@@ -608,8 +608,8 @@ function validateCanonicalStructure(
       const sizeValue = domainValue(domainTokens, "size");
       const size =
         sizeValue === "4" || sizeValue === "5" ? Number(sizeValue) : undefined;
-      if (relationTokens.length < 3 || relationTokens.length > 12) {
-        issue(["relationTokens"], "ranking requires between 3 and 12 clues");
+      if (relationTokens.length > 12) {
+        issue(["relationTokens"], "ranking cannot carry more than 12 retained clues");
       }
       for (const [index, token] of relationTokens.entries()) {
         const match = /^(before|immediatelyBefore|at|notAt):(\d+):(\d+)$/.exec(token);
@@ -652,8 +652,8 @@ function validateCanonicalStructure(
       if (!tokenSetEquals(domainTokens, ["categories=3", "size=4"])) {
         issue(["domainTokens"], "matching requires categories=3 and size=4");
       }
-      if (relationTokens.length < 4 || relationTokens.length > 12) {
-        issue(["relationTokens"], "matching requires between 4 and 12 clues");
+      if (relationTokens.length > 12) {
+        issue(["relationTokens"], "matching cannot carry more than 12 retained clues");
       }
       for (const [index, token] of relationTokens.entries()) {
         const match = /^(same|different):([^:]+):([^:]+)$/.exec(token);
@@ -697,8 +697,8 @@ function validateCanonicalStructure(
       if (!tokenSetEquals(domainTokens, ["capacities=2,2", "events=4", "slots=4"])) {
         issue(["domainTokens"], "scheduling requires events=4, slots=4, capacities=2,2");
       }
-      if (relationTokens.length < 4 || relationTokens.length > 12) {
-        issue(["relationTokens"], "scheduling requires between 4 and 12 clues");
+      if (relationTokens.length > 12) {
+        issue(["relationTokens"], "scheduling cannot carry more than 12 retained clues");
       }
       for (const [index, token] of relationTokens.entries()) {
         const match =

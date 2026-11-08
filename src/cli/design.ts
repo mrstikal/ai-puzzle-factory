@@ -1,22 +1,31 @@
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
 import {
   buildDesignerPlanManifest,
   serializeDesignerPlanManifest,
 } from "../design/assignments.js";
+import {
+  buildCohortReference,
+  buildFrozenReference,
+  writeReferenceArtifacts,
+} from "../design/baseline.js";
+import { renderDesignReferenceGallery } from "../reporting/design-metrics.js";
 import type { DesignerRunKind } from "../domain/design.js";
 
 export const PROGRAM_NAME = "designer";
 
 const SCOPE_NOTE = [
-  "Availability (P46):",
+  "Availability (P46-P48):",
   "  --dry-run              print the deterministic DesignerPlanManifest and exit (implemented offline)",
+  "  --build-reference      build the frozen 1,000-outcome and cohort baseline references, write JSON and a static gallery (implemented offline)",
+  "  --reference-dir <dir>  reference output directory (default: data/design/reference)",
   "  --primary              select the 100-assignment primary plan (default for --dry-run)",
   "  --pilot                select the 20-assignment pilot plan",
   "  --mock                 select the 100-assignment synthetic mock plan",
   "  --seed <seed>          restate the fixed root seed for the selected plan kind",
-  "  Mock/pilot/full execution is not implemented in P46; P50/P51 add simulated and live execution.",
-  "  --live, --allow-paid, --max-cost, and --protocol are authorization-gated and not implemented in P46.",
+  "  Mock/pilot/full execution is not implemented in P48; P50/P51 add simulated and live execution.",
+  "  --live, --allow-paid, --max-cost, and --protocol are authorization-gated and not implemented in P48.",
   "  Reviewer and calibration flags are not part of the designer protocol and are rejected.",
 ].join("\n");
 
@@ -32,6 +41,8 @@ interface DesignOptions {
   readonly protocol?: string;
   readonly reviewer?: boolean;
   readonly calibration?: boolean;
+  readonly buildReference?: boolean;
+  readonly referenceDir?: string;
 }
 
 function handleOptions(program: Command, options: DesignOptions): number {
@@ -52,9 +63,61 @@ function handleOptions(program: Command, options: DesignOptions): number {
       { exitCode: 1 },
     );
   }
+  if (options.referenceDir !== undefined && options.buildReference !== true) {
+    program.error("--reference-dir requires --build-reference", { exitCode: 1 });
+  }
+  if (options.buildReference === true) {
+    if (
+      options.dryRun === true ||
+      options.primary === true ||
+      options.pilot === true ||
+      options.mock === true ||
+      options.seed !== undefined
+    ) {
+      program.error(
+        "--build-reference cannot be combined with --dry-run, plan selectors, or --seed",
+        { exitCode: 1 },
+      );
+    }
+    const plan = buildDesignerPlanManifest({ runKind: "design_primary" });
+    const frozen = buildFrozenReference();
+    const cohort = buildCohortReference(plan);
+    const referenceDirectory = resolve(
+      options.referenceDir ?? join("data", "design", "reference"),
+    );
+    const galleryHtml = renderDesignReferenceGallery(frozen, cohort);
+    const manifest = writeReferenceArtifacts({
+      outputDirectory: referenceDirectory,
+      frozen,
+      cohort,
+      galleryHtml,
+    });
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          mode: "build_reference",
+          referenceDirectory,
+          frozen: {
+            outcomes: frozen.outcomes.length,
+            hash: frozen.referenceHash,
+            coverage: frozen.coverage,
+          },
+          cohort: {
+            outcomes: cohort.outcomes.length,
+            hash: cohort.cohortHash,
+            coverage: cohort.coverage,
+          },
+          manifest,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return 0;
+  }
   if (options.dryRun !== true) {
     program.error(
-      "P46 implements only --dry-run; mock/pilot/full execution arrives in P50/P51",
+      "P48 implements --dry-run and --build-reference; mock/pilot/full execution arrives in P50/P51",
       { exitCode: 1 },
     );
   }
@@ -88,6 +151,8 @@ export function createProgram(onExitCode?: (code: number) => void): Command {
     .showHelpAfterError()
     .addHelpText("after", `\n${SCOPE_NOTE}`)
     .option("--dry-run", "print the deterministic designer plan manifest and exit")
+    .option("--build-reference", "build the frozen and cohort baseline references")
+    .option("--reference-dir <dir>", "reference output directory (default: data/design/reference)")
     .option("--primary", "select the 100-assignment primary plan")
     .option("--pilot", "select the 20-assignment pilot plan")
     .option("--mock", "select the 100-assignment synthetic mock plan")

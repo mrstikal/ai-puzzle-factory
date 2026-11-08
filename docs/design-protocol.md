@@ -351,3 +351,137 @@ Baseline construction and reference corpus (P48), structural comparator (P48),
 deterministic presentation and real option/render checks (P49), human sampler
 and decision thresholds (P50), designer mock scenarios (P50.1), and live calls
 or capability preflight (P51).
+
+## P48 algorithmic baseline and structural originality
+
+Status: implemented offline. P48 adds the code-owned baseline arm, the frozen
+1,000-outcome fixture reference, the same-cohort baseline reference, structural
+novelty annotation, per-family/modality/difficulty reporting, and a static
+reference gallery. It makes zero AI calls and does not render presentation or
+claim semantic novelty.
+
+### Baseline arm
+
+`src/design/baseline.ts` uses each family's existing bounded `construct*Spec`
+function with the assignment seed. It records the construction trace and
+`drawsUsed`, independently solves and verifies the spec, builds and verifies
+four distinct A-D options with one key, and for SVG families builds/checks the
+code-owned scene and records scene/SVG hashes. A constructed baseline outcome is
+solver-verified but remains `presentation: "pending"` and
+`verdict: "inconclusive"`; it is not marked accepted in P48.
+
+A bounded construction failure is stored as
+`status: "construction_failed"`, `failureCode: "BASELINE_CONSTRUCTION_FAILED"`,
+and `verdict: "inconclusive"`. An unexpected exception is a distinct
+`BaselineInfrastructureError`, not a baseline construction failure. Failures
+remain in the reference and are counted in coverage.
+
+### Frozen and cohort references
+
+The frozen reference has 100 outcomes per family (1,000 total) from the exact
+existing fixture tuples: protocol `1.0.0`, root seed `puzzle-poc-v1`, slot IDs
+`<family>-fixture-001` through `-100`, purpose `spec`, and the 34/33/33
+difficulty pattern. Failed draws and repeated structures are preserved; at
+least 95 independently verified specimens per family are required for coverage.
+The reference hash covers the complete outcome list and coverage summary.
+
+The cohort reference has the 100 primary baseline assignments and remains
+separately identifiable. Both references are strict canonical JSON artifacts:
+
+- `data/design/reference/frozen-reference.json`
+- `data/design/reference/cohort-reference.json`
+- `data/design/reference/reference-manifest.json`
+- `data/design/reference/reference-gallery.html`
+
+`npm run designer -- --build-reference` builds and writes them. Use
+`--reference-dir <dir>` to choose another output directory.
+
+### Structural comparator
+
+`src/design/novelty.ts` reuses P21 canonical structures, feature multisets,
+`evaluateNearPair`, and P37-style reporting. Comparisons are limited to the same
+`(family, domainTokens, queryKind)` scope. Exact structural matches take
+precedence (`baseline_duplicate`); otherwise any one-feature-edit pair with a
+common feature and `editDistance=1` is `near_baseline`; otherwise `novel`.
+Missing or insufficient frozen coverage, an incomplete reference, or failed
+comparator evidence is `novelty_unknown`, never automatic novelty. A partial
+cohort is reported provisionally, not silently promoted to a complete reference.
+
+The comparator reports exact matches, near matches, feature Jaccard distances,
+frozen/cohort membership separately, reference coverage, and per-family/
+modality/difficulty tables. Near clusters are connected components of the direct
+one-edit-pair graph, not transitive equivalence classes. Distinct counts use
+exact canonical fingerprints; repeated novel outputs increase the candidate
+count but not the distinct count. First, final, and repair-trajectory views stay
+separate. The design representative for one `(assignmentId, arm, fingerprint)`
+is chosen deterministically (first-view precedence, then candidate ID), so
+first/final views of the same arm collapse without making the report hash
+order-dependent. Different arms of one assignment remain separate accepted
+candidates and can form an exact cross-arm cluster. `acceptedCandidateCount` is
+the arm-aware design count, `acceptedViewCount` is the view count, and report
+cells expose `accepted`/`acceptedViews` the same way. `distinctAcrossViews` is
+the same arm-aware design count after first/final view collapse, not a separate
+fingerprint count. Baseline diagnostics
+compare against the frozen reference and exclude the candidate's own cohort
+slot. Novelty never changes formal acceptance. Comparator/canonicalization
+failures degrade to `novelty_unknown` with a bounded reason via
+`annotateNoveltySpec`; empty features and identical canonical data with unequal
+hashes remain implementation errors.
+
+The canonical validator now permits reduced clue cores with fewer retained
+relations than the original DSL clue floor for ranking, matching, and
+scheduling. The original spec still enforces its 3-12/4-12 clue bounds; the
+reduced fingerprint core is allowed to be smaller. Arithmetic retains its
+2-5 constraint minimum.
+
+The mandatory counting positive uses three shapes with row-major cell sets
+`[1,6,7,8]`, `[2,6,7,8]`, `[3,6,7,8]` and otherwise identical level-3 specs
+querying exactly two versus exactly three memberships. The comparator reports
+`editDistance=1` and Jaccard `33/35`; this is a conservative geometry-reuse
+signal, not a duplicate proof.
+
+### Reporting and gallery
+
+`src/reporting/design-metrics.ts` builds a strict novelty report with reference
+coverage, baseline diversity/overlap rows, AI annotation rows, exact/near
+cluster summaries, distinct accepted/novel counts, and a deterministic report
+hash. The static reference gallery shows baseline/reference cards and explicitly
+states that presentation is pending and novelty is not semantic or human
+quality. The report/gallery escape all text and use no remote resources.
+
+### Verification
+
+```sh
+npx vitest run tests/design/novelty.test.ts
+npm run designer -- --build-reference
+npm run check
+```
+
+The focused test builds the 100 primary baseline assignments, validates the
+frozen 1,000-outcome reference, exact/one-edit/two-edit pairs, empty-feature
+rejection, cross-family isolation, both reference memberships, incomplete/
+insufficient reference evidence, AI-AI near clusters, repeated novel versus
+distinct counts, first/final de-duplication, completion-order-independent
+hashes, and the mandatory counting positive. It also checks bounded
+construction failure versus infrastructure failure, zero AI calls, pending
+presentation, and strict artifact round-trip.
+
+### P48 manual acceptance
+
+Run:
+
+```sh
+npx vitest run tests/design/novelty.test.ts -t "manual inspection" --reporter=verbose
+```
+
+The test prints one baseline and one synthetic AI candidate for the same
+assignment. Expected: baseline `constructed` / `inconclusive` / presentation
+`pending`, annotation `near_baseline`, one near match, Jaccard `0.5`, and
+`editDistance=1`. The comparator reports structural distance only; it does not
+claim semantic novelty or human quality.
+
+### P48 out of scope
+
+AI generation and repair (P46/P47), deterministic presentation/proof traces
+(P49), human evaluation (P50.3+), live calls (P51), and any claim of complete
+semantic novelty.
