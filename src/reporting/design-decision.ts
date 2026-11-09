@@ -653,7 +653,11 @@ function strongFailures(input: {
   ) {
     failures.push("one_shot_first_and_repair_success_below_thresholds");
   }
-  if (human?.repeatableFamilyCorrectnessDefect === true) {
+  if (
+    human !== null &&
+    human.synthetic !== true &&
+    human.repeatableFamilyCorrectnessDefect === true
+  ) {
     failures.push("repeatable_family_correctness_defect");
   }
   if (

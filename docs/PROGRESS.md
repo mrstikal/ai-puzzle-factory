@@ -3450,6 +3450,8 @@ P52 was accepted by the user on 2026-11-08. The steps below remain the reproduci
 
 ## P53 Frozen Designer Cohort — 2026-11-09
 
+> **Superseded by P53r2 below.** The `f1f20...` protocol and run `e76aa924...` are historical; the decision-evaluator synthetic-label bug was fixed and the cohort was rerun under `b4ec6d64...`.
+
 **State:** `ACCEPTED 2026-11-09 / COMPLETED / LIVE-VERIFIED`. The cohort ran once against the revised freeze; no threshold, sample, prompt, model, or rubric was changed after observation.
 
 **Run.** `e76aa924-ca3f-44c2-855d-edfc229d83a1`; evidence `live`; plan hash `0e640131...`; protocol `f1f20d4c...`; configuration hash `2438f510...` equal to the freeze; model `google/gemini-3.8-flash`, Balanced/default, no BYOK, `max_tokens=8192`, concurrency 2; 100 assignments, 300 candidates, 300 terminal; 292 accepted, 7 rejected, 0 inconclusive, 1 generation error; 211 AI logical calls (200 `design` + 11 `design_repair_1`, zero `design_repair_2`); 211 transport attempts (one per logical call, no transport retries); 311 design attempts; known cost `2.566611225`, unknown exposure `0`, reserved `0`, cap USD 12; no budget pause or overshoot; provider Google for all 211 calls; no reviewer or vision role; wall time `1,645,752 ms` (about 27.4 minutes).
@@ -3540,3 +3542,107 @@ P53 was accepted by the user on 2026-11-09. The steps below remain the reproduci
 The plan's P53 example shows `--max-cost 10` and `--full`; the accepted revised freeze authorizes USD 12, and the CLI exposes the primary plan as `--primary`, so the executed command used `--max-cost 12 --primary`. The run used `--reservation 0.08`, not the superseded `0.03`.
 
 **Out of scope:** changing thresholds/samples/rubrics after observation, rerunning the cohort, human evaluation, and the final P55 decision.
+
+## P54 Human Evaluation — AI-Assisted Operator Waiver — 2026-11-09
+
+> **Superseded by P54r2 below.** The formal `reject` recorded here was produced by the frozen evaluator's synthetic-label strong-failure bug. The corrected formal decision is `revise`; the AI-assisted `reject` remains a separate AI-assisted conclusion for the old sample only.
+
+**State:** `AI-ASSISTED EVALUATION IMPORTED / OPERATOR WAIVER RECORDED / AWAITING OPERATOR ACCEPTANCE`. The frozen P50.3 sampler, rubric, CSV schema, and importer were used unchanged. No source, rubric, sampler, or schema change; no paid call. The operator explicitly decided that the AI-assisted evaluation produced by a separate agent fully replaces genuine human verification for this experiment. The AI-assisted labels are synthetic (`synthetic=true`) and are **not** human labels.
+
+**Sample.** Run `e76aa924-ca3f-44c2-855d-edfc229d83a1`; sample hash `c2e3333bd0bc167355d9edd8db09342e7c1d6b08a8759b52fbf3a046334faeee`; 10 assignment-matched family triplets (30 core candidates), 10 deterministic additions, 0 fallback triplets, 0 shortfalls, 0 missing families; 40 puzzles total; manifest `publicHash` `e504e611e7ef5790c7015a9f85850ca6fdb8e0da72ec40ab0583e6be36595c73`; manifest `privateHash` `1e063cebe048f3db13df6cdac1b8d39fc1ce11d46b176cb68230ce87d56bbd51`; `sample.json` file SHA-256 `a9a9060e04a3fa8585ab532f5d21c3bfd3d07e10746d0683b329fbef0e536851`; `sample-private.json` file SHA-256 `961eb9f77f08e90f6174d4e4ac8ed5cc3939cf9eb4e17710153a024bce0e5959`; labels hash `f092ac212ec6e20d8a7ee84faca0c1f75e05d2ee1ba26fe565cc51bec4a4e22a`. The public bundle has no arm labels; the private bundle contains all three arms.
+
+**Artifacts** under `data/runs/e76aa924-ca3f-44c2-855d-edfc229d83a1/design-evaluation/`:
+- `solve.html` (SHA-256 `8e3703b8...`), `reveal.html` (SHA-256 `fb294ee9...`), `sample.json`, `sample-private.json`, `labels.csv` (170 rows), `manifest.json`, `report.html`.
+- `ai-assisted/AI_PUZZLE_ASSESSMENT_NOTES.md` (SHA-256 `cfc9ab0f...`), `ai-assisted/AI_PUZZLE_PRE_REVEAL_CHOICES.csv` (SHA-256 `dd79006e...`), `ai-assisted/labels_AI_SYNTHETIC_DRAFT.csv` (SHA-256 `81c6fbd1...`), and `labels-ai-assisted-synthetic.csv` (SHA-256 `43759c54...`, 170 rows, auditor `ChatGPT (synthetic AI assessment; not a human)`, `synthetic=true`).
+- `human-verification-waiver.json` (SHA-256 `65331cb1...`) records the operator's explicit waiver, the AI-assisted evidence hashes, the AI-assisted summary, the conclusion, and the caveats.
+
+**Operator waiver.** The operator's exact wording was: “ai assisted závěr na základě mého rozhodnutí plně nahrazuje lidskou verifikaci.” The waiver is a documented methodological deviation, not a claim that AI ratings are human ratings. The plan was amended under P54 with the same fact. The frozen decision evaluator remains unchanged and still reports `genuineHumanLabels=false`; it treats synthetic labels as test-only. The AI-assisted conclusion is reported separately as the operator-authorized substitute for human verification.
+
+**AI-assisted summary and conclusion.** 30/30 core inspected; 8 defect notes; `repeatableFamilyCorrectnessDefect=true`; 6/20 core AI members clear and solved within 180 seconds; paired interest 4 wins + 6 ties = 10/10; paired clarity 1 win + 8 ties = 9/10. Under the waiver, `human_correctness` fails (8 defects, repeatable family defect), `human_clarity_time` fails (6/20), `paired_interest` passes (10/10), and `paired_clarity` passes (9/10). The AI-assisted conclusion is **`reject`** because of the repeatable family correctness/legibility defect. The frozen report records the same recommendation `reject` (hash `ddbce890c738941e677ffa6b21a652f61d57b32ba331ed49e8fbc263a59ac922`) with `failedPredicates=[]` and strong failure `repeatable_family_correctness_defect`.
+
+**Caveats.** Solve-time categories are AI guesses, not observations. Pre-reveal choices exist for 29/40 puzzles, 26 match the revealed key, 3 mismatches are preserved, and 11 image puzzles have no pre-reveal choice. All 21 text puzzles were exhaustively enumerated; visual puzzles were not all independently formalized and solved pixel-by-pixel. The eight defect notes are all transforms/paths legibility; truth raw-function readability, arithmetic verbosity, and generic hints/explanations remain additional unflagged observations in the AI notes. These are AI-assisted findings, not human observations.
+
+**Human protocol (not performed; waived).** The prepared `labels.csv` human protocol remains documented for reproducibility, but no genuine human evaluator completed it. The AI-assisted labels were imported instead with `--synthetic-test`; the import is append-only and the original blank `labels.csv` is unchanged.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm run audit -- --design --run e76aa924... --prepare` | exit 0; 10 triplets / 30 core / 10 additions / 40 puzzles; no shortfalls. |
+| `npx vitest run tests/audit/design-sample.test.ts` | 9/9 passed. |
+| `npm run audit -- --design --run e76aa924... --import .../labels-ai-assisted-synthetic.csv --synthetic-test` | inserted 170 synthetic rows; `synthetic=true`. |
+| `npm run report -- --run e76aa924... --protocol f1f20d4c...` | decision `reject`; strong failure `repeatable_family_correctness_defect`; `genuineHumanLabels=false`. |
+| `npm run check` | NOT RUN in this P54 preparation step; run before P55 acceptance. |
+
+**Out of scope:** relabeling AI-assisted ratings as human, claiming genuine human verification, AI reviewers, calibration labels, automatic human approval, and using human ratings to rewrite first-attempt outcomes.
+
+## P52r2 Decision-Evaluator Fix and Revised Freeze — 2026-11-09
+
+**State:** `ACCEPTED 2026-11-09 / OFFLINE-VERIFIED`. The P54 AI-assisted labels are synthetic, but the frozen decision evaluator's `strongFailures` treated `repeatableFamilyCorrectnessDefect` as a strong failure even when `human.synthetic=true`. That produced the formal `reject`; the correct formal state is `revise`. The operator chose a full protocol revision.
+
+**Fix.** `src/reporting/design-decision.ts` now ignores human strong failures when `human.synthetic=true`. Regression test in `tests/reporting/design-decision.test.ts` (“does not turn synthetic human strong failures into reject”). `npm run check` passed: lint, typecheck, 64 test files / 805 tests, build.
+
+**Revised pilot.** `104e8d5b-f999-4632-8380-f2e3326f80d6`: 60/60 terminal, 57 accepted, 3 rejected, 0 generation errors, 44 AI calls, 62 design attempts, known cost USD `0.5161854`; preflight 2 probes USD `0.02189025`.
+
+**Revised freeze.** Protocol `b4ec6d64e122c40ca6bf2a95e7c46057f61caea411ca6f8ce3e1206faa3cbd77`; freeze `0c0bab2a2cf64e82924623b2bc4758f3328bf12f6df6edae3a906e4a42b31f32`; plan hash `0e640131...`; configuration hash `62c5e8741c3950efbbdf8b24ca196bb3694ea38a30c71fffaf18577315f0407c`; decision evaluator hash `a210a0695ee1fb79ef5d9a28736e2f661a0c049e75156df5c6c9fa91153bc6ad`; cap USD 12; per-role reserve USD 4.00 (sum USD 12.00); projected 400-call total USD `5.37214575`; 2x projection USD `10.74429150` (fits USD 12). Provenance archive `c5807d1f266304356ec8e18719e639e7bd172fd6b6ae4b5a5249ce9584ab853f`, 168 files, `--verify-provenance` `ok: true`; source hash `7dc81fabe6c2760c79b775e2a4fb47569cf8259175bd88184ce1a4f4290ab831`; price snapshot `eec87d385441c673d3290b69194738fa31542ce3f292a31b6f72f947d7d20a04`; budget addendum `ae1cb8cf1206542e88613351c30699b08d7d6b9e2aa1f2a35d4275e3edb265bd`; authorization `data/p52r2-primary-authorization.json` (SHA-256 `4726a646...`). The operator accepted the freeze and cap on 2026-11-09.
+
+**Superseded.** Protocol `f1f20d4c...` / run `e76aa924...` and protocol `9cc7d206...` / run `a3925bcd...` are historical only.
+
+## P53r2 Frozen Primary Cohort — 2026-11-09
+
+**State:** `COMPLETED / LIVE-VERIFIED / AWAITING USER ACCEPTANCE`. The cohort ran once against `b4ec6d64...` with `--max-cost 12 --reservation 0.08`.
+
+**Run.** `54e458f7-1297-4397-8ddc-0d02cb0cac0b`; protocol `b4ec6d64...`; configuration hash `62c5e874...` equal to the freeze; plan hash `0e640131...`; 100 assignments, 300 candidates, 300 terminal; 289 accepted, 7 rejected, 0 inconclusive, 4 generation errors; 210 AI logical calls (200 `design` + 10 `design_repair_1`, zero `design_repair_2`); 310 design attempts; known cost `2.564292225`, unknown 0, reserved 0, cap USD 12; no pause/overshoot; provider Google; no reviewer/vision role; wall time `1,705,347 ms` (about 28.4 minutes).
+
+**Formal metrics.** Baseline 100/100. One-shot 91/100. Feedback first 89/100, final 99/100; 10/10 repairs, lift 10 percentage points; feedback novel 80/100; 86 distinct feedback structures; all families >= 3; cost per novel accepted USD `0.016695`; text final 146/150; SVG final 143/150. All formal predicates pass.
+
+**Decision.** `revise`, pre-import hash `7819684f8d013c36e0043ec13c0f089e1afbb581955314ed8b04c3b18de2d831` (superseded by the P54r2 decision hash `00595d7d...` after the AI labels were imported; `decision.json` is regenerated on every `npm run report` run, so the hash is not a stable citation); `failedPredicates=[]`, `strongFailures=[]`, human predicates incomplete because no genuine human evaluation exists; `genuineHumanLabels=false`, `protocolMatch=true`, `complete=true`, `knownPrimaryCosts=true`, `mockEvidence=false`. This is the corrected behavior: synthetic labels cannot trigger a formal reject; without genuine human evidence the formal state is `revise`.
+
+**Export.** `data/runs/54e458f7-1297-4397-8ddc-0d02cb0cac0b/` with candidates, design attempts, requests, results, summary, manifest, report.html, decision.json, puzzle JSON/SVG/PNG files.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npx vitest run tests/reporting/design-decision.test.ts` | 7/7 passed, including the synthetic strong-failure regression. |
+| `npm run check` | lint, typecheck, 64 files / 805 tests, build — pass. |
+| `npm run designer -- --pilot ... --max-cost 2 --preflight-max-cost 0.50 --reservation 0.08 ...` | pilot `104e8d5b...` completed; cost `0.5161854` + preflight `0.02189025`. |
+| `npm run freeze -- --design 104e8d5b... --max-run-cost 12 ... --reserve-usd 4.00` | `ok: true`; protocol `b4ec6d64...`; freeze `0c0bab2a...`. |
+| `npm run freeze -- --verify-provenance .../b4ec6d64.../provenance` | `ok: true`; no failures. |
+| `npm run designer -- --primary --live --allow-paid --protocol b4ec6d64... --max-cost 12 --reservation 0.08 ...` | completed; run `54e458f7...`; 300/300 terminal; cost `2.564292225`. |
+| `npm run report -- --run 54e458f7... --protocol b4ec6d64...` | decision `revise`; `strongFailures=[]`; `genuineHumanLabels=false`. |
+
+**Manual acceptance:** P53r2 evidence and the corrected formal `revise` are awaiting operator acceptance. The old `reject` is superseded and was caused by the synthetic-label evaluator bug.
+
+## P54r2 Human Evaluation — AI-Assisted Evaluation Imported — 2026-11-09
+
+**State:** `ACCEPTED 2026-11-09 / AI-ASSISTED EVALUATION IMPORTED / OPERATOR WAIVER RECORDED`. The operator's P54 waiver remains in the plan: AI-assisted evaluation replaces genuine human verification, but the AI labels are synthetic and must never be described as human.
+
+**Sample.** Run `54e458f7...`; sample hash `32ca68eaa5f75c70184b2825b944789d9e0a587a7142f8f40d9d7818a2637929`; 10 assignment-matched triplets (30 core), 10 additions, 40 puzzles, 0 fallbacks, 0 shortfalls, 0 missing families; manifest `publicHash` `6bed3d90a54738cbb085e85b2781e22aa01436a660cc5a884d025a2968792c50`; manifest `privateHash` `4eb2fc006eebdbdd4ed9e3b1feb1f05d2246117073ab5a45faed648daa2305bd`; labels hash `0fad2291dd4eca008724c4f6ac04870c35e546703870be088c741404502bd074`.
+
+**AI evidence.** `ai-assisted/AI_PUZZLE_ASSESSMENT_NOTES.md` (SHA-256 `24e40db1...`), `AI_PUZZLE_PRE_REVEAL_CHOICES.csv` (SHA-256 `1c31a2a2...`), `labels_AI_SYNTHETIC_DRAFT.csv` (SHA-256 `ece23498...`), imported `labels-ai-assisted-synthetic.csv` (SHA-256 `8ac0fd27...`, 170 rows, auditor `ChatGPT (synthetic AI assessment; not a human)`, `synthetic=true`), and `human-verification-waiver.json` (SHA-256 `1ba276aa...`). Transform inspection screenshots: `ai-assisted/transform-inspection/transform-set7.png` (SHA-256 `1c8fc766...`) and `transform-additional.png` (SHA-256 `74c61394...`).
+
+**Raw synthetic summary.** 30/30 core inspected; the frozen loader reports 24 `correctnessDefects` because the AI draft used `defect_notes` for observations as well as potential defects; `repeatableFamilyCorrectnessDefect=true`; 8/20 core AI members clear and solved within 180 s; paired interest 1 win + 9 ties = 10/10; paired clarity 0 wins + 10 ties = 10/10.
+
+**AI notes classification.** 4 potential blocking defects (transforms items 19, 20, 21 core and 33 addition), 20 observational notes; pre-reveal 32/40 selections, 30 matches, 2 preserved mismatches (XOR items 16 and 18), 8 blanks; 20 text puzzles mechanically checked, 20 SVG puzzles reviewed as rendered visuals; proof metadata pass on 40/40 with 0 non-pass; ranking items 2 and 3 are publicly identical despite separate arms, so their tie is not independent diversity evidence.
+
+**Transform inspection.** The agent inspected the four transform cards in Chromium at the prepared gallery size. The source-side text “Top marker = viewer up” is visible below “Pivot: center cell (2,2).”; the operations panel does not overlap it, and the orientation is repeated in the second instruction block. The AI's conservative clipping flag did not reproduce in this render. This is an agent inspection, not human verification or a device-matrix test.
+
+**AI-assisted conclusion.** `revise`: the clarity/time gate fails at 8/20 (threshold 16/20), and truth/arithmetic/paths readability observations remain. After the transform inspection, no blocking correctness defect remains; paired interest and clarity are 10/10 wins or ties. The raw 24 must not be presented as 24 confirmed defects; only 4 were potential blocking and the inspection resolved them as non-material for the current render.
+
+**Required AI-estimate disclosures.** Solve-time categories are AI guesses, not observations. Visual puzzles were not all independently formalized and solved pixel-by-pixel; 20 SVG puzzles were reviewed as rendered visuals, and the transform inspection is a single Chromium render. P55 must repeat these disclosures and must not describe the AI-assisted clarity/time figure as measured human performance.
+
+**Formal decision.** `revise`, hash `00595d7d3cfe82d9be092ad39fae6b6d3ed6aa5943867faee46eb7f65c6c74d8` (regenerated on each `npm run report` run; the hash is not a stable citation); `failedPredicates=[]`, `strongFailures=[]`, human predicates incomplete because the labels are synthetic; `genuineHumanLabels=false`, `protocolMatch=true`, `complete=true`, `knownPrimaryCosts=true`, `mockEvidence=false`.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm run audit -- --design --run 54e458f7... --import .../labels-ai-assisted-synthetic.csv --synthetic-test` | inserted 170 synthetic rows. |
+| `npm run report -- --run 54e458f7... --protocol b4ec6d64...` | formal `revise`; `strongFailures=[]`; `genuineHumanLabels=false`. |
+| `npx vitest run tests/reporting/design-decision.test.ts` | 7/7 passed, including the synthetic strong-failure regression. |
+| `npm run check` | lint, typecheck, 64 files / 805 tests, build — pass. |
+
+**Manual acceptance.** P54r2 was accepted by the operator on 2026-11-09. The AI-assisted `revise` conclusion and its caveats are accepted; if the operator later rejects the transform inspection and treats the four conservative flags as blocking, the AI-assisted conclusion becomes `reject`. P55 remains the final evidence report.
+
+**Out of scope:** relabeling AI-assisted ratings as human, claiming genuine human verification, AI reviewers, calibration labels, automatic human approval, and using human ratings to rewrite first-attempt outcomes.

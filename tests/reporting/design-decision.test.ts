@@ -180,6 +180,21 @@ describe("P50.2 designer decision rules", () => {
     }
   });
 
+  it("does not turn synthetic human strong failures into reject", () => {
+    expect(
+      decide(
+        {},
+        { synthetic: true, repeatableFamilyCorrectnessDefect: true },
+      ).recommendation,
+    ).toBe("revise");
+    expect(
+      decide(
+        {},
+        { synthetic: false, repeatableFamilyCorrectnessDefect: true },
+      ).recommendation,
+    ).toBe("reject");
+  });
+
   it("uses revise precedence for incomplete, mock, mismatched, unknown-cost, or infrastructure evidence", () => {
     expect(
       decide({ complete: false, feedback: { ...evidence().feedback, finalAccepted: 10 } })
