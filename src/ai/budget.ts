@@ -663,7 +663,7 @@ export function admitRequest(
           return { admitted: false, reason: "RUN_PAUSED", account };
         }
       }
-      if (!nonBilling) {
+      if (!nonBilling && account.runId === null) {
         const paused = db
           .prepare(
             "SELECT 1 AS blocked FROM budget_events WHERE account_id = ? AND event_type = 'pause' LIMIT 1",

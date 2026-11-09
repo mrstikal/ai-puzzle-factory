@@ -863,7 +863,7 @@ export function createOpenRouterTransport(
             });
           }
         }
-        if (input.nonBilling !== true) {
+        if (input.nonBilling !== true && account.runId === null) {
           const blocked = input.db
             .prepare(
               "SELECT 1 AS blocked FROM budget_events WHERE account_id = ? AND event_type = 'pause' LIMIT 1",

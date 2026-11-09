@@ -574,6 +574,8 @@ This example has the unique solution `T0=true, T1=false, T2=true`; it is a synta
 
 ## P52 frozen designer protocol and authorized budget
 
+> **Superseded by the P52 revision below.** Protocol `9cc7d206...` and freeze `67428bc5...` are historical evidence only; they are not valid for P53.
+
 P52 executed the existing P50.2 freeze gate against the accepted P51 hash-bound pilot. It introduced no source, schema, prompt, model, threshold, or test change and made no paid call. The primary cohort has not started.
 
 The first freeze (`7cdf1243...`, cap USD 10, default per-role reserve USD 0.50) is retained as append-only evidence but is superseded and not accepted. The decision-reviewer High finding showed that the P50.2 forecast schema has no projected 400-call total and that the 2x observed projection is USD 10.917, above the then-authorized USD 10. The user authorized a USD 12 cap; the final freeze is `9cc7d206...`. The first record must not be used for P53.
@@ -647,4 +649,44 @@ The freeze command returned `ok: true`; the provenance verification returned `ok
 
 ### P52 boundary
 
-P53 was unblocked by the user's acceptance of this named final protocol, thresholds, human-evaluation plan, and authorized USD 12 cap on 2026-11-08. P53 has not started; it must run as a separate live task with `--max-cost 12 --reservation 0.03` and a prior `--verify-provenance` check. The freeze does not start the cohort, does not spend money, and does not decide the experiment outcome. Any post-freeze change to the frozen hashes or provenance archive requires a new protocol and affected pilot evidence.
+P53 was unblocked by the user's acceptance of this named final protocol, thresholds, human-evaluation plan, and authorized USD 12 cap on 2026-11-08, but this protocol was later superseded before the revised primary run. The actual P53 run used the revised protocol `f1f20d4c...`; see the P52 revision and P53 sections below. The freeze did not start the cohort, did not spend money, and did not decide the experiment outcome. Any post-freeze change to the frozen hashes or provenance archive requires a new protocol and affected pilot evidence.
+
+## P52 revision — resume fix and revised freeze
+
+The first P53 primary run `a3925bcd-7550-4c75-9f2f-1fa5a8a185b8` paused after 10 AI calls because actual costs `0.03294975` and `0.034272` exceeded the `0.03` reservation while known cost was only `0.1582533` against the USD 12 cap. Same-run resume was blocked by a P50 admission bug: `src/ai/openrouter.ts` and `src/ai/budget.ts` permanently rejected any run-scoped budget account with a historical `pause` event. A CLI-only workaround changed `src/cli/design.ts` and failed `--verify-provenance` with `MODIFIED_FILE`/`SOURCE_MISMATCH`, so it was rejected. The user chose a protocol revision.
+
+The fix restricts the historical pause-event block to global accounts (`run_id IS NULL`); run-scoped accounts use the run control state, so a resumed run can admit again. The regression test is in `tests/design/resume.test.ts` (“admits a run-scoped account again after a cap increase and resume”). The fix changes the frozen `sourceHash`, so a new protocol is required.
+
+### Revised frozen identity
+
+| Field | Value |
+| --- | --- |
+| Protocol hash | `f1f20d4c2d9cc61bdd2d8f87920dd788b72ac692a8d0205ae0bc0c97cab8bcce` |
+| Freeze hash | `e7d2c9de7e56dcd07a77e2da843515c2e2a74f9d3c7eceb21e31ba5610363485` |
+| Frozen at | `2026-11-08T23:59:02.076Z` |
+| Pilot run | `b333fd5d-7552-4be6-b976-9bfa35b30bce` |
+| Pilot manifest hash | `56bad92069d4ca7d96d1c2e909cc5ffb7d67c527feafe85981d25ca4a8bf9314` |
+| Configuration hash | `2438f5100955d26d35a1e0625383adfd9bb2af1f27fbff835f4e1cd5b6443741` |
+| Primary plan hash | `0e640131fc212612e6aa3661421c1ca4ee845316a22522ead3385a8e7f0a7c0b` |
+| Source hash | `aad1d104b84c83096c0fbd1ed84c1f0896bec647e138481d10ded61cf938e989` |
+| Authorized cap | USD 12 |
+| Per-role reserve | USD 4.00 each; sum USD 12.00 |
+| Observed pilot cost | USD 0.513512 |
+| Projected 400-call total | USD 5.063163 |
+| 2x conservative projection | USD 10.126326 (fits USD 12) |
+
+The revised pilot `b333fd5d...` completed 60/60 candidates (57 accepted, 2 rejected, 1 generation error), 42 primary pilot AI calls (40 `design` + 2 `design_repair_1`), 42 primary transport attempts, 62 design attempts, cost `0.5135121`; the run additionally holds 2 preflight probe calls charged to the separate USD 0.50 preflight pool (44 run-scoped logical calls in total), with known cost `0.02339775`. The revised provenance archive has 168 files and archive hash `937ececb...`; `--verify-provenance` returned `ok: true`. The budget addendum is `data/protocols/f1f20d4c.../budget-forecast-addendum.json` (SHA-256 `c4d9c351...`), the price snapshot is `.../price-snapshot.json` (SHA-256 `511ce94f...`), and the operator authorization is `data/p52r-primary-authorization.json` (SHA-256 `ddb99d86...`). The user accepted the revised freeze and cap on 2026-11-09.
+
+The old protocol `9cc7d206...`, its `67428bc5...` freeze, and the old primary run `a3925bcd...` are superseded. The old run is marked `failed` with a `run_failed` event and must not be combined with the revised cohort.
+
+## P53 frozen designer cohort
+
+The revised primary cohort ran once against `f1f20d4c...` with `--max-cost 12 --reservation 0.08` and a fresh routing confirmation. Run `e76aa924-ca3f-44c2-855d-edfc229d83a1` is `completed`: 100 assignments, 300 candidates, 300 terminal, 292 accepted, 7 rejected, 0 inconclusive, 1 generation error; 211 AI logical calls (200 `design`, 11 `design_repair_1`, zero `design_repair_2`); 211 transport attempts; 311 design attempts; known cost `2.566611225`; unknown exposure `0`; reserved `0`; cap USD 12; no pause or overshoot; provider Google for all 211 calls; no reviewer or vision role; wall time about 27.4 minutes.
+
+Formal metrics: baseline 100/100; one-shot 93/100 (7 schema-invalid rejects); feedback first 88/100, final 99/100; 11/11 repairable failures repaired with 11 percentage-point lift; feedback novel 81/100; 87 distinct feedback structures; all families have at least 3 novel final accepted; cost per feedback novel accepted USD `0.016547`; text final 149/150; SVG final 143/150; reference coverage complete. All formal section 9.3 predicates pass.
+
+The decision is `revise` (hash `0f82f320e698a05de51b22b57c128ca577be4b0b2fc8985d48cb7c4111e793e6`) because the four human predicates are `incomplete`; `failedPredicates=[]`, `protocolMatch=true`, `knownPrimaryCosts=true`, `genuineHumanLabels=false`, `mockEvidence=false`. This is the expected P53 boundary before P54, not a formal failure. The run is exported under `data/runs/e76aa924-ca3f-44c2-855d-edfc229d83a1/` with candidates, attempts, requests, results, summary, manifest, HTML report, and decision.
+
+The plan's P53 example command shows `--max-cost 10`; the accepted revised freeze authorizes USD 12, so the executed command used `--max-cost 12`. The plan's example also uses `--full`; the CLI exposes the primary plan as `--primary` (and defaults to it), so the executed command uses `--primary`. The revised addendum and this run use `--reservation 0.08`, not the superseded `0.03`.
+
+P54 must import genuine blinded human evaluation before any `proceed` recommendation. P53 was accepted by the user on 2026-11-09; the cohort must not be rerun or retuned after observing these results, and P53 alone cannot decide the experiment outcome.

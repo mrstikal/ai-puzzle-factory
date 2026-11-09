@@ -19,7 +19,7 @@ import {
   markAttemptDispatching,
   listAttempts,
 } from "../../src/ai/ledger.js";
-import { admitRequest } from "../../src/ai/budget.js";
+import { admitRequest, increaseBudgetCap } from "../../src/ai/budget.js";
 import {
   getDesignerSlot,
   listDesignAttempts,
@@ -445,6 +445,47 @@ describe("P50.1 designer budget pause handling", () => {
       "terminal",
     );
     expect(transport.requests).toHaveLength(0);
+  }, 120_000);
+
+  it("admits a run-scoped account again after a cap increase and resume", async () => {
+    const h = harness();
+    const transport = createMockTransport({ db: h.db });
+    const paused = await runDesignerCohort({
+      db: h.db,
+      runId: h.runId,
+      plan: h.plan,
+      evidenceKind: "mock",
+      apiKey: "mock",
+      transport,
+      accountId: h.accountId,
+      maxCostUsd: "0",
+      config: { ...CONFIG, nonBilling: false },
+      concurrency: 1,
+      slotIds: [FEEDBACK_SLOT],
+    });
+    expect(paused.status).toBe("paused_budget");
+    increaseBudgetCap(h.db, {
+      accountId: h.accountId,
+      newMaxCostUsd: "1.00",
+      acknowledged: true,
+      operator: "test",
+    });
+    const resumed = await runDesignerCohort({
+      db: h.db,
+      runId: h.runId,
+      plan: h.plan,
+      evidenceKind: "mock",
+      apiKey: "mock",
+      transport,
+      accountId: h.accountId,
+      maxCostUsd: "1.00",
+      config: { ...CONFIG, nonBilling: false },
+      concurrency: 1,
+      slotIds: [FEEDBACK_SLOT],
+      resume: true,
+    });
+    expect(resumed.status).toBe("completed");
+    expect(getDesignerSlot(h.db, h.runId, FEEDBACK_SLOT).stage).toBe("terminal");
   }, 120_000);
 });
 
