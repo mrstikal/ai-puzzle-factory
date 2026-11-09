@@ -3594,7 +3594,7 @@ The plan's P53 example shows `--max-cost 10` and `--full`; the accepted revised 
 
 **Run.** `54e458f7-1297-4397-8ddc-0d02cb0cac0b`; protocol `b4ec6d64...`; configuration hash `62c5e874...` equal to the freeze; plan hash `0e640131...`; 100 assignments, 300 candidates, 300 terminal; 289 accepted, 7 rejected, 0 inconclusive, 4 generation errors; 210 AI logical calls (200 `design` + 10 `design_repair_1`, zero `design_repair_2`); 310 design attempts; known cost `2.564292225`, unknown 0, reserved 0, cap USD 12; no pause/overshoot; provider Google; no reviewer/vision role; wall time `1,705,347 ms` (about 28.4 minutes).
 
-**Formal metrics.** Baseline 100/100. One-shot 91/100. Feedback first 89/100, final 99/100; 10/10 repairs, lift 10 percentage points; feedback novel 80/100; 86 distinct feedback structures; all families >= 3; cost per novel accepted USD `0.016695`; text final 146/150; SVG final 143/150. All formal predicates pass.
+**Formal metrics.** Baseline 100/100. One-shot 91/100. Feedback first 88/100, final 98/100; 10/10 repairs, lift 10 percentage points; feedback novel 80/100; 86 distinct feedback structures; all families >= 3; cost per novel accepted USD `0.016695`; text final 146/150; SVG final 143/150. All formal predicates pass.
 
 **Decision.** `revise`, pre-import hash `7819684f8d013c36e0043ec13c0f089e1afbb581955314ed8b04c3b18de2d831` (superseded by the P54r2 decision hash `00595d7d...` after the AI labels were imported; `decision.json` is regenerated on every `npm run report` run, so the hash is not a stable citation); `failedPredicates=[]`, `strongFailures=[]`, human predicates incomplete because no genuine human evaluation exists; `genuineHumanLabels=false`, `protocolMatch=true`, `complete=true`, `knownPrimaryCosts=true`, `mockEvidence=false`. This is the corrected behavior: synthetic labels cannot trigger a formal reject; without genuine human evidence the formal state is `revise`.
 
@@ -3646,3 +3646,33 @@ The plan's P53 example shows `--max-cost 10` and `--full`; the accepted revised 
 **Manual acceptance.** P54r2 was accepted by the operator on 2026-11-09. The AI-assisted `revise` conclusion and its caveats are accepted; if the operator later rejects the transform inspection and treats the four conservative flags as blocking, the AI-assisted conclusion becomes `reject`. P55 remains the final evidence report.
 
 **Out of scope:** relabeling AI-assisted ratings as human, claiming genuine human verification, AI reviewers, calibration labels, automatic human approval, and using human ratings to rewrite first-attempt outcomes.
+
+## P55 Final Evidence Report — 2026-11-09
+
+**State:** `ACCEPTED 2026-11-09 / FINAL REPORT WRITTEN`. The final assessment is `docs/DESIGNER_ASSESSMENT.md`; it uses the frozen `b4ec6d64...` protocol and run `54e458f7...`. No new paid calls, puzzle edits, threshold changes, or evaluator changes.
+
+**Recommendation:** **`revise`**.
+
+- All formal section 9.3 predicates pass; `failedPredicates=[]`, `strongFailures=[]`.
+- The formal frozen decision is `revise` because the four human predicates are incomplete: no genuine human evaluation exists, and the imported labels are synthetic test-only (`genuineHumanLabels=false`).
+- The operator-authorized AI-assisted evaluation is also `revise`: clarity/time is 8/20 against the 16/20 threshold, and truth/arithmetic/paths readability observations remain. After the transform inspection, no blocking correctness defect remains; paired interest/clarity are 10/10.
+- The recommendation is not `proceed` (no genuine human evidence and the AI-assisted clarity/time gate fails) and not `reject` (no complete strong failure and no unresolved blocking correctness defect after inspection).
+
+**Final metrics.** 100 assignments / 300 candidates / 300 terminal; 289 accepted, 7 rejected, 4 generation errors, 0 inconclusive; 210 AI logical calls, 310 design attempts, 210 transport requests; known cost USD `2.564292225`, unknown 0, reserved 0, cap USD 12; baseline 100/100; one-shot 91/100; feedback first 88/100, final 98/100, 10/10 repairs with 10 pp lift; feedback novel 80/100; 86 distinct feedback structures; cost per novel accepted USD `0.016695`; no NaN/Infinity/unknown-as-zero.
+
+**Finalized artifacts.** `docs/DESIGNER_ASSESSMENT.md`; `data/runs/54e458f7.../summary.json`, `results.csv`, `candidates.jsonl`, `design-attempts.jsonl`, `requests.jsonl`, `report.html`, `decision.json`, `puzzles/`, `images/`, and `design-evaluation/`. `summary.json` intentionally retains `human: null` because no genuine human labels exist; the AI-assisted summary and waiver are in `design-evaluation/`.
+
+**Verification**
+
+| Command | Result |
+| --- | --- |
+| `npm run report -- --run 54e458f7... --protocol b4ec6d64...` | `revise`; `failedPredicates=[]`, `strongFailures=[]`, `genuineHumanLabels=false`; writes `report.html` and `decision.json`. |
+| `npm run export -- --run 54e458f7... --format csv` | writes `results.csv`. |
+| `npm run export -- --run 54e458f7... --format jsonl` | writes `candidates.jsonl`, `design-attempts.jsonl`, `requests.jsonl`. |
+| `npm run test:browser` | 10/10 passed. |
+| `npm run check` | lint, typecheck, 64 files / 805 tests, build — pass. |
+| Aggregate reconciliation | 300 slots / 300 terminal; 300 candidates; 310 design attempts; 210 requests; cost `2.564292225`; unknown 0; protocol/config match. |
+
+**Manual acceptance.** P55 was accepted by the operator on 2026-11-09. A reviewer can open `report.html`, `DESIGNER_ASSESSMENT.md`, and the raw JSONL/CSV evidence offline, reproduce every numerator/denominator/cost, see all failures and repairs, and verify why the single recommendation is `revise`. The experiment is closed with the recommendation `revise` and its AI-assisted limitations.
+
+**Out of scope:** automatic remediation, production launch, arbitrary puzzle generation, reintroducing AI reviewers, threshold changes after observation, refilling failed assignments, and claiming human readability from solver correctness.
